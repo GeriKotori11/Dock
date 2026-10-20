@@ -235,3 +235,43 @@ Open items carried forward:
 - A host with a new identity at a known address gets the confirmation prompt, not a warning. The saved-computers list should warn instead.
 - Android WebView cookie flush on force-stop.
 - Probe HTTPS first, so that hosts running with `WINDOCK_PLAIN_HTTP=0` are reachable.
+
+### 2026-10-20: milestone 4 (phone apps: computers, discovery, native pairing), done
+
+**Design**
+- Designer spec and mockups in `docs/design/`.
+- User decisions:
+  - native PIN entry;
+  - Android Back opens the switch sheet;
+  - Forget revokes the session on both the phone and the host;
+  - all other recommendations accepted.
+
+**Host**
+- Bonjour advertisement of `_windock._tcp`: `dns-sd` on macOS, a dependency-free mDNS responder on Windows and Linux.
+- `DELETE /api/session`.
+- Web bridge (`WinDockNative`): computer nickname, a drawer "Switch" row, a ready handshake, and an unauthorized hand-off.
+
+**Phones (Android and iOS)**
+- Native screens: Computers list, two-step pairing (security code, then native PIN), can't-reach, security-changed, switch sheet, and Local Network priming and denied screens on iOS.
+- Discovery uses Bonjour and UDP. Results are merged by hostId and verified over pinned HTTPS.
+- Saved computers are keyed by hostId plus pin. If a computer's IP changes, the session cookie moves with it and no PIN is needed.
+- Probing tries HTTPS first.
+- Existing pairings migrate without any prompts.
+
+**Verification**
+- `npm test` 23/23.
+- Android: unit and instrumented tests pass on the API 37 emulator.
+- iOS: 53 tests pass on both iOS 27.0 and 26.5.
+- Manual passes against real hosts in the emulator and simulator: pairing, wrong PIN, pairing closed, switch sheet, forget on both sides, can't-reach then recovered, security changed, and a new address (simulated on iOS).
+- **Real device (Samsung Galaxy A40, Android):**
+  - The update installed over the previous build and the pairing migrated straight into the dock with no prompts.
+  - Back opens the native Switch sheet.
+  - The keep-screen-on flag is set.
+  - The drawer Switch row has not been checked yet: adb swipes were caught by the system gesture.
+
+**Open**
+- Windows host Bonjour responder: not run on Windows.
+- iPhone real-device test: needs signing.
+- Copy written by the workers but missing from the copy deck needs designer sign-off.
+- Android single-column layout at large font scales.
+- iOS README is out of date.
