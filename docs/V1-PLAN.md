@@ -159,6 +159,7 @@ reached over the LAN IP so pairing was exercised:
 | --- | --- |
 | macOS host + Android emulator (API 37) | Pass: manual IP, wrong/correct PIN, add apps, launch Calculator, restart host with no re-pair, cold relaunch. UDP discovery did not cross the emulator NAT (expected). |
 | macOS host + iOS simulator (iPhone 17) | Pass: manual IP, pair, shared dock, launch TextEdit, live running state on the other phone. XCTest 7/7. |
+| macOS host + real Android phone | User reported a successful test on 2026-10-20 (details not recorded). |
 | Windows host + either phone | Not re-run here (no Windows machine). Windows provider unchanged; shared changes covered by mocked oracles. |
 
 Open items carried forward:
