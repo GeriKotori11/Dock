@@ -48,7 +48,15 @@ enum EndpointPolicy {
             url.host?.lowercased() == endpoint.host && effectivePort(url) == effectivePort(endpoint)
     }
 
-    private static func effectivePort(_ url: URL) -> Int { url.port ?? (url.scheme == "https" ? 443 : 80) }
+    static func effectivePort(_ url: URL) -> Int { url.port ?? (url.scheme == "https" ? 443 : 80) }
+
+    /// The same host and port under the other scheme (the host serves http and https on one port).
+    static func with(scheme: String, _ endpoint: URL) -> URL? {
+        guard var parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else { return nil }
+        if parts.port == nil { parts.port = effectivePort(endpoint) }
+        parts.scheme = scheme
+        return parts.url
+    }
 
     /// WebKit content rules supplement the navigation delegate for images, scripts and fetches.
     static func contentRules(for endpoint: URL) throws -> String {

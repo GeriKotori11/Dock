@@ -41,6 +41,31 @@ final class EndpointPolicyTests: XCTestCase {
         XCTAssertFalse(EndpointPolicy.allows(nil, endpoint: endpoint))
     }
 
+    func testSecureOriginAllowsHttpsAndWssOnly() throws {
+        let plain = try XCTUnwrap(EndpointPolicy.normalize("192.168.1.20"))
+        let secure = try XCTUnwrap(EndpointPolicy.with(scheme: "https", plain))
+        XCTAssertEqual(secure.absoluteString, "https://192.168.1.20:8620")
+        XCTAssertEqual(EndpointPolicy.with(scheme: "http", secure), plain)
+        XCTAssertEqual(EndpointPolicy.with(scheme: "https", try XCTUnwrap(URL(string: "http://192.168.1.20")))?.absoluteString,
+                       "https://192.168.1.20:80", "Same port for both schemes")
+        XCTAssertTrue(EndpointPolicy.allows(URL(string: "https://192.168.1.20:8620/api/apps"), endpoint: secure))
+        for input in ["http://192.168.1.20:8620/", "https://192.168.1.21:8620/", "https://192.168.1.20:8621/",
+                      "https://user@192.168.1.20:8620/"] {
+            XCTAssertFalse(EndpointPolicy.allows(URL(string: input), endpoint: secure), input)
+        }
+        let rules = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(EndpointPolicy.contentRules(for: secure).utf8)) as? [[String: Any]])
+        let filters = rules.compactMap { ($0["trigger"] as? [String: Any])?["url-filter"] as? String }
+        XCTAssertTrue(filters.contains("^https://192[.]168[.]1[.]20:8620/"))
+        XCTAssertTrue(filters.contains("^wss://192[.]168[.]1[.]20:8620/"))
+        XCTAssertFalse(filters.contains { $0.hasPrefix("^http://") || $0.hasPrefix("^ws://") }, "No plain origin for an https dock")
+        for (pattern, url, expected) in [("^https://192[.]168[.]1[.]20:8620/", "https://192.168.1.20:8620/app.js", true),
+                                         ("^wss://192[.]168[.]1[.]20:8620/", "wss://192.168.1.20:8620/input", true),
+                                         ("^https://192[.]168[.]1[.]20:8620/", "https://192.168.1.20:86200/", false)] {
+            let regex = try NSRegularExpression(pattern: pattern)
+            XCTAssertEqual(regex.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil, expected, url)
+        }
+    }
+
     func testHealthRequiresBoundedWinDockMarker() {
         XCTAssertTrue(HealthProbe.isWinDock(Data(#"{"ok":true,"app":"windock"}"#.utf8)))
         for input in [#"{"ok":true,"app":"other"}"#, #"{"app":"windock"}"#, #"{"ok":false,"app":"windock"}"#,

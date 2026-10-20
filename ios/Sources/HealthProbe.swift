@@ -1,17 +1,39 @@
 import Foundation
 
+/// What a WinDock `/health` body says about the host. Over plain HTTP every field is only a hint.
+struct HealthInfo: Equatable {
+    let hostId: String?
+    let hostName: String
+    let tlsFingerprint: String?
+}
+
+/// The result of one probe. `presentedFingerprint` is the leaf certificate the TLS handshake
+/// actually presented (https only), recorded even when the probe then refused it.
+struct ProbeResult {
+    let info: HealthInfo?
+    let presentedFingerprint: String?
+}
+
 /// A bounded, cookie-free probe. Redirects never select a different host for the user.
 final class HealthProbe: NSObject, URLSessionDataDelegate {
     private var session: URLSession?
-    private var completion: ((Bool) -> Void)?
+    private var completion: ((ProbeResult) -> Void)?
     private var body = Data()
     private var validResponse = false
+    private var target: URL?
+    private var pinned: String?
+    private var presented: String?
 
-    func start(endpoint: URL, completion: @escaping (Bool) -> Void) {
+    /// For an https `endpoint`, the handshake certificate is accepted only for this probe's host and
+    /// port, and only when it equals `pinned` or when there is no pin yet (captured for confirmation).
+    func start(endpoint: URL, pinned: String? = nil, completion: @escaping (ProbeResult) -> Void) {
         cancel()
         self.completion = completion
         body = Data()
         validResponse = false
+        target = endpoint
+        self.pinned = pinned
+        presented = nil
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
         config.timeoutIntervalForResource = 20
@@ -31,14 +53,40 @@ final class HealthProbe: NSObject, URLSessionDataDelegate {
 
     private func finish(_ success: Bool) {
         let callback = completion
+        let result = ProbeResult(info: success ? Self.parse(body) : nil, presentedFingerprint: presented)
         cancel()
-        callback?(success)
+        callback?(result)
     }
 
-    static func isWinDock(_ body: Data) -> Bool {
+    static func parse(_ body: Data) -> HealthInfo? {
         guard body.count <= 4096,
-              let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return false }
-        return object["app"] as? String == "windock" && object["ok"] as? Bool == true
+              let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              object["app"] as? String == "windock", object["ok"] as? Bool == true else { return nil }
+        let tls = object["tls"] as? [String: Any]
+        return HealthInfo(hostId: object["hostId"] as? String,
+                          hostName: object["hostName"] as? String ?? "",
+                          tlsFingerprint: tls?["fingerprint"] as? String)
+    }
+
+    static func isWinDock(_ body: Data) -> Bool { parse(body) != nil }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        guard session === self.session, let target, target.scheme == "https",
+              space.host.lowercased() == target.host, space.port == EndpointPolicy.effectivePort(target),
+              let trust = space.serverTrust, let fingerprint = CertificatePin.leafFingerprint(trust) else {
+            completionHandler(.cancelAuthenticationChallenge, nil); return
+        }
+        presented = fingerprint
+        if pinned == nil || pinned == fingerprint {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask,

@@ -6,6 +6,10 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
     private let defaults: UserDefaults
     private let autoConnect: Bool
     private let probe = HealthProbe()
+    private let pins: PinStore
+    /// Asks the person to compare the security code with the one their computer shows.
+    /// Replaceable so hosted tests can answer; it only ever adds a confirmation step.
+    var confirmSecurityCode: (_ hostName: String, _ code: String, _ completion: @escaping (Bool) -> Void) -> Void
     private let connection = UIScrollView()
     let address = UITextField()
     let status = UILabel()
@@ -14,6 +18,8 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
     private let spinner = UIActivityIndicatorView(style: .medium)
     private(set) var webView: WKWebView?
     private(set) var endpoint: URL?
+    /// The pinned leaf fingerprint the dock's https endpoint must present, nil for plain http.
+    private(set) var trustedFingerprint: String?
     private var attempt = UUID()
     private var loadTimeout: DispatchWorkItem?
     private var started = false
@@ -22,7 +28,12 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
     init(defaults: UserDefaults = .standard, autoConnect: Bool = true) {
         self.defaults = defaults
         self.autoConnect = autoConnect
+        self.pins = PinStore(defaults: defaults)
+        self.confirmSecurityCode = { _, _, completion in completion(false) }
         super.init(nibName: nil, bundle: nil)
+        self.confirmSecurityCode = { [weak self] hostName, code, completion in
+            self?.presentSecurityCodeAlert(hostName: hostName, code: code, completion: completion) ?? completion(false)
+        }
     }
     required init?(coder: NSCoder) { fatalError("Use init(defaults:autoConnect:)") }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
@@ -186,17 +197,94 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         address.isEnabled = false
         spinner.startAnimating()
         status.text = "Looking for WinDock… Allow Local Network access if asked."
-        probe.start(endpoint: endpoint) { [weak self] found in
+        // The host serves http and https on one port; its plain /health says whether it has TLS.
+        guard let plain = EndpointPolicy.with(scheme: "http", endpoint) else { showUnreachable(); return }
+        probe.start(endpoint: plain) { [weak self] result in
             guard let self, self.attempt == id else { return }
-            guard found else {
-                self.showConnection(message: "Couldn’t reach WinDock. Check the address WinDock shows, Wi-Fi, firewall and Settings → Privacy & Security → Local Network, then retry.")
-                return
+            guard let info = result.info else { self.showUnreachable(); return }
+            if let hostId = info.hostId, PinStore.isValidHostId(hostId),
+               info.tlsFingerprint != nil || self.pins.pin(for: hostId) != nil {
+                // A pinned host is always reached over https, whatever plain /health claims.
+                self.secureConnect(endpoint, hostId: hostId, hostName: info.hostName, attempt: id)
+            } else {
+                self.loadDock(endpoint, trusting: nil, attempt: id)
             }
-            self.loadDock(endpoint, attempt: id)
         }
     }
 
-    private func loadDock(_ endpoint: URL, attempt id: UUID) {
+    private func showUnreachable() {
+        showConnection(message: "Couldn’t reach WinDock. Check the address WinDock shows, Wi-Fi, firewall and Settings → Privacy & Security → Local Network, then retry.")
+    }
+
+    private func secureConnect(_ requested: URL, hostId: String, hostName: String, attempt id: UUID) {
+        guard let secure = EndpointPolicy.with(scheme: "https", requested) else { showUnreachable(); return }
+        self.endpoint = secure
+        let pinned = pins.pin(for: hostId)
+        status.text = "Securing connection…"
+        probe.start(endpoint: secure, pinned: pinned) { [weak self] result in
+            guard let self, self.attempt == id else { return }
+            guard let presented = result.presentedFingerprint else { self.showUnreachable(); return }
+            let decision = PinDecision.decide(pinned: pinned, presented: presented)
+            if decision == .mismatch {
+                self.presentMismatchAlert(hostId: hostId, hostName: hostName, attempt: id); return
+            }
+            // The https body comes from the certificate holder; it must describe the same host.
+            guard let info = result.info, info.hostId?.lowercased() == hostId.lowercased(),
+                  let code = CertificatePin.securityCode(presented) else { self.showUnreachable(); return }
+            if decision == .trust { self.loadDock(secure, trusting: presented, attempt: id); return }
+            self.confirmSecurityCode(Self.displayName(info.hostName), code) { [weak self] matches in
+                guard let self, self.attempt == id else { return }
+                guard matches, self.pins.setPin(presented, for: hostId) else {
+                    self.showConnection(message: "Connection cancelled."); return
+                }
+                self.loadDock(secure, trusting: presented, attempt: id)
+            }
+        }
+    }
+
+    static func displayName(_ hostName: String) -> String {
+        let name = hostName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shown = name.isEmpty ? "your computer" : name
+        return shown.count > 60 ? String(shown.prefix(60)) : shown
+    }
+
+    private func presentSecurityCodeAlert(hostName: String, code: String, completion: @escaping (Bool) -> Void) {
+        let alert = UIAlertController(
+            title: "Check the security code",
+            message: "Make sure this code matches the one WinDock shows on \(hostName):\n\n\(code)\n\nWindows: tray → Show connection info · Mac: npm run info",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completion(false) })
+        let match = UIAlertAction(title: "Codes match", style: .default) { _ in completion(true) }
+        alert.addAction(match)
+        alert.preferredAction = match
+        present(alert, animated: true)
+    }
+
+    private func presentMismatchAlert(hostId: String, hostName: String, attempt id: UUID) {
+        let alert = UIAlertController(
+            title: "Security code changed",
+            message: "\(Self.displayName(hostName)) is presenting a different security identity than when you paired. This happens if WinDock was reinstalled or its data was reset on that computer, or if another device is pretending to be it.",
+            preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Forget and pair again", style: .destructive) { [weak self] _ in
+            guard let self, self.attempt == id else { return }
+            self.forgetAndReconnect(hostId: hostId)
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+            guard let self, self.attempt == id else { return }
+            self.showConnection(message: "Connection cancelled.")
+        })
+        present(alert, animated: true)
+    }
+
+    /// Removes the pin so the next connection asks the person to confirm the new security code.
+    func forgetAndReconnect(hostId: String) {
+        pins.removePin(for: hostId)
+        connect()
+    }
+
+    private func loadDock(_ endpoint: URL, trusting fingerprint: String?, attempt id: UUID) {
+        self.endpoint = endpoint
+        trustedFingerprint = fingerprint
         guard let rules = try? EndpointPolicy.contentRules(for: endpoint) else {
             showConnection(message: "Couldn’t prepare the dock. Please try again."); return
         }
@@ -244,6 +332,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         webView?.removeFromSuperview()
         webView = nil // Close sockets and release any remote gestures with the old page.
         endpoint = nil
+        trustedFingerprint = nil
         pcButton.isHidden = true
         connection.isHidden = false
         connectButton.isEnabled = true
@@ -274,6 +363,26 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
             return
         }
         decisionHandler(.allow)
+    }
+
+    /// Only the pinned certificate is trusted for the dock's own https origin; never trust-all.
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        guard webView === self.webView, let endpoint, endpoint.scheme == "https",
+              space.host.lowercased() == endpoint.host, space.port == EndpointPolicy.effectivePort(endpoint) else {
+            completionHandler(.cancelAuthenticationChallenge, nil); return
+        }
+        guard let trustedFingerprint else {
+            completionHandler(.performDefaultHandling, nil); return // An https address without a pin keeps system validation.
+        }
+        guard let trust = space.serverTrust, CertificatePin.leafFingerprint(trust) == trustedFingerprint else {
+            completionHandler(.cancelAuthenticationChallenge, nil); return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

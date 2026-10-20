@@ -74,8 +74,10 @@ bundle ID when adding signing. Do not commit certificates, profiles or Apple sec
 - Native health checks reject redirects, bound the response to 4 KiB and time out.
   Navigation is limited to the selected origin; WebKit content rules additionally
   restrict web subresources. Local HTTP exceptions cover private/loopback addresses,
-  without a global `NSAllowsArbitraryLoads` exception. HTTPS retains normal certificate
-  validation. This remains a companion for a trusted LAN, not internet remote access.
+  without a global `NSAllowsArbitraryLoads` exception. When the host offers HTTPS, the
+  app shows its security code once to compare with the computer, pins the certificate
+  the TLS handshake presents (per host id) and then trusts only that certificate for the
+  dock's https/wss origin; a changed certificate stops the connection. This remains a companion for a trusted LAN, not internet remote access.
 - The shared dock includes touchpad, signature and manual web keyboard UI. Their
   gestures, keyboard focus, safe areas and background/reconnection behavior need
   real iPhone testing. The Android native automatic keyboard bridge is **not** part

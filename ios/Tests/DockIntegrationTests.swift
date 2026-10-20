@@ -10,10 +10,28 @@ final class DockIntegrationTests: XCTestCase {
     private var controller: DockViewController!
     private var defaults: UserDefaults!
     private let endpoint = "http://127.0.0.1:18622"
+    private let secureEndpoint = "https://127.0.0.1:18622"
+    /// Security codes the app asked the person to confirm, and the answer the test gives.
+    private var confirmed: [String] = []
+    private var confirmAnswer = true
+
+    private struct HostHealth { let hostId: String; let fingerprint: String; let code: String }
+
+    /// The host's own view of its certificate (a hint only; the app must use the handshake).
+    private func hostHealth() async throws -> HostHealth {
+        let (body, _) = try await URLSession.shared.data(from: URL(string: endpoint + "/health")!)
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let tls = try XCTUnwrap(object["tls"] as? [String: Any], "Fixture host must serve TLS")
+        return HostHealth(hostId: try XCTUnwrap(object["hostId"] as? String),
+                          fingerprint: try XCTUnwrap(tls["fingerprint"] as? String),
+                          code: try XCTUnwrap(tls["code"] as? String))
+    }
 
     override func setUp() async throws {
         defaults = UserDefaults(suiteName: "WinDockSimulatorTests")!
         defaults.removePersistentDomain(forName: "WinDockSimulatorTests")
+        confirmed = []
+        confirmAnswer = true
         let store = WKWebsiteDataStore.default()
         await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
         installController(autoConnect: false)
@@ -30,7 +48,18 @@ final class DockIntegrationTests: XCTestCase {
         let delegate = UIApplication.shared.delegate as! AppDelegate
         delegate.window!.rootViewController = controller
         delegate.window!.makeKeyAndVisible()
+        controller.confirmSecurityCode = { [unowned self] hostName, code, completion in
+            XCTAssertFalse(hostName.isEmpty)
+            confirmed.append(code)
+            completion(confirmAnswer)
+        }
         controller.loadViewIfNeeded()
+    }
+
+    private func dismissPresented() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            controller.dismiss(animated: false) { continuation.resume() }
+        }
     }
 
     private func waitUntil(_ description: String, seconds: Double = 20,
@@ -83,10 +112,15 @@ final class DockIntegrationTests: XCTestCase {
     }
 
     func testConnectPairLaunchReconnectAndRememberPC() async throws {
+        let health = try await hostHealth()
         try await screenshot("01-connection")
         controller.address.text = endpoint
         controller.connectButton.sendActions(for: .touchUpInside)
         try await waitForJS("document.getElementById('pair') && !document.getElementById('pair').hidden")
+        XCTAssertEqual(confirmed, [health.code], "First connection asks to compare the handshake certificate's code")
+        XCTAssertEqual(controller.webView?.url?.scheme, "https")
+        XCTAssertEqual(controller.trustedFingerprint, health.fingerprint)
+        XCTAssertEqual(PinStore(defaults: defaults).pin(for: health.hostId), health.fingerprint)
         XCTAssertTrue(controller.view.bounds.width > controller.view.bounds.height, "Landscape presentation")
         try await screenshot("02-pairing")
         _ = try await js("document.getElementById('pin').value='000000'; document.querySelector('#pair-form button').click(); true")
@@ -106,7 +140,7 @@ final class DockIntegrationTests: XCTestCase {
         try await screenshot("04-drawer")
         _ = try await js("document.getElementById('drawer-close').click(); true")
         let remembered = defaults.string(forKey: DockViewController.rememberedPCKey)
-        XCTAssertEqual(remembered, endpoint)
+        XCTAssertEqual(remembered, secureEndpoint)
         controller.showConnection()
         controller.connect()
         try await waitForJS("document.getElementById('app') && !document.getElementById('app').hidden && document.querySelectorAll('.tile').length === 5")
@@ -115,6 +149,43 @@ final class DockIntegrationTests: XCTestCase {
         installController(autoConnect: true)
         try await waitForJS("document.getElementById('app') && !document.getElementById('app').hidden")
         try await waitForJS("document.getElementById('conn').textContent === 'Connected'")
+        XCTAssertEqual(controller.webView?.url?.scheme, "https")
+        XCTAssertEqual(confirmed, [health.code], "A pinned host is not confirmed again")
+    }
+
+    func testChangedCertificateShowsMismatchAndLoadsNothing() async throws {
+        let health = try await hostHealth()
+        let pins = PinStore(defaults: defaults)
+        XCTAssertTrue(pins.setPin(String(repeating: "0", count: 64), for: health.hostId))
+        controller.address.text = endpoint
+        controller.connect()
+        try await waitUntil("Mismatch alert") { [self] in
+            (controller.presentedViewController as? UIAlertController)?.title == "Security code changed"
+        }
+        let alert = try XCTUnwrap(controller.presentedViewController as? UIAlertController)
+        XCTAssertEqual(alert.actions.map(\.title), ["Forget and pair again", "Cancel"])
+        XCTAssertNil(controller.webView, "Nothing loads for a changed certificate")
+        XCTAssertEqual(confirmed, [])
+        XCTAssertNil(defaults.string(forKey: DockViewController.rememberedPCKey))
+        await dismissPresented()
+        // "Forget and pair again": the pin goes and the person confirms the new code.
+        controller.forgetAndReconnect(hostId: health.hostId)
+        try await waitForJS("document.getElementById('pair') && !document.getElementById('pair').hidden")
+        XCTAssertEqual(confirmed, [health.code])
+        XCTAssertEqual(pins.pin(for: health.hostId), health.fingerprint)
+    }
+
+    func testCancellingSecurityCodeLoadsNothing() async throws {
+        let health = try await hostHealth()
+        confirmAnswer = false
+        controller.address.text = endpoint
+        controller.connect()
+        try await waitUntil("Cancelled") { [self] in controller.connectButton.isEnabled }
+        XCTAssertEqual(confirmed, [health.code])
+        XCTAssertEqual(controller.status.text, "Connection cancelled.")
+        XCTAssertNil(controller.webView)
+        XCTAssertNil(PinStore(defaults: defaults).pin(for: health.hostId))
+        XCTAssertNil(defaults.string(forKey: DockViewController.rememberedPCKey))
     }
 
     func testInvalidUnreachableRedirectedAndNonWinDockHostsRecover() async throws {
@@ -149,6 +220,7 @@ final class DockIntegrationTests: XCTestCase {
             """)
         // Allow rejected subresource requests and cancelled navigation to settle.
         try await Task.sleep(nanoseconds: 1_000_000_000)
+        XCTAssertEqual(controller.webView?.url?.scheme, "https")
         XCTAssertEqual(controller.webView?.url?.host, "127.0.0.1")
         XCTAssertEqual(controller.webView?.url?.port, 18622)
         let (body, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:18626/hits")!)
