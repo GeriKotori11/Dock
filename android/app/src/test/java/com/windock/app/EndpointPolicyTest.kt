@@ -37,6 +37,25 @@ class EndpointPolicyTest {
         assertFalse(EndpointPolicy.allowsRequest(null, endpoint))
     }
 
+    @Test fun securedEndpointKeepsItsOriginForPagesAndSockets() {
+        val endpoint = "https://192.168.178.80:8620"
+        assertEquals(endpoint, EndpointPolicy.normalize("https://192.168.178.80:8620/"))
+        assertEquals(endpoint, EndpointPolicy.withScheme("http://192.168.178.80:8620", "https"))
+        assertEquals("http://192.168.178.80:8620", EndpointPolicy.withScheme(endpoint, "http"))
+        assertEquals("http://192.168.178.80:8620", EndpointPolicy.withScheme("192.168.178.80", "http"))
+        assertEquals("https://192.168.1.2:80", EndpointPolicy.withScheme("http://192.168.1.2", "https"))
+        assertNull(EndpointPolicy.withScheme("https://example.com", "http"))
+        assertTrue(EndpointPolicy.allowsRequest(endpoint, "$endpoint/app.js"))
+        assertTrue(EndpointPolicy.allowsRequest(endpoint, "wss://192.168.178.80:8620/"))
+        assertTrue(EndpointPolicy.allowsRequest(endpoint, "wss://192.168.178.80:8620/input"))
+        assertTrue(EndpointPolicy.allowsRequest("http://192.168.178.80:8620", "ws://192.168.178.80:8620/"))
+        listOf("http://192.168.178.80:8620/", "ws://192.168.178.80:8620/", "wss://192.168.178.80:443/",
+            "wss://192.168.178.81:8620/", "https://192.168.178.80/", "wss://user@192.168.178.80:8620/").forEach {
+            assertFalse("Must block $it", EndpointPolicy.allowsRequest(endpoint, it))
+        }
+        assertFalse(EndpointPolicy.allowsRequest("http://192.168.178.80:8620", "wss://192.168.178.80:8620/"))
+    }
+
     @Test fun discoveryRejectsOtherProtocolsAndPublicHosts() {
         assertEquals("http://192.168.1.40:8620", Discovery.parseReply("windock:here:v1:http://192.168.1.40:8620"))
         listOf("garbage", "windock:here:v0:http://192.168.1.40:8620", "windock:here:v1:",

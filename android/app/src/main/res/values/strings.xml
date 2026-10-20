@@ -20,6 +20,14 @@
     <string name="find_usb_pc">Find USB PC</string>
     <string name="usb_searching">Looking for your PC over USB…</string>
     <string name="usb_not_found">No USB PC found. Check the cable, USB tethering, and WinDock on Windows. For wireless, tap Connect by Wi-Fi above. You can also enter the PC’s USB IPv4 address below.</string>
+    <string name="securing">Securing connection…</string>
+    <string name="connection_cancelled">Connection cancelled.</string>
+    <string name="trust_confirm_title">Check the security code</string>
+    <string name="trust_confirm_message">Make sure this code matches the one WinDock shows on %1$s:\n\n%2$s\n\nWindows: tray → Show connection info · Mac: npm run info</string>
+    <string name="trust_confirm_accept">Codes match</string>
+    <string name="trust_mismatch_title">Security code changed</string>
+    <string name="trust_mismatch_message">%1$s is presenting a different security identity than when you paired. This happens if WinDock was reinstalled or its data was reset on that computer, or if another device is pretending to be it.</string>
+    <string name="trust_mismatch_forget">Forget and pair again</string>
     <string name="phone_options">This phone</string>
     <string name="phone_options_intro">Display settings for this phone only. Your computer’s display is unchanged.</string>
     <string name="dim_after">Dim after inactivity</string>

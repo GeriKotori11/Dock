@@ -4,13 +4,23 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Bitmap
+import android.graphics.Typeface
+import android.net.http.SslCertificate
+import android.net.http.SslError
+import android.os.Build
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
+import android.text.style.TypefaceSpan
 import android.view.View
 import android.view.WindowManager
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.Gravity
 import android.webkit.JavascriptInterface
+import android.webkit.SslErrorHandler
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.view.inputmethod.InputMethodManager
@@ -30,8 +40,17 @@ import androidx.core.view.doOnLayout
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
+import java.security.cert.CertificateException
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import java.util.concurrent.Executors
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /** Native discovery/connection shell; the shared web UI owns pairing and the dock. */
 class MainActivity : Activity() {
@@ -47,6 +66,10 @@ class MainActivity : Activity() {
     private var resumed = false
     private val io = Executors.newSingleThreadExecutor()
     @Volatile private var endpoint: String? = null
+    /** Host ID and display name of `endpoint` when it is https; its certificate must match PinStore. */
+    private var endpointHostId: String? = null
+    private var endpointHostName: String = ""
+    private var trustDialog: AlertDialog? = null
     private var loadFailed = false
     private var connecting = false
     private lateinit var idleDisplay: IdleDisplayController
@@ -126,6 +149,25 @@ class MainActivity : Activity() {
 
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                 if (request.isForMainFrame) failConnection(R.string.connection_lost)
+            }
+
+            // The host's certificate is self-signed: proceed only for the selected
+            // https origin presenting exactly the fingerprint pinned for its host ID.
+            override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                val selected = endpoint
+                val hostId = endpointHostId
+                val pinned = PinStore.get(this@MainActivity, hostId)
+                val sameOrigin = selected != null && selected.startsWith("https://") &&
+                    EndpointPolicy.allowsRequest(selected, error.url)
+                val presented = fingerprintOf(error.certificate)
+                if (sameOrigin && pinned != null && presented != null && presented == pinned) {
+                    handler.proceed()
+                    return
+                }
+                handler.cancel()
+                if (sameOrigin && pinned != null && hostId != null && selected != null)
+                    showMismatch(Route.Secure(selected, hostId, endpointHostName, presented, Trust.MISMATCH))
+                else failConnection(R.string.connection_lost)
             }
         }
         hideSystemBars()
@@ -325,45 +367,197 @@ class MainActivity : Activity() {
             val remembered = manual ?: ServerUrl.load(this, useUsb)
             val selected = remembered?.takeIf { Discovery.permitsRememberedEndpoint(it, useUsb, networks) && reachable(it) }
                 ?: if (manual == null) Discovery.find(::reachable, useUsb, networks) else null
+            val route = selected?.let { route(it) }
             runOnUiThread {
                 if (isDestroyed || isFinishing) return@runOnUiThread
-                if (selected == null) {
-                    failConnection(if (useUsb) R.string.usb_not_found else R.string.not_found)
-                } else {
-                    endpoint = selected
-                    ServerUrl.save(this, selected, useUsb)
-                    address.setText(selected)
-                    status.setText(R.string.connecting)
-                    loadFailed = false
-                    web.loadUrl(selected)
-                    web.postDelayed(loadTimeout, 15000)
+                when (route) {
+                    null -> failConnection(if (useUsb) R.string.usb_not_found else R.string.not_found)
+                    is Route.Plain -> open(route.endpoint, null, "", useUsb)
+                    is Route.Secure -> when (route.decision) {
+                        Trust.TRUST -> open(route.endpoint, route.hostId, route.hostName, useUsb)
+                        Trust.CONFIRM -> confirmTrust(route, useUsb)
+                        Trust.MISMATCH -> showMismatch(route)
+                    }
+                    Route.Unverified -> failConnection(R.string.connection_lost)
                 }
             }
         }
     }
 
-    private fun reachable(endpoint: String): Boolean {
-        if (!ServerUrl.isValid(endpoint)) return false
+    private sealed class Route {
+        class Plain(val endpoint: String) : Route()
+        class Secure(val endpoint: String, val hostId: String, val hostName: String,
+                     val fingerprint: String?, val decision: Trust) : Route()
+        /** The host needs https (it advertises TLS or is already trusted) but it could not be verified. */
+        object Unverified : Route()
+    }
+
+    /**
+     * Decide how to open a reachable host. Hosts that advertise TLS, were already
+     * trusted, or were selected as https are verified with the certificate their
+     * TLS handshake presents; /health's own `tls` field is only a hint. A trusted
+     * host never falls back to http.
+     */
+    private fun route(selected: String): Route {
+        val health = health(selected) ?: return Route.Unverified
+        val hostId = health.optString("hostId").takeIf(PinStore::isHostId)
+        val hostName = health.optString("hostName").trim().take(60).ifEmpty { URI(selected).host.orEmpty() }
+        val pinned = PinStore.get(this, hostId)
+        val advertised = health.optJSONObject("tls") != null
+        if (!advertised && pinned == null && !selected.startsWith("https://"))
+            return EndpointPolicy.withScheme(selected, "http")?.let { Route.Plain(it) } ?: Route.Unverified
+        if (hostId == null) return Route.Unverified
+        val secure = EndpointPolicy.withScheme(selected, "https") ?: return Route.Unverified
+        // A trusted host that stopped offering TLS no longer proves its identity.
+        if (!advertised && pinned != null) return Route.Secure(secure, hostId, hostName, null, Trust.MISMATCH)
+        runOnUiThread { if (!isDestroyed && !isFinishing) status.setText(R.string.securing) }
+        val presented = secureProbe(secure, pinned) ?: return Route.Unverified
+        val decision = PinDecision.decide(pinned, presented.fingerprint)
+        if (decision != Trust.MISMATCH && presented.hostId != hostId) return Route.Unverified
+        return Route.Secure(secure, hostId, hostName, presented.fingerprint, decision)
+    }
+
+    private fun open(selected: String, hostId: String?, hostName: String, useUsb: Boolean) {
+        endpointHostId = hostId
+        endpointHostName = hostName
+        endpoint = selected
+        ServerUrl.save(this, selected, useUsb)
+        address.setText(selected)
+        status.setText(R.string.connecting)
+        loadFailed = false
+        // Forget earlier certificate decisions so onReceivedSslError checks this load.
+        if (hostId != null) web.clearSslPreferences()
+        web.loadUrl(selected)
+        web.postDelayed(loadTimeout, 15000)
+    }
+
+    private fun showTrustDialog(builder: AlertDialog.Builder) {
+        trustDialog?.setOnDismissListener(null)
+        trustDialog?.dismiss()
+        web.removeCallbacks(loadTimeout)
+        web.stopLoading()
+        hideRemoteKeyboard()
+        web.visibility = View.GONE
+        connection.visibility = View.VISIBLE
+        syncIdleDisplay()
+        val dialog = builder.create()
+        trustDialog = dialog
+        dialog.setOnDismissListener { if (trustDialog === dialog) trustDialog = null }
+        dialog.show()
+    }
+
+    private fun confirmTrust(route: Route.Secure, useUsb: Boolean) {
+        val fingerprint = route.fingerprint ?: return failConnection(R.string.connection_lost)
+        val code = Fingerprint.securityCode(fingerprint)
+        val message = SpannableString(getString(R.string.trust_confirm_message, route.hostName, code))
+        val start = message.lastIndexOf(code)
+        if (start >= 0) {
+            val end = start + code.length
+            for (span in listOf(TypefaceSpan("monospace"), RelativeSizeSpan(1.4f), StyleSpan(Typeface.BOLD)))
+                message.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        showTrustDialog(AlertDialog.Builder(this)
+            .setTitle(R.string.trust_confirm_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.trust_confirm_accept) { _, _ ->
+                if (PinStore.save(this, route.hostId, fingerprint)) open(route.endpoint, route.hostId, route.hostName, useUsb)
+                else failConnection(R.string.connection_lost)
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> failConnection(R.string.connection_cancelled) }
+            .setOnCancelListener { failConnection(R.string.connection_cancelled) })
+    }
+
+    private fun showMismatch(route: Route.Secure) {
+        if (trustDialog != null) return
+        showTrustDialog(AlertDialog.Builder(this)
+            .setTitle(R.string.trust_mismatch_title)
+            .setMessage(getString(R.string.trust_mismatch_message, route.hostName))
+            .setPositiveButton(R.string.trust_mismatch_forget) { _, _ ->
+                PinStore.remove(this, route.hostId)
+                web.clearSslPreferences()
+                setBusy(false)
+                connect(route.endpoint)
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> failConnection(R.string.connection_cancelled) }
+            .setOnCancelListener { failConnection(R.string.connection_cancelled) })
+    }
+
+    private fun reachable(endpoint: String): Boolean = health(endpoint) != null
+
+    /** The host's plain-http /health, or null when it is not a reachable WinDock host. */
+    private fun health(candidate: String): JSONObject? {
+        val endpoint = EndpointPolicy.withScheme(candidate, "http") ?: return null
         var conn: HttpURLConnection? = null
         return try {
             conn = URL("$endpoint/health").openConnection() as HttpURLConnection
-            conn.connectTimeout = 1500
-            conn.readTimeout = 1500
-            conn.instanceFollowRedirects = false
-            conn.requestMethod = "GET"
-            conn.responseCode == 200 && conn.inputStream.bufferedReader().use { reader ->
-                val body = CharArray(4097)
-                var count = 0
-                while (count < body.size) {
-                    val read = reader.read(body, count, body.size - count)
-                    if (read == -1) break
-                    count += read
-                }
-                count <= 4096 && JSONObject(String(body, 0, count)).optString("app") == "windock"
-            }
-        } catch (_: Exception) { false }
+            readHealth(conn)
+        } catch (_: Exception) { null }
         finally { conn?.disconnect() }
     }
+
+    private fun readHealth(conn: HttpURLConnection): JSONObject? {
+        conn.connectTimeout = 1500
+        conn.readTimeout = 1500
+        conn.instanceFollowRedirects = false
+        conn.requestMethod = "GET"
+        if (conn.responseCode != 200) return null
+        return conn.inputStream.bufferedReader().use { reader ->
+            val body = CharArray(4097)
+            var count = 0
+            while (count < body.size) {
+                val read = reader.read(body, count, body.size - count)
+                if (read == -1) break
+                count += read
+            }
+            JSONObject(String(body, 0, count)).takeIf { count <= 4096 && it.optString("app") == "windock" }
+        }
+    }
+
+    private class Presented(val fingerprint: String, val hostId: String?)
+
+    /**
+     * One https /health request that records the leaf certificate presented in
+     * the handshake. Its trust manager is installed on this connection only: it
+     * accepts the pinned certificate (or, before pairing, whichever certificate
+     * is presented, for the person to confirm) and nothing else. Returns the
+     * presented fingerprint and, when the handshake was accepted, the host ID it served.
+     */
+    private fun secureProbe(endpoint: String, pinned: String?): Presented? {
+        if (!endpoint.startsWith("https://") || !ServerUrl.isValid(endpoint)) return null
+        var leaf: String? = null
+        val trust = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+                throw CertificateException("client certificates are not used")
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                val presented = chain?.firstOrNull()?.let { Fingerprint.of(it.encoded) }
+                    ?: throw CertificateException("no certificate")
+                leaf = presented
+                if (pinned != null && presented != pinned) throw CertificateException("certificate changed")
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        var conn: HttpsURLConnection? = null
+        return try {
+            val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), null) }
+            conn = URL("$endpoint/health").openConnection() as HttpsURLConnection
+            conn.sslSocketFactory = context.socketFactory
+            conn.hostnameVerifier = HostnameVerifier { _, session ->
+                val peer = session.peerCertificates.firstOrNull() as? X509Certificate
+                peer != null && leaf != null && Fingerprint.of(peer.encoded) == leaf
+            }
+            val health = readHealth(conn)
+            leaf?.let { Presented(it, health?.optString("hostId")?.takeIf(PinStore::isHostId)) }
+        } catch (_: Exception) { leaf?.let { Presented(it, null) } }
+        finally { conn?.disconnect() }
+    }
+
+    private fun fingerprintOf(certificate: SslCertificate?): String? = try {
+        val x509 = if (Build.VERSION.SDK_INT >= 29) certificate?.x509Certificate
+        else certificate?.let { SslCertificate.saveState(it).getByteArray("x509-certificate") }?.let {
+            CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(it)) as X509Certificate
+        }
+        x509?.let { Fingerprint.of(it.encoded) }
+    } catch (_: Exception) { null }
 
     @Deprecated("Activity back dispatch for the supported API 24+ range")
     override fun onBackPressed() {
@@ -403,6 +597,8 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         phoneDialog?.setOnDismissListener(null)
         phoneDialog?.dismiss()
+        trustDialog?.setOnDismissListener(null)
+        trustDialog?.dismiss()
         idleDisplay.close()
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         io.shutdownNow()

@@ -29,7 +29,8 @@ class PhoneOptionsTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val device = UiDevice.getInstance(instrumentation)
-    private val endpoint = "http://10.0.2.2:18622"
+    // The fixture serves https too, so the app remembers the verified https form of this endpoint.
+    private val endpoint = "http://10.0.2.2:" + (InstrumentationRegistry.getArguments().getString("smokePort") ?: "18622")
 
     private fun prepare() {
         assumeTrue("This fixture must not change a personal phone", Build.MODEL.contains("sdk"))
@@ -59,7 +60,30 @@ class PhoneOptionsTest {
         fail("Timed out waiting for native display/connection state")
     }
 
+    /**
+     * Wait until a USB connection attempt settles. Another WinDock host on the Mac
+     * (e.g. port 8620) may answer discovery through the emulator's wired link; it is
+     * never trusted here: its security code dialog is cancelled. Returns whether that happened.
+     */
+    private fun awaitUsbAttempt(scenario: ActivityScenario<MainActivity>): Boolean {
+        var cancelled = false
+        val deadline = SystemClock.uptimeMillis() + 20000
+        while (true) {
+            if (device.hasObject(By.text("Check the security code"))) {
+                device.findObject(By.res("android", "button2"))?.click()
+                cancelled = true
+            }
+            var idle = false
+            scenario.onActivity { idle = it.findViewById<Button>(R.id.usb_connect).isEnabled }
+            if (idle && !device.hasObject(By.text("Check the security code"))) return cancelled
+            assertTrue("Timed out waiting for the USB attempt", SystemClock.uptimeMillis() < deadline)
+            SystemClock.sleep(200)
+        }
+    }
+
     private fun loaded(scenario: ActivityScenario<MainActivity>): WebView {
+        // The fixture serves https; confirm its security code when not yet paired.
+        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)codes match"))), 3000)?.click()
         awaitUi(scenario) { it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE }
         lateinit var web: WebView
         scenario.onActivity { web = it.findViewById(R.id.web) }
@@ -162,22 +186,19 @@ class PhoneOptionsTest {
                 device.findObject(By.res("android", "button1")).click()
                 awaitUi(scenario) { PhonePreferences.usbOnly(context) }
                 assertTrue(PhonePreferences.usbOnly(context))
-                assertEquals(endpoint, ServerUrl.load(context, false))
-                awaitUi(scenario, 20000) {
-                    it.findViewById<Button>(R.id.usb_connect).isEnabled
-                }
+                assertEquals(EndpointPolicy.withScheme(endpoint, "https"), ServerUrl.load(context, false))
+                val cancelledUnknownHost = awaitUsbAttempt(scenario)
                 // Recent emulators expose both wlan0 and a virtual eth0. A
                 // connected result must belong to that wired subnet; this is
                 // not evidence of physical USB hardware support.
                 scenario.onActivity {
                     if (it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE)
                         assertTrue(Discovery.permitsRememberedEndpoint(ServerUrl.load(context)!!, true, LocalNetwork.available()))
-                    else assertEquals(it.getString(R.string.usb_not_found), it.findViewById<TextView>(R.id.status).text)
+                    else assertEquals(it.getString(if (cancelledUnknownHost) R.string.connection_cancelled else R.string.usb_not_found),
+                        it.findViewById<TextView>(R.id.status).text)
                 }
                 scenario.recreate()
-                awaitUi(scenario, 20000) {
-                    it.findViewById<Button>(R.id.usb_connect).isEnabled
-                }
+                awaitUsbAttempt(scenario)
                 assertEquals(LocalNetwork.available().any { it.wired }, PhonePreferences.usbOnly(context))
                 scenario.onActivity {
                     if (it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE) {
@@ -189,7 +210,7 @@ class PhoneOptionsTest {
                 scenario.onActivity { it.findViewById<Button>(R.id.retry).performClick() }
                 loaded(scenario)
                 assertFalse(PhonePreferences.usbOnly(context))
-                assertEquals(endpoint, ServerUrl.load(context, false))
+                assertEquals(EndpointPolicy.withScheme(endpoint, "https"), ServerUrl.load(context, false))
                 assertEquals(rememberedUsb, ServerUrl.load(context, true))
             }
         } finally {

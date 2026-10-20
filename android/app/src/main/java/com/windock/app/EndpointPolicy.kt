@@ -32,11 +32,20 @@ object EndpointPolicy {
             (octets[0] == 172 && octets[1] in 16..31)
     }
 
+    /** The same host and port under another scheme (WinDock serves http and https on one port). */
+    fun withScheme(endpoint: String?, scheme: String): String? = try {
+        val uri = URI(normalize(endpoint) ?: "")
+        val port = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
+        normalize(URI(scheme, null, uri.host, port, null, null, null).toASCIIString())
+    } catch (_: Exception) { null }
+
     fun allowsRequest(endpoint: String?, request: String?): Boolean = try {
         val origin = URI(normalize(endpoint) ?: "")
         val target = URI(request ?: "")
-        fun port(uri: URI) = if (uri.port != -1) uri.port else if (uri.scheme == "https") 443 else 80
+        // A WebSocket shares its page's origin: ws pairs with http, wss with https.
+        fun scheme(uri: URI) = when (uri.scheme) { "ws" -> "http"; "wss" -> "https"; else -> uri.scheme }
+        fun port(uri: URI) = if (uri.port != -1) uri.port else if (scheme(uri) == "https") 443 else 80
         origin.host != null && target.rawUserInfo == null &&
-            target.scheme == origin.scheme && target.host == origin.host && port(target) == port(origin)
+            scheme(target) == origin.scheme && target.host == origin.host && port(target) == port(origin)
     } catch (_: Exception) { false }
 }

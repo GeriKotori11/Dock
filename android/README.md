@@ -161,10 +161,22 @@ Android's network security XML matches domains, not private IP subnets. The
 transport allows HTTP, while `EndpointPolicy` limits selected hosts to private
 or loopback IPv4 addresses (plus localhost). Health checks reject redirects,
 limit response size/time and require WinDock's identity. The WebView permits
-only the selected origin, disables file/content access, and never overrides
-TLS certificate errors. PIN/session handling stays in the shared web UI.
-This is LAN HTTP, not encrypted transport. Android HTTP does not enable the
-PWA's secure-origin-only service worker/offline support.
+only the selected origin, disables file/content access, and keeps PIN/session
+handling in the shared web UI.
+
+Hosts whose `/health` reports `tls` are opened over HTTPS on the same port.
+The app makes one https `/health` request with a per-connection trust manager
+that records the certificate presented in the handshake (the `/health` `tls`
+field is only a hint). The first time, it shows that certificate's security
+code (`XXXX-XXXX-XXXX`) to compare with the host; "Codes match" pins
+`hostId -> SHA-256 fingerprint` in `PinStore`. Later connections must present
+the pinned certificate exactly, otherwise "Security code changed" appears and
+the app never falls back to http. The WebView proceeds past the self-signed
+certificate error only for the selected https origin presenting the pinned
+fingerprint; no process-wide trust is changed. Hosts without `tls` keep the
+old LAN HTTP behaviour. The smoke fixture serves HTTPS too, so `DockSmokeTest`
+accepts the security code dialog before pairing; set `ANDROID_SMOKE_PORT` and
+`-Pandroid.testInstrumentationRunnerArguments.smokePort` together if 18622 is taken.
 
 Reference documentation: [Android network security](https://developer.android.com/privacy-and-security/security-config),
 [immersive system bars](https://developer.android.com/develop/ui/views/layout/immersive),

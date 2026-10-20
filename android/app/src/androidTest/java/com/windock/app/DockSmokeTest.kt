@@ -15,10 +15,13 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -27,7 +30,7 @@ import java.util.concurrent.TimeUnit
 class DockSmokeTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
-    private val endpoint = "http://10.0.2.2:18622"
+    private val endpoint = "http://10.0.2.2:" + (InstrumentationRegistry.getArguments().getString("smokePort") ?: "18622")
     private fun screenshot(name: String) {
         val bitmap = instrumentation.uiAutomation.takeScreenshot()
         File(context.getExternalFilesDir(null), name).outputStream().use {
@@ -80,14 +83,29 @@ class DockSmokeTest {
         send(MotionEvent.ACTION_UP, x2, y2)
     }
 
+    /** The code the fixture advertises; the dialog must show the same one, computed from the handshake. */
+    private fun advertisedCode(): String {
+        val conn = URL("$endpoint/health").openConnection() as HttpURLConnection
+        return try { JSONObject(conn.inputStream.bufferedReader().readText()).getJSONObject("tls").getString("code") }
+        finally { conn.disconnect() }
+    }
+
     @Test fun installedAppPairsRendersSwipesAndDispatchesActions() {
+        // The fixture makes a new certificate per run: start from "never paired".
+        context.getSharedPreferences("pins", android.content.Context.MODE_PRIVATE).edit().clear().commit()
         ServerUrl.save(context, endpoint)
+        val code = advertisedCode()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var web: WebView
             scenario.onActivity { activity ->
                 web = activity.findViewById(R.id.web)
                 assertEquals(Configuration.ORIENTATION_LANDSCAPE, activity.resources.configuration.orientation)
             }
+            val device = UiDevice.getInstance(instrumentation)
+            assertNotNull("Security code dialog", device.wait(Until.findObject(By.text("Check the security code")), 15000))
+            assertNotNull("Dialog shows the host's code $code", device.findObject(By.textContains(code)))
+            screenshot("trust-confirm.png")
+            device.findObject(By.text(java.util.regex.Pattern.compile("(?i)codes match"))).click()
             awaitJs(web, "!!document.getElementById('pin')")
             awaitJs(web, "!document.getElementById('pair').hidden || !document.getElementById('app').hidden")
             if (js(web, "!document.getElementById('pair').hidden") == "true") {
@@ -97,6 +115,8 @@ class DockSmokeTest {
             }
             awaitJs(web, "!document.getElementById('app').hidden && document.querySelectorAll('.tile').length === 5")
             awaitJs(web, "document.getElementById('conn').textContent === 'Connected'")
+            assertEquals("\"${EndpointPolicy.withScheme(endpoint, "https")}\"", js(web, "location.origin"))
+            scenario.onActivity { assertEquals(EndpointPolicy.withScheme(endpoint, "https"), ServerUrl.load(it)) }
             // A fresh Android image explains immersive mode with a system overlay.
             UiDevice.getInstance(instrumentation).wait(Until.findObject(By.text("Got it")), 3000)?.click()
             assertEquals("true", js(web, "innerWidth > innerHeight && document.body.classList.contains('is-immersive')"))
