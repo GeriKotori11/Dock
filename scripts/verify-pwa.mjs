@@ -128,6 +128,41 @@ for (const text of [
 ]) t.ok(appJs.includes(text), `app.js carries the copy: ${text}`);
 for (const old of ["Windows app", '" on your PC"', "this PC", "Your PC is disconnected"]) t.ok(!appJs.includes(old), `app.js no longer says "${old}"`);
 t.ok(html.includes("Enter the PIN shown by WinDock on your computer."), "the pair hint is platform neutral");
+for (const text of ["Your computer.<br><em>Within reach.</em>", "<h2>Pair this phone</h2>", "Connect to your computer <span", "This phone · screen</button>"]) {
+  t.ok(html.includes(text), `the shell carries the copy: ${text}`);
+}
+for (const old of ["Your PC.", "Hello, desktop.", "Connect to your PC", "screen &amp; sleep"]) t.ok(!html.includes(old), `the shell no longer says "${old}"`);
+for (const text of ["Connection lost. Check that WinDock is running on your computer.", "Start WinDock on your computer, then connect with its PIN."]) {
+  t.ok(appJs.includes(text), `app.js carries the copy: ${text}`);
+}
+
+// ---- picker counts are pluralized ----
+const pluralSource = appJs.match(/const pluralize = (\([^)]*\) => [^;]+);/);
+t.ok(pluralSource, "app.js defines a pluralize helper");
+const pluralize = pluralSource ? new Function("return " + pluralSource[1])() : () => "";
+t.equal(pluralize(1, "app"), "1 app", "one app is singular");
+t.equal(pluralize(0, "app"), "0 apps", "zero apps is plural");
+t.equal(pluralize(2, "app"), "2 apps", "two apps is plural");
+t.equal(pluralize(1, "copy", "copies"), "1 copy", "an irregular singular is kept");
+t.equal(pluralize(3, "copy", "copies"), "3 copies", "an irregular plural is used");
+t.ok(appJs.includes('pluralize(matches.length, "app") + (term ? " found" : " on this computer")'), "the picker count uses the helper");
+t.ok(!appJs.includes('matches.length + " apps"'), "the picker no longer says \"1 apps\"");
+
+// ---- reconnect pill ----
+const pill = html.match(/<div id="reconnect"[^>]*>/)?.[0] || "";
+t.ok(pill.includes('role="status"') && pill.includes('aria-live="polite"'), "the reconnect pill is a polite live region");
+t.ok(pill.includes('data-visible="false"'), "the reconnect pill starts hidden");
+t.ok(html.indexOf('id="reconnect"') < html.indexOf('id="dock"') && html.includes('id="reconnect-text"'), "the pill sits at the top of the dock with its own text");
+t.ok(appJs.includes('"Reconnecting to " + (state.hostName || "your computer") + "…"'), "the pill names the computer");
+t.ok(/offlineTimer = setTimeout\(\(\) => setOffline\(!online && paired\), 1500\)/.test(appJs), "the pill waits 1.5 s and rechecks before showing");
+t.ok(/function syncOffline\(\) \{\n  if \(online \|\| !paired\) return setOffline\(false\);/.test(appJs), "reconnecting or unpairing hides the pill at once");
+t.ok(/function setConn\(on\) \{[\s\S]*?syncOffline\(\);\n\}/.test(appJs), "every connection change updates the pill");
+t.ok(appJs.includes('$("dock").classList.toggle("is-offline", visible)'), "the dock dims with the pill");
+t.ok(appJs.includes('if (!online) return notify("Your computer is disconnected. Waiting for it to reconnect.", true);'), "tapping while offline keeps the toast");
+t.ok(/\.dock\.is-offline \.dock-page \{ opacity: \.55; \}/.test(css) && /\.dock-page \{ transition: opacity \.2s; \}/.test(css), "offline pages dim to .55 over 200 ms");
+t.ok(/\.reconnect \{[^}]*var\(--glass-bg\)[^}]*var\(--glass-border\)/.test(css), "the pill uses the glass tokens");
+t.ok(/@media \(prefers-reduced-motion: reduce\) \{ \.reconnect__dot \{ animation: none; \} \}/.test(css), "the pill's dot does not pulse with reduced motion");
+t.ok(/\.dock-page--single-row \{[^}]*align-content: center/.test(css), "a single row of tiles is vertically centred");
 t.ok(html.includes('id="host-name" class="bar__host">Your computer<') && html.includes('id="drawer-host">Your computer<'), "host name placeholders are platform neutral");
 
 t.equal(glyphFor({ kind: "control", verb: "lock" }), "🔒", "control tiles get their verb glyph");

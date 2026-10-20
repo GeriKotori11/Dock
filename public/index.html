@@ -16,13 +16,13 @@
   <p>Turn your phone sideways to use WinDock.</p><span class="eyebrow">YOUR DESKTOP, WITHIN REACH</span>
 </div>
 <div id="pair" class="pair" hidden>
-  <div class="pair__intro"><div class="brand"><span data-icon="grid"></span>WinDock<span class="brand__dot"></span></div><h1>Your PC.<br><em>Within reach.</em></h1><p>Your favorites. Your controls. A space of your own.</p></div>
+  <div class="pair__intro"><div class="brand"><span data-icon="grid"></span>WinDock<span class="brand__dot"></span></div><h1>Your computer.<br><em>Within reach.</em></h1><p>Your favorites. Your controls. A space of your own.</p></div>
   <form id="pair-form" class="pair__card">
-    <p class="eyebrow">MAKE THE CONNECTION</p><h2>Hello, desktop.</h2>
+    <p class="eyebrow">MAKE THE CONNECTION</p><h2>Pair this phone</h2>
     <p class="pair__hint">Enter the PIN shown by WinDock on your computer.</p>
     <input id="pin" class="pair__pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="····" autocomplete="one-time-code" aria-label="PIN" required>
     <p id="pair-error" class="pair__error" role="alert"></p>
-    <button class="button button--primary pair__go" type="submit">Connect to your PC <span data-icon="arrow"></span></button>
+    <button class="button button--primary pair__go" type="submit">Connect to your computer <span data-icon="arrow"></span></button>
     <p class="pair__note">Both devices need to be on the same network.</p>
   </form>
 </div>
@@ -37,6 +37,7 @@
   </header>
   <div class="workspace">
     <div class="dock-heading"><div><span class="eyebrow">YOUR EVERYDAY, ONE TAP AWAY</span><h1 id="dock-title">Make yourself at home.</h1></div><p id="edit-hint">Hold an icon to arrange your space</p></div>
+    <div id="reconnect" class="reconnect" role="status" aria-live="polite" data-visible="false"><span class="reconnect__dot" aria-hidden="true"></span><span id="reconnect-text"></span></div>
     <section id="dock" class="dock" aria-label="Dock"></section>
     <div id="page-dots" class="page-dots" aria-label="Dock pages"></div>
   </div>
@@ -154,7 +155,7 @@
       </div>
       <label class="setting-row" for="glass-theme">Glass style<select id="glass-theme"><option value="glass">Clear</option><option value="frost">Frosted</option><option value="smoke">Smoked</option></select></label>
       <div class="settings__utilities"><button id="fullscreen" class="button" type="button"><span data-icon="monitor"></span>Fullscreen</button><button id="refresh" class="button" type="button"><span data-icon="refresh"></span>Refresh</button></div>
-      <div class="settings__utilities" id="phone-options-row" hidden><button id="phone-options" class="button" type="button"><span data-icon="sun"></span>This phone · screen &amp; sleep</button></div>
+      <div class="settings__utilities" id="phone-options-row" hidden><button id="phone-options" class="button" type="button"><span data-icon="sun"></span>This phone · screen</button></div>
     </section>
   </div>
 </dialog>

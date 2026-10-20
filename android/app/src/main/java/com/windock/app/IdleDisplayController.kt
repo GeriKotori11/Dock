@@ -5,14 +5,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
-import android.view.View
-import android.view.WindowManager
 import kotlin.math.min
 
-/** Uses only this Activity's brightness and keep-awake flag; no admin privileges. */
-class IdleDisplayController(private val activity: Activity, private val cover: View,
-                            private val clock: () -> Long = SystemClock::uptimeMillis,
-                            private val onRest: () -> Unit = {}) {
+/** Dims only this Activity's brightness while the dock is idle; no admin privileges.
+ *  Keeping the screen on is the Activity's job (FLAG_KEEP_SCREEN_ON while resumed). */
+class IdleDisplayController(private val activity: Activity,
+                            private val clock: () -> Long = SystemClock::uptimeMillis) {
     private val handler = Handler(Looper.getMainLooper())
     private val originalBrightness = activity.window.attributes.screenBrightness
     private var lastInput = clock()
@@ -35,7 +33,7 @@ class IdleDisplayController(private val activity: Activity, private val cover: V
         userActivity()
     }
 
-    /** Returns true when the first gesture should only wake the dimmed/black dock. */
+    /** Returns true when the first gesture should only wake the dimmed dock. */
     fun userActivity(): Boolean {
         val waking = active && stage != DisplayPolicy.Stage.AWAKE
         lastInput = clock()
@@ -46,17 +44,10 @@ class IdleDisplayController(private val activity: Activity, private val cover: V
     private fun refresh() {
         handler.removeCallbacks(tick)
         val elapsed = (clock() - lastInput).coerceAtLeast(0)
-        val previousStage = stage
         stage = if (active) policy.stage(elapsed) else DisplayPolicy.Stage.AWAKE
-        if (stage == DisplayPolicy.Stage.RESTING && previousStage != stage) onRest()
-        cover.visibility = if (stage == DisplayPolicy.Stage.RESTING) View.VISIBLE else View.GONE
-        if (stage == DisplayPolicy.Stage.RESTING) cover.bringToFront()
         val window = activity.window
-        if (active && policy.keepsAwake(stage)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val brightness = when (stage) {
             DisplayPolicy.Stage.AWAKE -> originalBrightness
-            DisplayPolicy.Stage.RESTING -> 0f
             DisplayPolicy.Stage.DIMMED -> {
                 val current = if (originalBrightness >= 0) originalBrightness else
                     Settings.System.getInt(activity.contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f
@@ -64,7 +55,7 @@ class IdleDisplayController(private val activity: Activity, private val cover: V
             }
         }
         if (window.attributes.screenBrightness != brightness) window.attributes = window.attributes.apply { screenBrightness = brightness }
-        if (active && stage != DisplayPolicy.Stage.RESTING) policy.nextDeadline(elapsed)?.let {
+        if (active) policy.nextDeadline(elapsed)?.let {
             handler.postDelayed(tick, (it - elapsed).coerceAtLeast(1))
         }
     }

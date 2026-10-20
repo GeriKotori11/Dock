@@ -30,7 +30,13 @@ const tiles = Array.from({ length: 17 }, (_, i) => ({ kind: "app", id: `c:/apps/
 t.equal(pageCount(tiles, layout), 3, "overflow creates a partially populated third page");
 t.equal(pageCount([], layout), 1, "empty dock keeps one page");
 const markup = renderPages({ tiles }, layout, true);
-t.equal((markup.match(/class="dock-page"/g) || []).length, 3, "all pages render");
+t.equal((markup.match(/class="dock-page[" ]/g) || []).length, 3, "all pages render");
+t.equal((markup.match(/dock-page--single-row/g) || []).length, 1, "only the page with one row of tiles is centred");
+for (const [count, single] of [[1, true], [layout.columns, true], [layout.columns + 1, false], [layout.columns * 2, false]]) {
+  const page = renderPages({ tiles: tiles.slice(0, count) }, layout);
+  t.equal(page.includes("dock-page--single-row"), single, `${count} tile(s) ${single ? "centre" : "keep"} the page layout`);
+  t.equal((page.match(/data-tile-key=/g) || []).length, count, `${count} tile(s) all render`);
+}
 t.equal((markup.match(/data-action="options"/g) || []).length, 17, "every editing tile opens options");
 t.ok(!markup.includes('data-action="launch"'), "editing tiles cannot dispatch launch");
 const reordered = moveToTile(tiles, tileKey(tiles[1]), tileKey(tiles[12]));

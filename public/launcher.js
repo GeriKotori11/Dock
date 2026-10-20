@@ -25,9 +25,12 @@ export function pageCount(tiles, layout) {
 export function renderPages(state, layout, editing = false) {
   if (!state.tiles.length) return renderTiles(state);
   const capacity = layout.columns * layout.rows;
-  return Array.from({ length: pageCount(state.tiles, layout) }, (_, page) =>
-    `<div class="dock-page" role="group" aria-label="Page ${page + 1}">${state.tiles.slice(page * capacity, (page + 1) * capacity).map((tile) => renderTile(tile, { editing, launcher: true })).join("")}</div>`
-  ).join("");
+  return Array.from({ length: pageCount(state.tiles, layout) }, (_, page) => {
+    const tiles = state.tiles.slice(page * capacity, (page + 1) * capacity);
+    // A page whose tiles fit in one row is centred vertically (see .dock-page--single-row).
+    const single = tiles.length <= layout.columns ? " dock-page--single-row" : "";
+    return `<div class="dock-page${single}" role="group" aria-label="Page ${page + 1}">${tiles.map((tile) => renderTile(tile, { editing, launcher: true })).join("")}</div>`;
+  }).join("");
 }
 
 export function moveToTile(tiles, key, targetKey) {

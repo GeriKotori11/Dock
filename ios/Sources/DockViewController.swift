@@ -33,6 +33,9 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.035, green: 0.055, blue: 0.063, alpha: 1)
         view.tintColor = mint
+        // The screen never sleeps while WinDock is in the foreground (connection screen included).
+        // iOS restores the system idle timer on its own when the app goes to the background.
+        UIApplication.shared.isIdleTimerDisabled = true
         buildConnectionScreen()
         buildPCMenu()
         address.text = defaults.string(forKey: Self.rememberedPCKey)
@@ -73,19 +76,19 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         let brandRow = UIStackView(arrangedSubviews: [mark, brand])
         brandRow.spacing = 12
         brandRow.alignment = .center
-        let title = label("Your PC.\nWithin reach.", size: 34, weight: .bold)
-        let intro = label("A little space for your Windows apps.\nKeep both devices on the same Wi-Fi.", size: 14)
+        let title = label("Your computer.\nWithin reach.", size: 34, weight: .bold)
+        let intro = label("A little space for your favorite apps.\nKeep both devices on the same Wi-Fi.", size: 14)
         intro.textColor = .secondaryLabel
         let left = UIStackView(arrangedSubviews: [brandRow, title, intro])
         left.axis = .vertical
         left.spacing = 18
         left.alignment = .leading
 
-        let heading = label("Connect to your PC", size: 21, weight: .semibold)
-        let hint = label("On Windows, open the WinDock tray menu → Show connection info. Enter the address shown there.", size: 13)
+        let heading = label("Connect to your computer", size: 21, weight: .semibold)
+        let hint = label("Find the address WinDock shows on your computer: on Windows, tray menu → Show connection info; on a Mac, run npm run info.", size: 13)
         hint.textColor = .secondaryLabel
         address.accessibilityIdentifier = "pc-address"
-        address.accessibilityLabel = "PC address"
+        address.accessibilityLabel = "Computer address"
         address.placeholder = "192.168.1.20:8620"
         address.keyboardType = .URL
         address.autocapitalizationType = .none
@@ -117,7 +120,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         status.font = .systemFont(ofSize: 12)
         status.textColor = .secondaryLabel
         status.numberOfLines = 0
-        status.text = "Your PC will ask you to pair with a PIN."
+        status.text = "Your computer will ask you to pair with a PIN."
         status.accessibilityIdentifier = "connection-status"
         let statusRow = UIStackView(arrangedSubviews: [spinner, status])
         statusRow.spacing = 8
@@ -151,12 +154,12 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         config.background.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         config.cornerStyle = .capsule
         pcButton.configuration = config
-        pcButton.accessibilityLabel = "PC connection options"
+        pcButton.accessibilityLabel = "Connection options"
         pcButton.accessibilityIdentifier = "pc-options"
         pcButton.showsMenuAsPrimaryAction = true
         pcButton.menu = UIMenu(children: [
             UIAction(title: "Reconnect", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in self?.connect() },
-            UIAction(title: "Change PC", image: UIImage(systemName: "desktopcomputer")) { [weak self] _ in self?.showConnection() }
+            UIAction(title: "Change computer", image: UIImage(systemName: "desktopcomputer")) { [weak self] _ in self?.showConnection() }
         ])
         pcButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(pcButton)
@@ -174,7 +177,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         showConnection()
         view.endEditing(true)
         guard let endpoint = EndpointPolicy.normalize(address.text) else {
-            status.text = "Enter a local PC address, for example 192.168.1.20:8620."
+            status.text = "Enter a local computer address, for example 192.168.1.20:8620."
             return
         }
         self.endpoint = endpoint
@@ -186,7 +189,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         probe.start(endpoint: endpoint) { [weak self] found in
             guard let self, self.attempt == id else { return }
             guard found else {
-                self.showConnection(message: "Couldn’t reach WinDock. Check the tray address, Wi-Fi, Windows firewall and Settings → Privacy & Security → Local Network, then retry.")
+                self.showConnection(message: "Couldn’t reach WinDock. Check the address WinDock shows, Wi-Fi, firewall and Settings → Privacy & Security → Local Network, then retry.")
                 return
             }
             self.loadDock(endpoint, attempt: id)
@@ -231,7 +234,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         }
     }
 
-    func showConnection(message: String = "Enter your PC address to connect.") {
+    func showConnection(message: String = "Enter your computer's address to connect.") {
         attempt = UUID()
         probe.cancel()
         loadTimeout?.cancel()
@@ -247,7 +250,6 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         address.isEnabled = true
         spinner.stopAnimating()
         status.text = message
-        UIApplication.shared.isIdleTimerDisabled = false
         setNeedsUpdateOfHomeIndicatorAutoHidden()
     }
 
@@ -268,7 +270,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
         if navigationResponse.isForMainFrame,
            let response = navigationResponse.response as? HTTPURLResponse, !(200...299).contains(response.statusCode) {
             decisionHandler(.cancel)
-            showConnection(message: "WinDock couldn’t open the dock. Check the PC and retry.")
+            showConnection(message: "WinDock couldn’t open the dock. Check the computer and retry.")
             return
         }
         decisionHandler(.allow)
@@ -291,7 +293,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, UITextFi
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(webView, error) }
     private func failed(_ web: WKWebView, _ error: Error) {
         guard web === webView, (error as NSError).code != NSURLErrorCancelled else { return }
-        showConnection(message: "Connection interrupted. Check your PC and Wi-Fi, then reconnect.")
+        showConnection(message: "Connection interrupted. Check your computer and Wi-Fi, then reconnect.")
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard webView === self.webView else { return }

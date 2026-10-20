@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.Gravity
@@ -72,7 +73,7 @@ class MainActivity : Activity() {
         retryButton = findViewById(R.id.retry)
         ServerUrl.migrate(this)
         usbOnly = PhonePreferences.usbOnly(this)
-        idleDisplay = IdleDisplayController(this, findViewById(R.id.idle_cover), onRest = { hideRemoteKeyboard() })
+        idleDisplay = IdleDisplayController(this)
         setupRemoteKeyboard()
         address.setText(ServerUrl.load(this).orEmpty())
         connectButton.setOnClickListener {
@@ -385,12 +386,25 @@ class MainActivity : Activity() {
         }
     }
 
-    override fun onResume() { super.onResume(); resumed = true; if (::web.isInitialized) web.onResume(); syncIdleDisplay() }
-    override fun onPause() { resumed = false; wakingGesture = false; wakingKeys.clear(); syncIdleDisplay(); hideRemoteKeyboard(); if (::web.isInitialized) web.onPause(); super.onPause() }
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        // The screen never turns off while WinDock is in front: connection, pairing and dock alike.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (::web.isInitialized) web.onResume()
+        syncIdleDisplay()
+    }
+    override fun onPause() {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        resumed = false; wakingGesture = false; wakingKeys.clear(); syncIdleDisplay(); hideRemoteKeyboard()
+        if (::web.isInitialized) web.onPause()
+        super.onPause()
+    }
     override fun onDestroy() {
         phoneDialog?.setOnDismissListener(null)
         phoneDialog?.dismiss()
         idleDisplay.close()
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         io.shutdownNow()
         web.removeCallbacks(loadTimeout)
         web.stopLoading()

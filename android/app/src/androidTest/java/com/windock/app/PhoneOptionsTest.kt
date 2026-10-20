@@ -1,9 +1,7 @@
 package com.windock.app
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
-import android.os.PowerManager
 import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
@@ -11,8 +9,6 @@ import android.webkit.WebView
 import android.widget.Button
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -39,7 +35,7 @@ class PhoneOptionsTest {
         assumeTrue("This fixture must not change a personal phone", Build.MODEL.contains("sdk"))
         device.wakeUp()
         PhonePreferences.setUsbOnly(context, false)
-        PhonePreferences.saveDisplay(context, DisplayPolicy(0, -1))
+        PhonePreferences.saveDisplay(context, DisplayPolicy(0))
         ServerUrl.save(context, endpoint)
     }
 
@@ -93,7 +89,7 @@ class PhoneOptionsTest {
         choice.click()
     }
 
-    @Test fun nativeSettingsPersistDimConsumeWakeAndReleaseScreenForSleep() {
+    @Test fun nativeSettingsPersistDimConsumeWakeAndKeepScreenOn() {
         prepare()
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -101,19 +97,18 @@ class PhoneOptionsTest {
                 assertEquals("false", js(web, "document.getElementById('phone-options-row').hidden"))
                 js(web, "document.getElementById('phone-options').click()")
                 assertTrue(device.wait(Until.hasObject(By.text("This phone")), 5000))
+                assertFalse("The Screen off option is gone", device.hasObject(By.text("Screen off")))
                 screenshot("phone-options.png")
                 choose("dim_delay", "After 15 seconds")
-                choose("sleep_delay", "After 1 minute idle")
                 device.findObject(By.res("android", "button1")).click()
-                awaitUi(scenario) { PhonePreferences.display(context) == DisplayPolicy(15_000, 60_000, 10) }
-                assertEquals(DisplayPolicy(15_000, 60_000, 10), PhonePreferences.display(context))
+                awaitUi(scenario) { PhonePreferences.display(context) == DisplayPolicy(15_000, 10) }
+                assertEquals(DisplayPolicy(15_000, 10), PhonePreferences.display(context))
 
                 scenario.recreate()
                 web = loaded(scenario)
                 js(web, "window.__wakeClicks=0;document.addEventListener('pointerdown',()=>window.__wakeClicks++,true)")
                 awaitUi(scenario, 20000) { it.window.attributes.screenBrightness in 0f..0.1f }
                 scenario.onActivity {
-                    assertEquals(View.GONE, it.findViewById<View>(R.id.idle_cover).visibility)
                     assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                 }
                 var x = 0; var y = 0
@@ -124,35 +119,17 @@ class PhoneOptionsTest {
                 device.click(x, y)
                 SystemClock.sleep(300)
                 assertEquals("1", js(web, "window.__wakeClicks"))
-                // Background WebView updates must not keep an idle dock awake.
-                js(web, "window.__idleUpdate=setInterval(()=>document.body.dataset.idleTest=Date.now(),250)")
-                js(web, "window.WinDockAndroid.showKeyboard('4242',false)")
-                awaitUi(scenario) {
-                    ViewCompat.getRootWindowInsets(it.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
-                }
-                awaitUi(scenario, 65000) { it.findViewById<View>(R.id.idle_cover).visibility == View.VISIBLE }
-                awaitUi(scenario) {
-                    ViewCompat.getRootWindowInsets(it.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == false
-                }
-                screenshot("phone-screen-resting.png")
+                // Dimmed for a long while, the screen still stays on.
+                awaitUi(scenario, 20000) { it.window.attributes.screenBrightness in 0f..0.1f }
+                SystemClock.sleep(2000)
                 scenario.onActivity {
-                    assertEquals(0f, it.window.attributes.screenBrightness)
-                    assertEquals(0, it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                 }
-                // When requested by the test command, prove Android actually powers
-                // the display off, beyond merely drawing a black surface.
-                if (InstrumentationRegistry.getArguments().getString("verifySleep") == "true") {
-                    val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-                    val deadline = SystemClock.uptimeMillis() + 25000
-                    while (power.isInteractive && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(250)
-                    assertFalse("Android should turn off the display after keep-awake is released", power.isInteractive)
-                    device.wakeUp()
-                    device.pressMenu()
-                    awaitUi(scenario) { it.findViewById<View>(R.id.idle_cover).visibility == View.GONE }
-                } else {
-                    device.click(x, y)
-                    awaitUi(scenario) { it.findViewById<View>(R.id.idle_cover).visibility == View.GONE }
-                    assertEquals("1", js(web, "window.__wakeClicks"))
+                // The connection screen keeps the screen on too.
+                scenario.onActivity { @Suppress("DEPRECATION") it.onBackPressed() }
+                awaitUi(scenario) { it.findViewById<View>(R.id.connection).visibility == View.VISIBLE }
+                scenario.onActivity {
+                    assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                 }
                 scenario.moveToState(Lifecycle.State.CREATED)
                 scenario.onActivity {
@@ -160,7 +137,9 @@ class PhoneOptionsTest {
                     assertEquals(0, it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
                 scenario.moveToState(Lifecycle.State.RESUMED)
-                awaitUi(scenario) { it.window.attributes.screenBrightness == -1f }
+                scenario.onActivity {
+                    assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
+                }
             }
         } finally { PhonePreferences.saveDisplay(context, DisplayPolicy()) }
     }

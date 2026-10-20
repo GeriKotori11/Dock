@@ -6,11 +6,12 @@ import { createInputPad } from "./input-pad.js";
 import { createNowPlayingPoller } from "./now-playing.js";
 
 const $ = (id) => document.getElementById(id);
+const pluralize = (count, word, plural = word + "s") => count + " " + (count === 1 ? word : plural);
 let state = { tiles: [], running: [], verbs: [] };
 let editing = false, paired = false, online = false, saving = false;
 let socket = null, reconnectTimer = null, installedApps = [], appsLoaded = false;
 let currentPage = 0, toastTimer, selectedKey = "", suppressClickUntil = 0;
-let pageHintTimer;
+let pageHintTimer, offlineTimer;
 let captureState = { available: false, phase: "idle" }, captureBusy = false, capturePoll = false, captureReceivedAt = Date.now();
 let nowPlayingHtml = "";
 // Hosts before per-host features sent no `features`; treat that as everything on.
@@ -53,7 +54,7 @@ function notify(message, error = false) {
 }
 function report(error) {
   if (error.message === "unauthorized") return;
-  notify(error.message === "Failed to fetch" ? "Connection lost. Check that WinDock is running on your PC." : error.message, true);
+  notify(error.message === "Failed to fetch" ? "Connection lost. Check that WinDock is running on your computer." : error.message, true);
 }
 function captureActive() { return ["starting", "recording", "stopping"].includes(captureState.phase); }
 function captureTime() {
@@ -125,8 +126,9 @@ function showPair(message = "") {
   $("pair").hidden = false;
   $("app").hidden = true;
   $("pair-error").textContent = message;
+  syncOffline();
 }
-function showApp() { paired = true; $("pair").hidden = true; $("app").hidden = false; syncLayout(); paintCapture(); }
+function showApp() { paired = true; $("pair").hidden = true; $("app").hidden = false; syncLayout(); paintCapture(); syncOffline(); }
 function setConn(on) {
   online = on;
   if (!on) inputPad.disconnect();
@@ -135,6 +137,19 @@ function setConn(on) {
   $("drawer-conn").dataset.state = $("conn").dataset.state;
   $("drawer-conn").textContent = $("conn").textContent;
   paintCapture();
+  syncOffline();
+}
+// A brief socket blip stays silent; after 1.5 s offline the dock says so and dims.
+// Reconnecting clears both at once.
+function setOffline(visible) {
+  clearTimeout(offlineTimer); offlineTimer = null;
+  $("reconnect").dataset.visible = String(visible);
+  $("reconnect-text").textContent = visible ? "Reconnecting to " + (state.hostName || "your computer") + "…" : "";
+  $("dock").classList.toggle("is-offline", visible);
+}
+function syncOffline() {
+  if (online || !paired) return setOffline(false);
+  if (!offlineTimer && $("reconnect").dataset.visible !== "true") offlineTimer = setTimeout(() => setOffline(!online && paired), 1500);
 }
 function syncLayout() {
   const root = document.documentElement.style;
@@ -307,7 +322,7 @@ function drawApps() {
   const term = $("filter").value.trim().toLowerCase();
   const matches = installedApps.filter((app) => app.name.toLowerCase().includes(term));
   const pinned = new Set(state.tiles.filter((tile) => tile.kind === "app").map((tile) => tile.id));
-  $("picker-status").textContent = matches.length + " apps" + (term ? " found" : " on this computer") + " · " + pinned.size + " pinned";
+  $("picker-status").textContent = pluralize(matches.length, "app") + (term ? " found" : " on this computer") + " · " + pinned.size + " pinned";
   $("picker-list").innerHTML = matches.length ? matches.map((app) => '<li><button type="button" data-id="' + escapeHtml(app.id) + '"' + (pinned.has(app.id) ? " disabled" : "") + ' aria-label="' + escapeHtml((pinned.has(app.id) ? "Pinned: " : "Add ") + app.name) + '">' + renderAppIcon(app, true) + '<span class="picker__name">' + escapeHtml(app.name) + '<small>' + (pinned.has(app.id) ? "On your dock" : platformLabel() + " app") + '</small></span><span class="picker__add">' + icon(pinned.has(app.id) ? "check" : "plus") + "</span></button></li>").join("") : '<li class="picker__empty">No apps found. Try a different name.</li>';
 }
 function drawControls() {
@@ -576,7 +591,7 @@ if ("serviceWorker" in navigator) {
 syncLayout();
 (async function boot() {
   try { await refresh(); showApp(); connect(); }
-  catch (error) { showPair(error.message === "unauthorized" ? "" : "Start WinDock on your PC, then connect with its PIN."); }
+  catch (error) { showPair(error.message === "unauthorized" ? "" : "Start WinDock on your computer, then connect with its PIN."); }
 })();
 // Refresh when returning to the dock. No background native polling while hidden.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && paired) refresh().then(connect).catch(report); });

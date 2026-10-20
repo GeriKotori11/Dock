@@ -44,7 +44,4 @@
             </LinearLayout>
         </LinearLayout>
     </ScrollView>
-    <View android:id="@+id/idle_cover" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:background="#000000" android:visibility="gone" android:clickable="true" android:focusable="true"
-        android:contentDescription="@string/screen_resting" />
 </FrameLayout>

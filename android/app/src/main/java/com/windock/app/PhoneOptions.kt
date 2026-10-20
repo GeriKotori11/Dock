@@ -41,9 +41,6 @@ object PhoneOptions {
             DisplayPolicy.DIM_TIMES.indexOf(current.dimAfterMs), R.id.dim_delay)
         val level = select(activity.getString(R.string.dim_level), arrayOf("5%", "10%", "20%"),
             DisplayPolicy.DIM_LEVELS.indexOf(current.dimPercent), R.id.dim_level)
-        val sleep = select(activity.getString(R.string.sleep_after), activity.resources.getStringArray(R.array.sleep_delays),
-            DisplayPolicy.SLEEP_TIMES.indexOf(current.sleepAfterMs), R.id.sleep_delay)
-        text(activity.getString(R.string.screen_sleep_explanation))
         text(activity.getString(R.string.display_care_note))
         content.addView(Button(activity).apply {
             text = activity.getString(R.string.android_display_settings); isAllCaps = false
@@ -54,7 +51,7 @@ object PhoneOptions {
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(R.string.save) { _, _ ->
                 PhonePreferences.saveDisplay(activity, DisplayPolicy(
-                    DisplayPolicy.DIM_TIMES[dim.selectedItemPosition], DisplayPolicy.SLEEP_TIMES[sleep.selectedItemPosition],
+                    DisplayPolicy.DIM_TIMES[dim.selectedItemPosition],
                     DisplayPolicy.DIM_LEVELS[level.selectedItemPosition]))
                 saved()
             }.create()

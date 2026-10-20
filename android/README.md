@@ -61,23 +61,18 @@ firewall configurations still need device-specific verification.
 ## Phone display options (development build)
 
 Open **This phone** on the connection screen, or **Appearance → This phone ·
-screen & sleep** in the updated shared dock. These preferences stay on this
-phone and do not change the PC's brightness or power settings.
+screen** in the updated shared dock. These preferences stay on this
+phone and do not change the computer's brightness or power settings.
 
 - **Dim after inactivity:** never, 15 seconds, 30 seconds (default), 1 or 2 minutes.
 - **Dim brightness:** 5%, 10% (default), or 20%; never raises an already lower brightness.
-- **Screen off:** use the phone's normal timeout (default), or rest after 1, 2,
-  5 or 10 minutes idle. An explicit stay-awake option lasts only while the dock
-  is visible in the foreground.
 
-At a timed limit the app draws black, lowers window brightness, and releases
-its keep-awake flag so Android can turn the screen off. Android's configured
-timeout may add a delay. No device-admin, accessibility service, or global
-settings permission is used. The first gesture on a dimmed or resting dock only
-wakes it; after Android turns off the screen, use the phone's normal wake control.
-Leaving the app restores brightness and releases keep-awake. Live PC updates
-do not reset the idle timer. Lower brightness and screen breaks reduce prolonged
-display exposure but cannot guarantee prevention of OLED burn-in.
+The screen stays on the whole time WinDock is open (connection screen, pairing
+and dock); idle dimming only lowers this window's brightness. No device-admin,
+accessibility service, or global settings permission is used. The first gesture
+on a dimmed dock only wakes it. Leaving the app restores brightness and releases
+keep-awake. Live computer updates do not reset the idle timer. Lower brightness
+reduces prolonged display exposure but cannot guarantee prevention of OLED burn-in.
 
 ## Verification
 
@@ -128,17 +123,12 @@ adb -s emulator-5554 shell am instrument -w -e class com.windock.app.PhoneOption
 
 The two tests cover native settings through the WebView bridge, saved preferences
 after Activity recreation, timed dimming, consumption of the first wake gesture,
-black rest mode, keyboard dismissal, keep-awake release, background cleanup,
-and remembered USB mode with a return to LAN. They require about 90 seconds.
+keep-awake on both the dock and connection screens, its release when the app is
+paused, and remembered USB mode with a return to LAN.
 The JVM tests separately verify that USB mode refuses remembered Wi-Fi hosts;
 recent emulators also expose a virtual Ethernet link on their Wi-Fi subnet.
 
-To also verify Android actually powers down the emulator display, first record
-its `system screen_off_timeout` and `global stay_on_while_plugged_in` values with
-`adb shell settings get`. Set them to `15000` and `0` respectively, add
-`-e verifySleep true` to the test command, and restore both original settings
-afterward. Change these settings only on the test emulator, never a personal
-phone. For each additional physical device, verify discovery, PIN pairing, and
+For each additional physical device, verify discovery, PIN pairing, and
 an app action through USB tethering with the phone's Wi-Fi disabled.
 
 ### Automatic now-playing regression

@@ -17,8 +17,8 @@ be installed on a phone by downloading it; signing and provisioning are still ne
 
 The app remembers a working address and retains the dock's pairing cookie. The PC
 may request a fresh PIN after restarting. The small **…** button at the upper left
-offers **Reconnect** and **Change PC**. The screen stays awake while the dock is open.
-If connection fails, check the PC address, Wi-Fi, Windows firewall and iOS
+offers **Reconnect** and **Change computer**. The screen stays awake while WinDock is open.
+If connection fails, check the address WinDock shows, Wi-Fi, firewall and iOS
 **Settings → Privacy & Security → Local Network → WinDock**, then retry.
 
 ## Build on GitHub from Windows

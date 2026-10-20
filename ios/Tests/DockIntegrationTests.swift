@@ -120,7 +120,7 @@ final class DockIntegrationTests: XCTestCase {
     func testInvalidUnreachableRedirectedAndNonWinDockHostsRecover() async throws {
         controller.address.text = "https://example.com"
         controller.connect()
-        XCTAssertTrue(controller.status.text!.contains("local PC address"))
+        XCTAssertTrue(controller.status.text!.contains("local computer address"))
         XCTAssertNil(controller.webView)
         for address in ["127.0.0.1:1", "127.0.0.1:18623", "127.0.0.1:18624", "127.0.0.1:18625"] {
             controller.address.text = address
