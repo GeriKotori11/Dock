@@ -203,3 +203,35 @@ Open items carried forward:
   - All 7 Android instrumented tests pass on the API 37 emulator, each run with its fixture.
   - Manual emulator check: the screen stays awake in-app past a 15 s system timeout and sleeps normally outside the app.
   - iOS simulator build succeeds.
+
+### 2026-10-20: milestone 3 (identity and transport security), done
+
+**Host**
+- HTTPS on the same port as plain HTTP.
+  - The certificate is a dependency-free, self-signed ECDSA P-256 X.509 certificate.
+  - The security code is the first 6 bytes of the SHA-256 fingerprint.
+- Pairing hardening:
+  - single-use 6-digit codes;
+  - a 10-minute pairing window, reopened by `npm run info` or the Windows tray;
+  - a global budget of 10 failed attempts, after which the code rotates and the window closes.
+- Device management: `npm run devices` lists and revokes phones, and revoking closes their live sockets.
+- The contract is documented in `docs/PROTOCOL.md`.
+
+**Phones (Android and iOS)**
+- They probe over HTTPS and confirm the security code on first contact.
+- After that they pin the host ID to the leaf certificate's SHA-256.
+- If the certificate changes, they show a "Security code changed" warning with a forget-and-re-pair option.
+- The WebView trusts only the pinned certificate, and this also covers wss.
+- iOS moved to the UIScene lifecycle; without it the app did not launch on iOS 27.
+
+**Verification**
+- `npm test`: 22/22 oracles pass.
+- iOS: XCTest 16/16 on both iOS 27.0 and iOS 26.5.
+- Android: unit and instrumented tests pass. The exception is `UsbDiscoveryTest`, which only fails when another host is holding UDP port 41234.
+- Upgrade path on the API 37 emulator: pair over HTTP, then the host enables TLS. The phone confirms the security code once, opens the dock over HTTPS without asking for the PIN, and launches apps. Revoke, re-pair and the closed-window message also work.
+- The Windows tray change was compile-checked only.
+
+**Carried to milestone 4**
+- A host with a new identity at a known address gets the confirmation prompt, not a warning. The saved-computers list should warn instead.
+- Android WebView cookie flush on force-stop.
+- Probe HTTPS first, so that hosts running with `WINDOCK_PLAIN_HTTP=0` are reachable.
