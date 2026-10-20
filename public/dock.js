@@ -52,9 +52,11 @@ export function renderAppIcon(app, lazy = false) {
  * the dock.
  */
 export function renderTile(tile, { editing = false, first = false, last = false, launcher = false } = {}) {
-  const running = tile.kind === "app" && tile.running === true;
+  const unavailable = tile.available === false;
+  const running = tile.kind === "app" && tile.running === true && !unavailable;
   const classes = ["tile", `tile--${tile.kind}`];
   if (running) classes.push("is-running");
+  if (unavailable) classes.push("is-unavailable");
   if (editing) classes.push("is-editing");
   const action = tile.kind === "control" ? "control" : "launch";
   const hasValue = tile.kind === "control" && tile.value !== undefined && tile.value !== null;
@@ -70,7 +72,7 @@ export function renderTile(tile, { editing = false, first = false, last = false,
   const body = [
     `<span class="tile__glyph" aria-hidden="true">${tile.kind === "app" ? renderAppIcon(tile) : controlIcon(tile.verb)}</span>`,
     `<span class="tile__label">${escapeHtml(tile.label)}</span>`,
-    !editing ? `<span class="tile__hint">${tile.kind === "app" ? running ? "Running" : "Open app" : "Quick action"}</span>` : "",
+    !editing ? `<span class="tile__hint">${unavailable ? "Not available" : tile.kind === "app" ? running ? "Running" : "Open app" : "Quick action"}</span>` : "",
     running && !editing ? '<span class="tile__dot" aria-hidden="true"></span>' : "",
   ].join("");
 
@@ -78,7 +80,7 @@ export function renderTile(tile, { editing = false, first = false, last = false,
     return [
       `<button class="${classes.join(" ")}" type="button"`,
       ` data-action="${editing ? "options" : escapeHtml(action)}" data-key="${escapeHtml(actionKey)}" data-tile-key="${escapeHtml(key)}"${valueAttr}`,
-      ` aria-label="${escapeHtml(tile.label)}"${running ? ' aria-pressed="true"' : ""}>`,
+      ` aria-label="${escapeHtml(unavailable ? `${tile.label}, not available on this computer` : tile.label)}"${running ? ' aria-pressed="true"' : ""}>`,
       body,
       "</button>",
     ].join("");

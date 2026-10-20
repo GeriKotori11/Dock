@@ -133,3 +133,17 @@ export function contractViolations(provider) {
   }
   return problems;
 }
+
+/**
+ * The optional features a provider offers, as plain booleans for the UI.
+ * Controls and now-playing are on unless the provider opts out explicitly;
+ * capture and input exist only when the provider carries those modules.
+ */
+export function featuresOf(provider) {
+  return Object.freeze({
+    controls: provider?.features?.controls !== false,
+    nowPlaying: provider?.features?.nowPlaying !== false,
+    capture: Boolean(provider?.capture),
+    input: Boolean(provider?.input),
+  });
+}

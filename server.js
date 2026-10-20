@@ -11,7 +11,7 @@ import { hostname } from "node:os";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { createProvider } from "./src/platform/index.js";
-import { validateControl, isDestructiveVerb, CONTROL_VERBS } from "./src/platform/contract.js";
+import { validateControl, isDestructiveVerb, CONTROL_VERBS, featuresOf } from "./src/platform/contract.js";
 import { createConfigStore, defaultDataDir } from "./src/config.js";
 import { loadHostIdentity } from "./src/identity.js";
 import { createSyncHub } from "./src/sync.js";
@@ -131,20 +131,34 @@ export async function createApp({
 } = {}) {
   const state = { pin };
   const appIcon = createIconCache(provider);
-  let inventoryPromise;
-  let inventoryTime = 0;
-  function installedApps() {
-    if (!inventoryPromise || Date.now() - inventoryTime > 60_000) {
-      inventoryTime = Date.now();
-      inventoryPromise = provider.listInstalledApps().catch((error) => {
-        inventoryPromise = null;
-        throw error;
-      });
+  const features = featuresOf(provider);
+  // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
+  // successful scan; `scanning` is the single in-flight scan, so concurrent
+  // callers share it and scans never overlap. A failed scan keeps the old list.
+  let catalog = null;
+  let scanning = null;
+  function scanCatalog() {
+    if (!scanning) {
+      scanning = Promise.resolve()
+        .then(() => provider.listInstalledApps())
+        .then((apps) => {
+          catalog = { apps, ids: new Set(apps.map((app) => app.id)), time: Date.now() };
+          return apps;
+        })
+        .finally(() => { scanning = null; });
     }
-    return inventoryPromise;
+    return scanning;
+  }
+  async function installedApps() {
+    if (!catalog) return scanCatalog();
+    if (Date.now() - catalog.time > 60_000) scanCatalog().catch(() => {});
+    return catalog.apps;
   }
 
   async function dockState() {
+    // Never wait on a catalog scan here: kick one off (or a stale refresh) and
+    // treat tiles as available until a successful scan says otherwise.
+    installedApps().catch(() => {});
     const [config, running] = await Promise.all([
       configStore.load(),
       provider.listRunningApps().catch(() => []),
@@ -154,11 +168,14 @@ export async function createApp({
       platform: provider.id,
       platformName: provider.displayName,
       hostName: hostname(),
+      features,
       tiles: config.tiles.map((tile) =>
-        tile.kind === "app" ? { ...tile, running: runningIds.has(tile.id) } : tile,
+        tile.kind === "app"
+          ? { ...tile, running: runningIds.has(tile.id), available: catalog ? catalog.ids.has(tile.id) : true }
+          : { ...tile, available: features.controls },
       ),
       running,
-      verbs: CONTROL_VERBS,
+      verbs: features.controls ? CONTROL_VERBS : [],
       allowDestructive,
     };
   }
@@ -264,10 +281,20 @@ export async function createApp({
 
       if (path === "/api/apps/launch" && req.method === "POST") {
         const body = await readJsonBody(req);
-        const apps = await installedApps();
-        const app = apps.find((a) => a.id === body.id);
+        let app = (await installedApps()).find((a) => a.id === body.id);
+        if (!app) {
+          // Possibly installed since the last scan: rescan once before refusing.
+          const fresh = await scanCatalog().catch(() => catalog?.apps || []);
+          app = fresh.find((a) => a.id === body.id);
+        }
         if (!app) return sendJson(res, 404, { error: "unknown app" });
-        await provider.launchApp(app);
+        try {
+          await provider.launchApp(app);
+        } catch (err) {
+          if (err?.status) throw err;
+          // Native error text stays on the host.
+          return sendJson(res, 502, { error: "launch failed" });
+        }
         await hub.broadcast();
         return sendJson(res, 200, { ok: true, id: app.id });
       }
@@ -290,6 +317,7 @@ export async function createApp({
       if (path === "/api/control" && req.method === "POST") {
         const body = await readJsonBody(req);
         const checked = validateControl(body.verb, body.value ?? null);
+        if (!features.controls) return sendJson(res, 501, { error: "controls unavailable" });
         if (!checked.ok) return sendJson(res, 400, { error: checked.error });
         if (isDestructiveVerb(checked.verb) && !allowDestructive) {
           return sendJson(res, 403, { error: "power actions disabled" });
@@ -299,6 +327,7 @@ export async function createApp({
       }
 
       if (path === "/api/nowplaying" && req.method === "GET") {
+        if (!features.nowPlaying) return sendJson(res, 200, { nowPlaying: null });
         return sendJson(res, 200, { nowPlaying: await provider.nowPlaying().catch(() => null) });
       }
 

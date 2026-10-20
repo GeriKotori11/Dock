@@ -9,6 +9,7 @@ import { createWindowsProvider } from "../src/platform/windows.js";
 import { createConfigStore } from "../src/config.js";
 import { createSessionStore } from "../src/auth.js";
 import { loadHostIdentity } from "../src/identity.js";
+import { featuresOf, CONTROL_VERBS } from "../src/platform/contract.js";
 
 const t = createChecker("api");
 const PIN = "4321";
@@ -116,6 +117,9 @@ t.equal(state.json.platform, "windows", "state names the provider");
 t.ok(Array.isArray(state.json.tiles), "state carries a tiles array");
 t.ok(Array.isArray(state.json.running), "state carries a running array");
 t.ok(Array.isArray(state.json.verbs), "state advertises the control verbs");
+t.deepEqual(state.json.features, { controls: true, nowPlaying: true, capture: true, input: true },
+  "the Windows provider keeps every feature");
+t.equal(state.json.verbs.length, CONTROL_VERBS.length, "the Windows provider advertises every control verb");
 
 const installed = await call("/api/apps/installed");
 t.equal(installed.status, 200, "GET /api/apps/installed succeeds");
@@ -139,6 +143,8 @@ t.ok(put.json.tiles.every((x) => x.verb !== "hack; rm -rf /"), "no hostile verb 
 const after = await call("/api/state");
 const ffTile = after.json.tiles.find((x) => x.kind === "app");
 t.equal(ffTile.running, true, "a pinned app with a live process is marked running");
+t.equal(ffTile.available, true, "a pinned app in the catalog is available");
+t.equal(after.json.tiles.find((x) => x.kind === "control").available, true, "control tiles are available on Windows");
 
 // ---- actions ----
 const launch = await call("/api/apps/launch", { method: "POST", body: { id: "c:/windows/notepad.exe" } });
@@ -300,6 +306,125 @@ const stranger = await fetch(`${secondBase}/api/state`, { headers: { cookie: "wi
 t.equal(stranger.status, 401, "an unknown session is still refused after a restart");
 await stranger.arrayBuffer();
 await stop(second);
+
+// ---- per-host features ----
+t.deepEqual({ ...featuresOf({}) }, { controls: true, nowPlaying: true, capture: false, input: false },
+  "featuresOf defaults controls and now playing on, capture and input off");
+t.ok(Object.isFrozen(featuresOf({})), "featuresOf returns a frozen object");
+t.deepEqual({ ...featuresOf({ features: { controls: false, nowPlaying: false } }) },
+  { controls: false, nowPlaying: false, capture: false, input: false }, "a macOS-like provider opts out of controls and now playing");
+t.deepEqual({ ...featuresOf({ capture: {}, input: {}, features: {} }) },
+  { controls: true, nowPlaying: true, capture: true, input: true }, "capture and input follow the provider's modules");
+
+function fakeProvider(overrides = {}) {
+  const calls = { list: 0, control: 0, nowPlaying: 0, launch: [] };
+  let scans = [[{ id: "app.one", name: "One", target: "/Apps/One.app" }]];
+  const provider = {
+    id: "fake", displayName: "Fake", calls,
+    setScans(next) { scans = next; },
+    async listInstalledApps() {
+      calls.list += 1;
+      await new Promise((r) => setTimeout(r, 15));
+      const next = scans.length > 1 ? scans.shift() : scans[0];
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    async listRunningApps() { return []; },
+    async launchApp(app) { calls.launch.push(app.id); },
+    async focusApp(app) {},
+    async closeApp(app) {},
+    async control(verb, value) { calls.control += 1; },
+    async nowPlaying() { calls.nowPlaying += 1; return { title: "T", playing: true }; },
+    async systemStats() { return {}; },
+    ...overrides,
+  };
+  return provider;
+}
+async function serve(provider, file) {
+  const a = await createApp({ provider, configStore: createConfigStore({ path: join(dir, file) }), pin: PIN, trustLoopback: true });
+  await new Promise((r) => a.server.listen(0, "127.0.0.1", r));
+  const b = `http://127.0.0.1:${a.server.address().port}`;
+  const req = async (path, body, method = body ? "POST" : "GET") => {
+    const res = await fetch(b + path, { method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, json: await res.json().catch(() => null) };
+  };
+  return { a, req };
+}
+
+const mac = fakeProvider({ features: { controls: false, nowPlaying: false } });
+const macHost = await serve(mac, "mac.json");
+const macState = await macHost.req("/api/state");
+t.deepEqual(macState.json.features, { controls: false, nowPlaying: false, capture: false, input: false }, "state reports a macOS-like host's features");
+t.deepEqual(macState.json.verbs, [], "a host without controls advertises no verbs");
+const macControl = await macHost.req("/api/control", { verb: "mute-toggle" });
+t.equal(macControl.status, 501, "control on a host without controls returns 501");
+t.equal(macControl.json.error, "controls unavailable", "the 501 names the missing feature");
+t.equal(mac.calls.control, 0, "the provider's control is never called when controls are unavailable");
+const macNp = await macHost.req("/api/nowplaying");
+t.equal(macNp.status, 200, "now playing still answers without the feature");
+t.equal(macNp.json.nowPlaying, null, "now playing is null without the feature");
+t.equal(mac.calls.nowPlaying, 0, "the provider's nowPlaying is never called without the feature");
+
+// Stale tiles: catalog lacks a pinned id once a scan has succeeded.
+await macHost.req("/api/tiles", { tiles: [
+  { kind: "app", id: "app.one", target: "/Apps/One.app", label: "One" },
+  { kind: "app", id: "com.example.gone", target: "/Applications/Gone.app", label: "Gone" },
+  { kind: "control", verb: "mute-toggle", label: "Mute" },
+] }, "PUT");
+await macHost.req("/api/apps/installed");
+const stale = await macHost.req("/api/state");
+t.equal(stale.json.tiles.find((x) => x.id === "app.one").available, true, "a cataloged tile is available");
+t.equal(stale.json.tiles.find((x) => x.id === "com.example.gone").available, false, "a tile missing from the catalog is unavailable");
+t.equal(stale.json.tiles.find((x) => x.kind === "control").available, false, "control tiles are unavailable without controls");
+
+// Launch: refresh once on a miss, 404 when still unknown, 502 without native text.
+mac.setScans([[{ id: "app.one", name: "One", target: "/Apps/One.app" }, { id: "app.new", name: "New", target: "/Apps/New.app" }]]);
+const listBefore = mac.calls.list;
+const launchedNew = await macHost.req("/api/apps/launch", { id: "app.new" });
+t.equal(launchedNew.status, 200, "launching a newly installed app rescans and succeeds");
+t.equal(mac.calls.list - listBefore, 1, "a catalog miss forces exactly one fresh scan");
+t.deepEqual(mac.calls.launch, ["app.new"], "the newly found app reaches the provider");
+const gone = await macHost.req("/api/apps/launch", { id: "com.example.gone" });
+t.equal(gone.status, 404, "an app still missing after the rescan returns 404");
+t.equal(gone.json.error, "unknown app", "the 404 says unknown app");
+mac.launchApp = async () => { throw new Error("LSOpenURLsWithRole() failed with error -10810 for /Apps/One.app"); };
+const failed = await macHost.req("/api/apps/launch", { id: "app.one" });
+t.equal(failed.status, 502, "a provider launch failure returns 502");
+t.deepEqual(failed.json, { error: "launch failed" }, "the 502 carries no native error text");
+mac.launchApp = async () => { const e = new Error("Launching apps needs the updated host."); e.status = 501; throw e; };
+const unsupported = await macHost.req("/api/apps/launch", { id: "app.one" });
+t.equal(unsupported.status, 501, "a provider 501 still passes through");
+await macHost.a.hub.close(); macHost.a.server.closeAllConnections?.(); await new Promise((r) => macHost.a.server.close(r));
+
+// Single flight: parallel first requests share one scan; a stale refresh runs in the background.
+const busy = fakeProvider();
+const busyHost = await serve(busy, "busy.json");
+const parallel = await Promise.all(Array.from({ length: 6 }, () => busyHost.req("/api/apps/installed")));
+t.ok(parallel.every((r) => r.status === 200 && r.json.apps.length === 1), "parallel catalog requests all succeed");
+t.equal(busy.calls.list, 1, "parallel requests share one scan");
+const realNow = Date.now;
+Date.now = () => realNow() + 61_000;
+busy.setScans([new Error("scan failed"), [{ id: "app.one", name: "One", target: "/Apps/One.app" }]]);
+const staleReads = await Promise.all(Array.from({ length: 4 }, () => busyHost.req("/api/apps/installed")));
+t.ok(staleReads.every((r) => r.json.apps.length === 1), "stale reads return the cached list immediately");
+t.equal(busy.calls.list, 2, "a stale cache starts exactly one background refresh");
+await new Promise((r) => setTimeout(r, 40));
+const afterFail = await busyHost.req("/api/apps/installed");
+t.equal(afterFail.json.apps.length, 1, "a failed refresh keeps the old list");
+Date.now = realNow;
+await busyHost.a.hub.close(); busyHost.a.server.closeAllConnections?.(); await new Promise((r) => busyHost.a.server.close(r));
+
+// First dockState does not wait for a slow first scan, and reports tiles as available.
+const slow = fakeProvider({ async listInstalledApps() { slow.calls.list += 1; await new Promise((r) => setTimeout(r, 400)); return []; } });
+const slowHost = await serve(slow, "slow.json");
+await slowHost.req("/api/tiles", { tiles: [{ kind: "app", id: "app.x", target: "/Apps/X.app", label: "X" }] }, "PUT");
+const started = realNow();
+const unknown = await slowHost.req("/api/state");
+t.ok(realNow() - started < 300, "state does not block on the first catalog scan");
+t.equal(unknown.json.tiles[0].available, true, "tiles are available while the catalog is unknown");
+t.equal(slow.calls.list, 1, "state kicks off the first scan");
+await new Promise((r) => setTimeout(r, 450));
+await slowHost.a.hub.close(); slowHost.a.server.closeAllConnections?.(); await new Promise((r) => slowHost.a.server.close(r));
 
 await app.hub.close();
 // fetch keeps connections alive; close() alone would wait for them forever.

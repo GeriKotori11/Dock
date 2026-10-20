@@ -50,6 +50,8 @@ button:active:not(:disabled) { transform: scale(.96); }
 .tile__label { font-size: 12px; font-weight: 500; line-height: 1.3; flex-shrink: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 3px #0005; }
 .tile__hint { display: none; }
 .tile__dot { position: absolute; bottom: -2px; width: 4px; height: 4px; background: var(--live); border-radius: 50%; }
+.tile.is-unavailable .tile__glyph { filter: grayscale(1); opacity: .38; }
+.tile.is-unavailable .tile__dot { display: none; }
 .tile__edit { display: none; }
 .tile.is-editing { cursor: grab; touch-action: none; animation: wobble .38s ease-in-out infinite alternate; }
 .tile.is-editing:nth-child(even) { animation-delay: -.25s; }
@@ -285,7 +287,8 @@ body.is-immersive .empty .button .icon { width: 36px; height: 36px; }
 .glass-drawer[open] { animation: drawer-in .25s cubic-bezier(.2,.7,.2,1); }
 .drawer-grip { display: block; width: 100%; min-height: 29px; padding: 10px; background: none; border: 0; touch-action: none; }
 .drawer-grip > span { display: block; width: 33px; height: 3px; margin: auto; border-radius: 3px; background: #ebf5f44d; }
-.drawer-actions { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 7px; padding: 6px 0 16px; }
+/* Columns follow the visible buttons, so hosts without some features leave no holes. */
+.drawer-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 7px; padding: 6px 0 16px; }
 .drawer-actions button { display: flex; flex-direction: column; align-items: center; gap: 12px; border: 0; border-radius: 18px; padding: 15px 6px 13px; min-height: 88px; background: #ffffff06; font-size: 11px; color: #eef6f5; }
 .drawer-actions button > [data-icon] { width: 29px; height: 29px; }
 .drawer-actions .icon { width: 27px; height: 27px; }

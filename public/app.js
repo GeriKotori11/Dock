@@ -13,11 +13,19 @@ let currentPage = 0, toastTimer, selectedKey = "", suppressClickUntil = 0;
 let pageHintTimer;
 let captureState = { available: false, phase: "idle" }, captureBusy = false, capturePoll = false, captureReceivedAt = Date.now();
 let nowPlayingHtml = "";
+// Hosts before per-host features sent no `features`; treat that as everything on.
+const feature = (name) => state.features?.[name] !== false;
+// App tiles the host's catalog no longer has. Kept apart from state.tiles so
+// local edits (whose saved tiles carry no availability) keep the dimming.
+let unavailableIds = new Set();
+function absorbState(fresh) {
+  unavailableIds = new Set((fresh.tiles || []).filter((tile) => tile.kind === "app" && tile.available === false).map((tile) => tile.id));
+}
 const nowPlaying = createNowPlayingPoller({
   load: async (signal) => (await api("/api/nowplaying", { signal })).nowPlaying,
-  isActive: () => paired && online && !document.hidden,
+  isActive: () => paired && online && !document.hidden && feature("nowPlaying"),
   onChange: (media) => {
-    const html = renderNowPlaying(media);
+    const html = feature("nowPlaying") ? renderNowPlaying(media) : "";
     // Keep the playback button (and its focus) when nothing has changed.
     if (nowPlayingHtml !== html) { $("nowplaying").innerHTML = html; nowPlayingHtml = html; }
   },
@@ -102,7 +110,7 @@ async function api(path, options = {}) {
   if (res.status === 401 && path !== "/api/auth") { showPair("Enter the current PIN to reconnect."); throw new Error("unauthorized"); }
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({}))).error;
-    const messages = { "wrong pin": "That PIN doesn’t match. Try the PIN shown on your PC.", "invalid pin": "Enter all four digits.", locked: "Too many attempts. Wait a moment and try again.", "internal error": "Your PC couldn’t complete that action. Check the app or device and try again." };
+    const messages = { "wrong pin": "That PIN doesn’t match. Try the PIN shown on your computer.", "invalid pin": "Enter all four digits.", locked: "Too many attempts. Wait a moment and try again.", "internal error": "Your computer couldn't complete that action. Try again.", "unknown app": "That app isn't installed on this computer anymore.", "launch failed": "The computer couldn't open that app. It may have been moved or removed.", "controls unavailable": "Controls aren't available on this computer." };
     throw new Error(messages[detail] || detail || "The request couldn’t be completed.");
   }
   return res.json();
@@ -158,15 +166,27 @@ function showPageHint() {
   $("page-dots").classList.add("is-awake");
   pageHintTimer = setTimeout(() => $("page-dots").classList.remove("is-awake"), 1300);
 }
+function applyFeatures() {
+  $("drawer-controls").hidden = !feature("controls");
+  $("controls-open").hidden = !feature("controls");
+  $("tab-controls").hidden = !feature("controls");
+  $("drawer-capture").hidden = !feature("capture");
+  $("drawer-input").hidden = !feature("input");
+  if (!feature("nowPlaying") && nowPlayingHtml) { $("nowplaying").innerHTML = ""; nowPlayingHtml = ""; }
+}
+function platformLabel() {
+  return { macos: "Mac", windows: "Windows" }[state.platform] || state.platformName || "Computer";
+}
 function paint() {
+  applyFeatures();
   const running = new Set(state.running.map((app) => app.id));
-  const view = { ...state, tiles: state.tiles.map((tile) => tile.kind === "app" ? { ...tile, running: running.has(tile.id) } : tile) };
+  const view = { ...state, tiles: state.tiles.map((tile) => tile.kind === "app" ? { ...tile, running: running.has(tile.id), available: !unavailableIds.has(tile.id) } : { ...tile, available: feature("controls") }) };
   const pages = pageCount(state.tiles, layout);
   currentPage = Math.min(currentPage, pages - 1);
   $("dock").innerHTML = renderPages(view, layout, editing);
   $("dock").classList.toggle("is-editing", editing);
   $("dock").scrollTo({ left: currentPage * $("dock").clientWidth, behavior: "instant" });
-  $("host-name").textContent = state.hostName || state.platformName || "Your PC";
+  $("host-name").textContent = state.hostName || state.platformName || "Your computer";
   $("drawer-host").textContent = $("host-name").textContent;
   document.body.classList.toggle("is-arranging", editing);
   $("edit-done").hidden = !layout.immersive || !editing || !paired;
@@ -214,6 +234,7 @@ function connect() {
     try {
       const msg = JSON.parse(event.data);
       if (msg.type !== "snapshot") return;
+      absorbState(msg);
       state = { ...msg, tiles: editing || saving || gesture?.dragging ? state.tiles : msg.tiles };
       if (!gesture?.dragging) paint();
     } catch { /* Ignore malformed frames. */ }
@@ -221,10 +242,11 @@ function connect() {
 }
 async function refresh() {
   const fresh = await api("/api/state");
+  absorbState(fresh);
   state = { ...fresh, tiles: editing || saving || gesture?.dragging ? state.tiles : fresh.tiles };
   if (!gesture?.dragging) paint();
-  await nowPlaying.refresh().catch(() => {});
-  await refreshCapture().catch(() => {});
+  if (feature("nowPlaying")) await nowPlaying.refresh().catch(() => {});
+  if (feature("capture")) await refreshCapture().catch(() => {});
 }
 const powerActions = {
   lock: ["Lock your PC?", "Your computer will return to its lock screen.", "Lock PC"],
@@ -246,8 +268,12 @@ function confirmPower(verb) {
 }
 async function activate(button) {
   if (editing && button.dataset.tileKey) return openTileOptions(button.dataset.tileKey);
-  if (!online) return notify("Your PC is disconnected. Wait for it to reconnect.", true);
   const { action, key } = button.dataset;
+  if (action === "launch" && unavailableIds.has(key) || action === "control" && button.dataset.tileKey && !feature("controls")) {
+    const label = state.tiles.find((tile) => tileKey(tile) === button.dataset.tileKey)?.label || "This app";
+    return notify(label + " isn't available on " + (state.hostName || "this computer") + " anymore. Hold to arrange, then remove it.", true);
+  }
+  if (!online) return notify("Your computer is disconnected. Waiting for it to reconnect.", true);
   if (action === "control" && powerActions[key] && !await confirmPower(key)) return;
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
@@ -281,8 +307,8 @@ function drawApps() {
   const term = $("filter").value.trim().toLowerCase();
   const matches = installedApps.filter((app) => app.name.toLowerCase().includes(term));
   const pinned = new Set(state.tiles.filter((tile) => tile.kind === "app").map((tile) => tile.id));
-  $("picker-status").textContent = matches.length + " apps" + (term ? " found" : " on your PC") + " · " + pinned.size + " pinned";
-  $("picker-list").innerHTML = matches.length ? matches.map((app) => '<li><button type="button" data-id="' + escapeHtml(app.id) + '"' + (pinned.has(app.id) ? " disabled" : "") + ' aria-label="' + escapeHtml((pinned.has(app.id) ? "Pinned: " : "Add ") + app.name) + '">' + renderAppIcon(app, true) + '<span class="picker__name">' + escapeHtml(app.name) + '<small>' + (pinned.has(app.id) ? "On your dock" : "Windows app") + '</small></span><span class="picker__add">' + icon(pinned.has(app.id) ? "check" : "plus") + "</span></button></li>").join("") : '<li class="picker__empty">No apps found. Try a different name.</li>';
+  $("picker-status").textContent = matches.length + " apps" + (term ? " found" : " on this computer") + " · " + pinned.size + " pinned";
+  $("picker-list").innerHTML = matches.length ? matches.map((app) => '<li><button type="button" data-id="' + escapeHtml(app.id) + '"' + (pinned.has(app.id) ? " disabled" : "") + ' aria-label="' + escapeHtml((pinned.has(app.id) ? "Pinned: " : "Add ") + app.name) + '">' + renderAppIcon(app, true) + '<span class="picker__name">' + escapeHtml(app.name) + '<small>' + (pinned.has(app.id) ? "On your dock" : platformLabel() + " app") + '</small></span><span class="picker__add">' + icon(pinned.has(app.id) ? "check" : "plus") + "</span></button></li>").join("") : '<li class="picker__empty">No apps found. Try a different name.</li>';
 }
 function drawControls() {
   const groups = availableControls(state.verbs, state.tiles);
@@ -305,7 +331,7 @@ async function openPicker() {
   selectTab("apps");
   if (!$("picker").open) $("picker").showModal();
   if (appsLoaded) drawApps();
-  else { $("picker-status").textContent = "Loading your apps…"; $("picker-list").innerHTML = '<li class="picker__empty">Finding your favorites on this PC…</li>'; }
+  else { $("picker-status").textContent = "Loading your apps…"; $("picker-list").innerHTML = '<li class="picker__empty">Finding apps on this computer…</li>'; }
   try {
     const { apps } = await api("/api/apps/installed");
     installedApps = apps; appsLoaded = true;
@@ -466,7 +492,7 @@ $("picker-close").addEventListener("click", () => $("picker").close());
 $("tab-apps").addEventListener("click", () => selectTab("apps"));
 $("tab-controls").addEventListener("click", () => selectTab("controls"));
 document.querySelector(".picker__tabs").addEventListener("keydown", (event) => {
-  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || !feature("controls")) return;
   event.preventDefault();
   const apps = event.key === "Home" || event.key !== "End" && $("tab-apps").getAttribute("aria-selected") !== "true";
   selectTab(apps ? "apps" : "controls"); $(apps ? "tab-apps" : "tab-controls").focus();
@@ -503,7 +529,7 @@ $("drawer-input").addEventListener("click", () => inputPad.open());
 $("capture-screenshot").addEventListener("click", () => captureAction("screenshot"));
 $("capture-record").addEventListener("click", () => captureAction(captureActive() ? "stop" : "start"));
 $("recording-stop").addEventListener("click", () => captureAction("stop"));
-setInterval(() => { if (paired && !document.hidden) refreshCapture().catch(() => {}); }, 2000);
+setInterval(() => { if (paired && !document.hidden && feature("capture")) refreshCapture().catch(() => {}); }, 2000);
 setInterval(() => { if (paired && captureActive() && !document.hidden) paintCapture(); }, 500);
 // The invisible lower edge is also a keyboard-accessible button. Track swipes
 // at document level so lifting above the original hit area still opens it.

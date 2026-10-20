@@ -92,6 +92,44 @@ t.ok(hostile.includes("&lt;img"), "the hostile name is present but escaped");
 t.equal(escapeHtml("plain"), "plain", "positive control: safe text passes through unchanged");
 t.ok(escapeHtml("a&b") === "a&amp;b", "positive control: ampersands are escaped");
 
+// ---- unavailable tiles ----
+const gone = renderTile({ kind: "app", id: "com.example.gone", label: "Gone", running: true, available: false });
+t.ok(gone.includes("is-unavailable"), "an unavailable tile carries is-unavailable");
+t.ok(gone.includes('<span class="tile__hint">Not available</span>'), "an unavailable tile hints Not available");
+t.ok(gone.includes('aria-label="Gone, not available on this computer"'), "an unavailable tile explains itself to assistive tech");
+t.ok(!gone.includes("tile__dot") && !gone.includes("is-running"), "an unavailable tile shows no running dot");
+t.ok(gone.includes('data-action="launch"'), "an unavailable tile keeps its action so the shell can explain it");
+const goneEditing = renderTile({ kind: "app", id: "com.example.gone", label: "Gone", available: false }, { editing: true, launcher: true });
+t.ok(goneEditing.includes('data-action="options"'), "in arrange mode an unavailable tile opens its options like any tile");
+const here = renderTile({ kind: "app", id: "c:/a.exe", label: "Alpha", available: true });
+t.ok(!here.includes("is-unavailable") && here.includes('aria-label="Alpha"'), "an available tile renders as before");
+t.ok(!renderTile({ kind: "app", id: "c:/a.exe", label: "Alpha" }).includes("is-unavailable"), "a tile without availability (older host) renders as available");
+t.ok(/\.tile\.is-unavailable \.tile__glyph \{ filter: grayscale\(1\); opacity: \.38; \}/.test(css), "unavailable icons are greyed and dimmed");
+t.ok(!/\.drawer-actions \{[^}]*repeat\(7/.test(css) && /\.drawer-actions \{[^}]*grid-auto-flow: column/.test(css), "the drawer grid reflows to its visible buttons");
+
+// ---- per-host features and platform-neutral copy ----
+t.ok(appJs.includes('state.features?.[name] !== false'), "a host without features is treated as fully featured");
+for (const [id, name] of [["drawer-controls", "controls"], ["tab-controls", "controls"], ["drawer-capture", "capture"], ["drawer-input", "input"]]) {
+  t.ok(appJs.includes(`$("${id}").hidden = !feature("${name}")`), `#${id} hides when the host lacks ${name}`);
+}
+t.ok(appJs.includes('isActive: () => paired && online && !document.hidden && feature("nowPlaying")'), "now playing polls only when the host offers it");
+t.ok(appJs.includes('if (paired && !document.hidden && feature("capture")) refreshCapture()'), "capture polls only when the host offers it");
+t.ok(appJs.includes(`" isn't available on " + (state.hostName || "this computer") + " anymore. Hold to arrange, then remove it."`), "tapping an unavailable tile explains how to remove it");
+for (const text of [
+  `"unknown app": "That app isn't installed on this computer anymore."`,
+  `"launch failed": "The computer couldn't open that app. It may have been moved or removed."`,
+  `"controls unavailable": "Controls aren't available on this computer."`,
+  `"internal error": "Your computer couldn't complete that action. Try again."`,
+  `"wrong pin": "That PIN doesn’t match. Try the PIN shown on your computer."`,
+  "Finding apps on this computer…",
+  '" on this computer"',
+  '{ macos: "Mac", windows: "Windows" }[state.platform]',
+  "Your computer is disconnected. Waiting for it to reconnect.",
+]) t.ok(appJs.includes(text), `app.js carries the copy: ${text}`);
+for (const old of ["Windows app", '" on your PC"', "this PC", "Your PC is disconnected"]) t.ok(!appJs.includes(old), `app.js no longer says "${old}"`);
+t.ok(html.includes("Enter the PIN shown by WinDock on your computer."), "the pair hint is platform neutral");
+t.ok(html.includes('id="host-name" class="bar__host">Your computer<') && html.includes('id="drawer-host">Your computer<'), "host name placeholders are platform neutral");
+
 t.equal(glyphFor({ kind: "control", verb: "lock" }), "🔒", "control tiles get their verb glyph");
 t.equal(glyphFor({ kind: "app", label: "firefox" }), "F", "app tiles fall back to an initial");
 t.equal(glyphFor({ kind: "app", label: "" }), "?", "an unnamed app still gets a glyph");
