@@ -19,6 +19,7 @@ A Linux provider supports development without the Windows native layer.
 | `src/auth.js` | PIN pairing window, sessions and paired devices, lockout |
 | `src/config.js` | Atomic tile persistence |
 | `src/discovery.js` | UDP responder |
+| `src/bonjour.js` | Bonjour `_windock._tcp` advertising: `dns-sd -R` on macOS, a built-in mDNS responder on Windows/Linux |
 | `src/sync.js` | WebSocket updates |
 | `src/input-hub.js`, `src/input.js` | Exclusive touchpad channel, bounded input/signature validation |
 | `src/platform/input.js` | Persistent Windows touchpad helper and signature export process |
@@ -194,6 +195,15 @@ The host prefers physical LAN adapters over VPN/VM adapters. Set `WINDOCK_HOST`
 to choose another assigned local IPv4 address, `PORT` to change the port, or
 `WINDOCK_HELPER` to select another helper executable. `WINDOCK_CONFIG` overrides
 the configuration path; the normal tray uses the user's application-data folder.
+
+Besides the UDP responder, the host advertises `_windock._tcp` over Bonjour
+(`src/bonjour.js`; record layout in [PROTOCOL.md](PROTOCOL.md)). On macOS it
+runs `/usr/bin/dns-sd -R` as a child process, killed when the host stops or
+exits. On Windows and Linux a dependency-free responder shares UDP 5353 with
+the OS's own mDNS service and answers only questions for WinDock's names.
+Failures are logged once to stderr and never stop the host. Set
+`WINDOCK_BONJOUR=0` to turn it off. To check it on a Mac:
+`dns-sd -B _windock._tcp local`, then `dns-sd -L "<instance>" _windock._tcp local`.
 
 Brightness uses WMI for built-in panels and DDC/CI for supported HDMI/DisplayPort
 monitors, with a VCP luminance fallback. Percentages map to each display's range.

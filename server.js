@@ -20,6 +20,7 @@ import { createInputHub } from "./src/input-hub.js";
 import { validateSignature } from "./src/input.js";
 import { createIconCache, FALLBACK_ICON } from "./src/icons.js";
 import { startDiscovery, primaryAddress, DISCOVERY_PORT } from "./src/discovery.js";
+import { startBonjour, buildTxt } from "./src/bonjour.js";
 import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_MS } from "./src/tls.js";
 import {
   newPin,
@@ -480,6 +481,7 @@ export async function start({
   host = process.env.WINDOCK_HOST || "",
   env = process.env,
   discoveryPort = DISCOVERY_PORT,
+  advertise = startBonjour,
 } = {}) {
   const address = primaryAddress(undefined, host);
   const transport = transportOptions(env);
@@ -507,7 +509,17 @@ export async function start({
   app.state.endpoint = endpoint;
   app.state.secureEndpoint = secureEndpoint;
   const discovery = startDiscovery({ endpoint, port: discoveryPort });
-  return { ...app, endpoint, secureEndpoint, discovery, port };
+  // Bonjour `_windock._tcp` for phones that cannot broadcast (iPhones). The
+  // TXT record is only a hint; phones still verify /health and the pin.
+  const bonjour = env.WINDOCK_BONJOUR === "0"
+    ? { kind: "none", stop: async () => {} }
+    : advertise({
+      name: hostname(),
+      port,
+      txt: buildTxt({ hostId: identity.hostId, tls: Boolean(tls), address, hostName: hostname() }),
+    });
+  app.listener.once("close", () => { bonjour.stop().catch(() => {}); });
+  return { ...app, endpoint, secureEndpoint, discovery, bonjour, port };
 }
 
 /**

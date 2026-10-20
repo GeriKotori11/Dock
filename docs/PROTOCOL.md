@@ -23,6 +23,35 @@ load it) and the WinDock host, as of `api: 1`. Implementation notes live in
 | Reply | `windock:here:v1:<endpoint>`, sent back to the probe's source |
 | Endpoint | The **http** URL (`http://<lan-ip>:<port>`) unless plain HTTP is off. Phones that predate TLS parse it. |
 
+## Discovery (Bonjour / mDNS DNS-SD)
+
+iPhones cannot send the UDP probe above without a special Apple entitlement,
+so the host also advertises itself over Bonjour. Both run side by side: UDP v1
+is unchanged and Android keeps using it.
+
+| Item | Value |
+| --- | --- |
+| Service type | `_windock._tcp` in `local.`, on the host's TCP port (the same port as `/health`) |
+| Instance name | The computer's host name without `.local`, control characters removed, at most 63 UTF-8 bytes |
+| macOS | Registered with the system's mDNSResponder by a long-running `/usr/bin/dns-sd -R`, which handles name conflicts |
+| Windows, Linux | A built-in responder on UDP 5353 (group `224.0.0.251`). The SRV target is `windock-<first 8 hex of hostId>.local`, with its own A record, so it never clashes with the OS's own name. Announces twice at start and sends a goodbye (TTL 0) on shutdown |
+| Switch | `WINDOCK_BONJOUR=0` turns advertising off |
+
+TXT record (each entry `key=value`, ASCII keys, at most 255 bytes):
+
+| Key | Value |
+| --- | --- |
+| `id` | `hostId` (as in `/health`) |
+| `api` | `1` |
+| `tls` | `1` when HTTPS is served, else `0` |
+| `addr` | The LAN IPv4 address the host advertises (the one in the startup banner); left out when unknown |
+| `name` | The computer name, at most 60 characters |
+| `os` | `macos`, `windows` or `linux` |
+
+The TXT record is a **hint only**: anyone on the LAN can advertise any record.
+A phone resolves the service, then always calls `GET /health` and checks the
+TLS certificate against its pinned fingerprint before trusting the host.
+
 Discovery never carries the PIN or anything secret.
 
 ## `GET /health`

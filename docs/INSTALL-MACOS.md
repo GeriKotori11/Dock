@@ -154,8 +154,16 @@ delete the repository folder.
 - Check that both devices are on the same Wi-Fi network, not a guest network.
   Guest networks, hotel and office Wi-Fi, and routers with "client isolation"
   or "AP isolation" stop devices from reaching each other.
-- Automatic discovery is Android-only and some networks block it. Type the
-  address from `npm run info` instead.
+- The Mac announces itself on the network with Bonjour, and answers
+  Android's discovery probe. Some networks block both. Type the address from
+  `npm run info` instead.
+- On an iPhone, WinDock needs **Local Network** access to find and reach the
+  Mac. If you declined it, turn it on in **Settings → Privacy & Security →
+  Local Network → WinDock** (or **Settings → WinDock**).
+- To check that the Mac is announcing itself, run
+  `dns-sd -B _windock._tcp local` on the Mac (press Ctrl+C to stop). It should
+  list your Mac's name. If it does not, the host is not running, or it was
+  started with `WINDOCK_BONJOUR=0`.
 - Check that the host is running: `npm run mac:status`, or `npm run info`.
 - Check the firewall setting above.
 

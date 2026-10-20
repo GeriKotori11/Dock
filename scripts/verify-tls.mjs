@@ -345,7 +345,7 @@ t.deepEqual(transportOptions({ WINDOCK_TLS: "0" }), { tls: false, plainHttp: tru
 t.deepEqual(transportOptions({ WINDOCK_PLAIN_HTTP: "0" }), { tls: true, plainHttp: false }, "WINDOCK_PLAIN_HTTP=0 turns plain HTTP off");
 t.throws(() => transportOptions({ WINDOCK_TLS: "0", WINDOCK_PLAIN_HTTP: "0" }), "turning both off is refused");
 
-const env = { WINDOCK_CONFIG: join(scratch, "host", "config.json") };
+const env = { WINDOCK_CONFIG: join(scratch, "host", "config.json"), WINDOCK_BONJOUR: "0" };
 const savedConfig = process.env.WINDOCK_CONFIG;
 process.env.WINDOCK_CONFIG = env.WINDOCK_CONFIG; // the default config store reads it
 async function startStop(extraEnv) {
