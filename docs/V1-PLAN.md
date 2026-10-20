@@ -168,3 +168,21 @@ Open items carried forward:
 - "1 apps" plural bug.
 - No visible disconnected state on the dock.
 - Dock layout with few tiles.
+
+### 2026-10-20: milestone 2 (finish the macOS host), done
+
+- **Security:** loopback trust now also requires a loopback-literal `Host` header. This closes a DNS-rebinding path that let any website open on the host launch apps.
+- **Pairing info:** `npm run info` (local-only `GET /api/pairing`) shows the address and PIN.
+- **Login item:** `npm run mac:install|uninstall|status` manages a LaunchAgent, and the PIN is kept out of its logs. See `docs/INSTALL-MACOS.md`.
+- **Screen stays on (user requirement):** phone screens never turn off while WinDock is open.
+  - Android sets `FLAG_KEEP_SCREEN_ON` whenever the app is resumed, and the Screen-off/rest feature was removed.
+  - iOS disables the idle timer.
+- **Wording and dock polish:**
+  - Platform-neutral wording in the web UI and both phone shells.
+  - "Reconnecting to …" pill when the host drops off.
+  - A single row of tiles is centred.
+- **Verification:**
+  - `npm test` passes 21/21.
+  - All 7 Android instrumented tests pass on the API 37 emulator, each run with its fixture.
+  - Manual emulator check: the screen stays awake in-app past a 15 s system timeout and sleeps normally outside the app.
+  - iOS simulator build succeeds.
