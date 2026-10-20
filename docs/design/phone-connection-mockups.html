@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinDock phone connection screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ------------------------------------------------------------------
+   Tokens. Values reuse the existing native screens (iOS #090E10 / mint
+   #82E8BF / BrandMark) and the web dock (--text, --muted, --live, danger).
+   See docs/design/PHONE-CONNECTION-FLOW.md, section "Tokens".
+------------------------------------------------------------------- */
+:root {
+  --bg: #090E10;
+  --bg-glow: rgba(74, 108, 83, .26);
+  --row: #13191B;
+  --row-pressed: #1A2224;
+  --sheet: #151D20;
+  --field: #171F22;
+  --line: rgba(255, 255, 255, .07);
+  --line-strong: rgba(255, 255, 255, .12);
+  --text: #EEF3F1;
+  --text-2: #A0AFAF;
+  --text-3: #7D8C8E;
+  --idle: #5E6E70;
+  --accent: #82E8BF;
+  --on-accent: #0A1C1A;
+  --accent-tint: rgba(130, 232, 191, .10);
+  --accent-line: rgba(130, 232, 191, .30);
+  --live: #A3E6BE;
+  --danger: #ED9695;
+  --danger-text: #F1AAA6;
+  --danger-tint: rgba(237, 150, 149, .12);
+  --danger-line: rgba(241, 170, 166, .30);
+  --scrim: rgba(3, 7, 9, .62);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --r-control: 12px;
+  --r-group: 16px;
+  --r-sheet: 24px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #040607; color: var(--text); font: 14px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; display: block; }
+
+/* ---------- gallery chrome ---------- */
+.doc { max-width: 1040px; margin: 0 auto; padding: 48px 24px 24px; }
+.doc h1 { font-size: 28px; font-weight: 650; letter-spacing: -.4px; margin: 0 0 8px; }
+.doc p { color: var(--text-2); max-width: 720px; margin: 0 0 8px; }
+.doc .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; color: var(--text-3); font-size: 13px; }
+.group-title { max-width: 1040px; margin: 48px auto 0; padding: 0 24px; font-size: 13px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+figure.frame { margin: 20px auto 0; padding: 0 24px; max-width: 1040px; }
+figure.frame figcaption { display: flex; gap: 12px; align-items: baseline; margin-top: 10px; color: var(--text-2); font-size: 13px; }
+figure.frame figcaption b { color: var(--text); font-weight: 600; }
+figure.frame figcaption code { color: var(--text-3); font-family: var(--mono); font-size: 12px; }
+.device { display: inline-block; padding: 10px; border-radius: 56px; background: #1b1f21; box-shadow: 0 0 0 1px #2a3033, 0 30px 60px #0008; }
+.device.android { border-radius: 40px; }
+
+/* ---------- the screen ---------- */
+.screen { position: relative; overflow: hidden; width: 844px; height: 390px; border-radius: 46px; background: var(--bg); color: var(--text); isolation: isolate; }
+.screen.w932 { width: 932px; height: 430px; border-radius: 52px; }
+.screen.android { border-radius: 30px; font-family: Roboto, system-ui, sans-serif; --mono: "Roboto Mono", ui-monospace, monospace; }
+.screen::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse 60% 70% at 8% -20%, var(--bg-glow), transparent 70%); }
+.screen.no-glow::before { display: none; }
+/* hardware: notch (844 iPhone), island (932 iPhone), punch hole (Android), home indicator */
+.hw-notch { position: absolute; z-index: 50; left: 0; top: calc(50% - 105px); width: 30px; height: 210px; background: #000; border-radius: 0 20px 20px 0; }
+.hw-island { position: absolute; z-index: 50; left: 11px; top: calc(50% - 63px); width: 37px; height: 126px; background: #000; border-radius: 20px; }
+.hw-hole { position: absolute; z-index: 50; left: 14px; top: calc(50% - 7px); width: 14px; height: 14px; background: #000; border-radius: 50%; box-shadow: 0 0 0 2px #0d1112; }
+.hw-home { position: absolute; z-index: 50; left: calc(50% - 90px); bottom: 8px; width: 180px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.38); }
+/* safe content area */
+.safe { position: absolute; inset: 0 47px 21px 47px; display: flex; }
+.w932 .safe { inset: 0 59px 21px 59px; }
+.android .safe { inset: 0 40px 0 44px; }
+
+/* ---------- type ---------- */
+.t-display { font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -.4px; margin: 0; }
+.t-display em { font-style: normal; color: var(--accent); }
+.t-title { font-size: 21px; line-height: 1.25; font-weight: 600; letter-spacing: -.2px; margin: 0; }
+.t-head { font-size: 17px; line-height: 1.3; font-weight: 600; margin: 0; }
+.t-body { font-size: 15px; line-height: 1.45; color: var(--text-2); margin: 0; }
+.t-sub { font-size: 13px; line-height: 1.4; color: var(--text-2); margin: 0; }
+.t-cap { font-size: 12px; line-height: 1.4; color: var(--text-3); margin: 0; }
+.t-label { font-size: 13px; line-height: 1.3; font-weight: 600; color: var(--text-2); margin: 0; }
+.android .t-head { font-size: 16px; font-weight: 500; }
+.android .t-display, .android .t-title { font-weight: 500; letter-spacing: 0; }
+.mono { font-family: var(--mono); }
+.strong { color: var(--text); font-weight: 600; }
+
+/* ---------- brand ---------- */
+.brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
+.mark { display: grid; grid-template-columns: 1fr 1fr; gap: 16%; width: 26px; height: 26px; flex-shrink: 0; }
+.mark i { border-radius: 22%; }
+.mark i:nth-child(1) { background: #82E8BF; } .mark i:nth-child(2) { background: #C7FAE8; }
+.mark i:nth-child(3) { background: #80BAFF; } .mark i:nth-child(4) { background: #69D9CC; }
+.mark.lg { width: 44px; height: 44px; }
+
+/* ---------- buttons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 48px; padding: 0 20px; border-radius: var(--r-control); border: 1px solid transparent; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: rgba(255,255,255,.07); white-space: nowrap; }
+.btn svg.i { width: 18px; height: 18px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.ghost { background: transparent; color: var(--accent); padding: 0 12px; }
+.btn.danger { background: var(--danger-tint); color: var(--danger-text); border-color: var(--danger-line); }
+.btn.block { width: 100%; }
+.btn.small { height: 36px; padding: 0 14px; font-size: 13px; border-radius: 10px; }
+.btn.disabled { opacity: .4; }
+.btn.focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.android .btn { font-weight: 500; letter-spacing: .1px; border-radius: 14px; }
+.icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--text-2); background: transparent; border: 0; flex-shrink: 0; }
+.icon-btn.filled { background: rgba(255,255,255,.07); color: var(--text); }
+.android .icon-btn { width: 48px; height: 48px; border-radius: 24px; }
+.btn-row { display: flex; gap: 12px; align-items: center; }
+
+/* ---------- rail + content layout ---------- */
+.rail { width: 248px; flex-shrink: 0; display: flex; flex-direction: column; padding: 24px 0 16px; }
+.w932 .rail { width: 268px; padding-top: 28px; }
+.rail .brand { margin-bottom: 28px; }
+.rail .t-display + .t-body, .rail .t-display + .t-sub { margin-top: 10px; }
+.rail-actions { margin-top: auto; display: flex; flex-direction: column; gap: 2px; margin-left: -12px; }
+.rail-link { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 12px; color: var(--text); font-size: 15px; font-weight: 500; }
+.rail-link svg.i { color: var(--accent); }
+.rail-link small { margin-left: auto; color: var(--text-3); font-size: 12px; }
+.android .rail-link { height: 48px; }
+.content { flex: 1; min-width: 0; margin-left: 32px; padding: 20px 0 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+.w932 .content { margin-left: 40px; padding-top: 24px; }
+.content.fade-bottom::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+
+/* ---------- list ---------- */
+.sec-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; }
+.sec-head .t-label { flex: 1; }
+.sec-head .t-cap { display: flex; align-items: center; gap: 6px; }
+.group { background: var(--row); border-radius: var(--r-group); overflow: hidden; margin-bottom: 16px; flex-shrink: 0; }
+.row { position: relative; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 6px 10px 14px; }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 68px; right: 0; height: 1px; background: var(--line); }
+.row.pressed { background: var(--row-pressed); }
+.row.compact { min-height: 56px; }
+.glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,.06); color: var(--text-2); flex-shrink: 0; }
+.glyph.on { color: var(--accent); background: var(--accent-tint); }
+.glyph.warn { color: var(--danger-text); background: var(--danger-tint); }
+.glyph.lg { width: 56px; height: 56px; border-radius: 16px; }
+.glyph.lg svg.i { width: 26px; height: 26px; }
+.row-text { flex: 1; min-width: 0; }
+.row-title { font-size: 17px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.android .row-title { font-size: 16px; font-weight: 500; }
+.row-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+.row-sub .addr { color: var(--text-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.row-sub .sep { color: var(--text-3); }
+.row-sub.warn { color: var(--danger-text); }
+.row .trail { display: flex; align-items: center; gap: 2px; color: var(--text-3); }
+.row .trail .pill { height: 32px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 16px; background: var(--accent-tint); color: var(--accent); font-size: 13px; font-weight: 600; margin-right: 8px; }
+.row .check { color: var(--accent); margin-right: 12px; }
+.row-add { color: var(--accent); }
+.row-add .glyph { background: transparent; color: var(--accent); }
+.row-add .row-title { font-weight: 500; font-size: 15px; color: var(--accent); }
+/* status dot: filled = reachable, ring = not found, never colour alone (always paired with text) */
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--live); }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--idle); }
+.dot.warn { background: var(--danger-text); }
+.list-foot { padding: 0 4px 24px; }
+
+/* ---------- spinners ---------- */
+.spin-ios { width: 16px; height: 16px; flex-shrink: 0; }
+.spin-ios line { stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.spin-and { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(130,232,191,.2); border-top-color: var(--accent); border-right-color: var(--accent); flex-shrink: 0; }
+.spin-ios.lg { width: 22px; height: 22px; }
+.spin-and.lg { width: 22px; height: 22px; border-width: 2.5px; }
+
+/* ---------- center stack (connecting / simple states) ---------- */
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.center .mark { margin-bottom: 24px; }
+.status-line { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 15px; color: var(--text-2); }
+.bottom-link { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; }
+
+/* ---------- modal flow (pairing, add by address) ---------- */
+.topbar { position: absolute; z-index: 5; left: 0; right: 0; top: 0; height: 60px; display: flex; align-items: center; gap: 8px; padding-top: 8px; }
+.topbar .t-head { flex: 1; }
+.topbar .t-cap { margin-right: 4px; }
+.steps { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+.step { display: flex; align-items: center; gap: 12px; font-size: 15px; color: var(--text-3); }
+.step b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--idle); font-size: 13px; font-weight: 600; color: var(--text-3); flex-shrink: 0; }
+.step.now { color: var(--text); font-weight: 600; }
+.step.now b { border-color: var(--accent); color: var(--accent); }
+.step.done { color: var(--text-2); }
+.step.done b { border-color: transparent; background: var(--accent-tint); color: var(--accent); }
+.ident { display: flex; align-items: center; gap: 14px; }
+.ident .row-title { font-size: 19px; }
+.code { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: .04em; color: var(--text); line-height: 1.1; white-space: nowrap; }
+.code .dash { color: var(--text-3); margin: 0 .06em; }
+.code.sm { font-size: 19px; }
+.code-card { border-radius: var(--r-group); background: var(--row); padding: 16px 18px; }
+.code-card .k { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+.code-card + .code-card { margin-top: 8px; }
+.code-card.now { box-shadow: inset 0 0 0 1px var(--danger-line); }
+.how { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-group); background: var(--row); }
+.how .glyph { width: 32px; height: 32px; border-radius: 10px; }
+.how .glyph svg.i { width: 18px; height: 18px; }
+kbd.k { font: inherit; font-weight: 600; color: var(--text); }
+code.cmd { font-family: var(--mono); font-size: 13px; color: var(--text); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 6px; }
+
+/* PIN boxes */
+.pin { display: flex; gap: 8px; align-items: center; }
+.pin i { display: grid; place-items: center; width: 46px; height: 56px; border-radius: 12px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line-strong); font: 500 26px/1 var(--mono); font-style: normal; color: var(--text); }
+.pin i.cur { box-shadow: inset 0 0 0 2px var(--accent); }
+.pin i.cur::after { content: ""; width: 2px; height: 26px; background: var(--accent); border-radius: 1px; }
+.pin .gap { width: 10px; }
+.pin.error i { box-shadow: inset 0 0 0 1.5px var(--danger-line); color: var(--danger-text); }
+.msg { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.4; }
+.msg.err { color: var(--danger-text); }
+.msg svg.i { width: 16px; height: 16px; margin-top: 1px; }
+
+/* text field */
+.field { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px; border-radius: var(--r-control); background: var(--field); box-shadow: inset 0 0 0 2px var(--accent); font: 400 18px var(--mono); color: var(--text); }
+.field .caret { width: 2px; height: 24px; background: var(--accent); margin-left: -6px; }
+.field .ph { color: var(--text-3); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0 0 8px 2px; }
+
+/* checklist */
+.checks { display: flex; flex-direction: column; gap: 8px; }
+.chk { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-group); background: var(--row); }
+.chk .n { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.06); color: var(--text-2); font-size: 13px; font-weight: 600; flex-shrink: 0; margin-top: 1px; }
+.chk.likely { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.chk.likely .n { background: var(--accent-tint); color: var(--accent); }
+.chk .t-head { font-size: 15px; }
+.chk .t-sub { margin-top: 2px; }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--accent-tint); color: var(--accent); font-size: 11px; font-weight: 600; margin-left: 6px; vertical-align: 2px; }
+
+/* ---------- keyboards (system UI, approximated) ---------- */
+.kbd { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; background: #26292B; padding: 8px 64px 26px; display: grid; gap: 7px; }
+.kbd .r { display: grid; gap: 6px; }
+.kbd .k { height: 34px; border-radius: 6px; background: #55595C; color: #fff; display: grid; place-items: center; font-size: 17px; box-shadow: 0 1px 0 #0008; line-height: 1; }
+.kbd .k.fn { background: #3A3D40; font-size: 14px; }
+.kbd .k.go { background: #0A84FF; color: #fff; font-size: 15px; font-weight: 600; }
+.kbd .k small { display: block; font-size: 8px; letter-spacing: .12em; color: #d4d7d8; margin-top: 2px; }
+.kbd.num { padding: 8px 210px 26px; }
+.kbd.num .r { grid-template-columns: repeat(3, 1fr); }
+.kbd.num .k { height: 36px; display: flex; flex-direction: column; justify-content: center; }
+.kbd.punct .r { grid-template-columns: repeat(10, 1fr); }
+.kbd.punct .r.last { grid-template-columns: 1.6fr 6fr 1.6fr; }
+.kbd.and { background: #1E2123; padding: 8px 120px 10px; }
+.kbd.and .k { background: #3B3F42; border-radius: 10px; box-shadow: none; height: 38px; }
+.kbd.and .k.fn { background: #2C3033; }
+.kbd.and .k.go { background: #82E8BF; border-radius: 19px; }
+.kbd.and.num .r { grid-template-columns: repeat(4, 1fr); }
+
+/* ---------- dock (shared web UI, for context only) ---------- */
+.dock-bg { position: absolute; inset: 0; z-index: 0; background: #0b1720; overflow: hidden; }
+.dock-bg span { position: absolute; border-radius: 50%; filter: blur(42px); opacity: .8; }
+.dock-bg span:nth-child(1) { width: 110%; height: 135%; left: -45%; top: -80%; background: radial-gradient(ellipse, #49876a, transparent 65%); transform: rotate(-25deg); }
+.dock-bg span:nth-child(2) { width: 125%; height: 150%; right: -45%; bottom: -90%; background: radial-gradient(ellipse, #36577a, transparent 66%); }
+.dock-bg span:nth-child(3) { width: 70%; height: 100%; left: 32%; top: -72%; background: radial-gradient(ellipse, #95ab87, transparent 70%); opacity: .4; }
+.tiles { position: absolute; z-index: 1; left: 0; right: 0; top: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: 1fr 1fr; place-items: center; padding: 24px 90px 40px; }
+.app { width: 78px; height: 78px; border-radius: 22%; display: grid; place-items: center; box-shadow: 0 12px 13px #0005; }
+.app svg { width: 46%; height: 46%; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.glass { background: rgba(39, 61, 73, .55); border: 1px solid rgba(225, 240, 255, .16); box-shadow: inset 0 1px 0 #ffffff14, 0 20px 75px #0005; backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3); }
+.drawer { position: absolute; z-index: 10; left: calc(50% - 320px); width: 640px; bottom: 14px; border-radius: 29px; padding: 0 20px; color: #f0f6f6; }
+.drawer .grip { height: 29px; display: grid; place-items: center; }
+.drawer .grip span { width: 33px; height: 3px; border-radius: 3px; background: #ebf5f44d; }
+.drawer .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 6px 0 12px; }
+.drawer .acts div { display: flex; flex-direction: column; align-items: center; gap: 10px; border-radius: 18px; padding: 15px 6px 13px; background: #ffffff06; font-size: 11px; }
+.drawer .acts svg.i { width: 26px; height: 26px; }
+.drawer .conn { display: flex; align-items: center; gap: 10px; min-height: 48px; margin: 0 -8px 8px; padding: 0 10px 0 12px; border-radius: 14px; border-top: 0; background: #ffffff08; font-size: 13px; }
+.drawer .conn.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drawer .conn svg.i { width: 18px; height: 18px; color: #d2dedb; }
+.drawer .conn .name { font-weight: 600; flex: 1; }
+.drawer .conn .state { display: inline-flex; align-items: center; gap: 6px; color: var(--live); font-size: 12px; }
+.drawer .conn .switch { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding-left: 12px; border-left: 1px solid #ffffff1a; color: #e6f0ee; font-weight: 600; }
+.drawer .conn .switch svg.i { color: #e6f0ee; }
+.scrim { position: absolute; inset: 0; z-index: 9; background: var(--scrim); }
+.scrim.light { background: rgba(5, 11, 23, .2); }
+
+/* ---------- sheets & dialogs ---------- */
+.sheet { position: absolute; z-index: 30; left: calc(50% - 250px); width: 500px; bottom: 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; background: var(--sheet); box-shadow: 0 -1px 0 var(--line-strong), 0 -20px 60px #0007; padding: 0 16px 28px; }
+.sheet .handle { height: 20px; display: grid; place-items: center; }
+.sheet .handle span { width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); }
+.sheet .sheet-head { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px 4px; }
+.sheet .sheet-head .t-head { flex: 1; }
+.sheet .group { background: rgba(255,255,255,.04); margin-bottom: 0; }
+.android .sheet { border-radius: 28px 28px 0 0; padding-bottom: 16px; }
+.alert { position: absolute; z-index: 40; left: calc(50% - 135px); top: 50%; transform: translateY(-50%); width: 270px; border-radius: 14px; background: rgba(37, 42, 44, .96); text-align: center; overflow: hidden; backdrop-filter: blur(30px); }
+.alert .a-body { padding: 18px 16px 16px; }
+.alert .a-title { font-size: 17px; font-weight: 600; line-height: 1.3; }
+.alert .a-msg { font-size: 13px; line-height: 1.38; margin-top: 4px; color: #e8ecea; }
+.alert .a-acts { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); }
+.alert .a-acts div { height: 44px; display: grid; place-items: center; font-size: 17px; color: #82E8BF; }
+.alert .a-acts div + div { border-left: 1px solid rgba(255,255,255,.12); }
+.alert .a-acts .destr { color: #FF6B63; font-weight: 600; }
+.menu { position: absolute; z-index: 40; width: 220px; border-radius: 12px; background: rgba(40, 46, 48, .97); box-shadow: 0 20px 50px #0009; overflow: hidden; }
+.menu div { display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 16px; font-size: 17px; }
+.menu div + div { border-top: 1px solid rgba(255,255,255,.08); }
+.menu .destr { color: #FF6B63; }
+.menu svg.i { width: 18px; height: 18px; }
+.android .menu { width: 200px; border-radius: 8px; background: #20282B; padding: 8px 0; }
+.android .menu div { height: 48px; font-size: 15px; border: 0; }
+
+/* ---------- empty / problem layouts ---------- */
+.empty { flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding-bottom: 24px; }
+.empty .glyph.lg { margin-bottom: 18px; }
+.empty .t-body { margin-top: 8px; max-width: 420px; }
+.empty .btn-row { margin-top: 22px; }
+.split { flex: 1; display: flex; gap: 40px; align-items: center; }
+.split > .l { width: 300px; flex-shrink: 0; }
+.split > .r { flex: 1; min-width: 0; }
+.w932 .split > .l { width: 330px; }
+
+/* ---------- solo mode for screenshots: #solo=<id> ---------- */
+body.solo { background: var(--bg); }
+body.solo .doc, body.solo .group-title, body.solo figure.frame:not(.is-solo) { display: none; }
+body.solo figure.frame.is-solo { margin: 0; padding: 0; max-width: none; }
+body.solo figure.frame.is-solo figcaption { display: none; }
+body.solo .device { padding: 0; border-radius: 0; box-shadow: none; background: none; }
+body.solo .screen { border-radius: 0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24"><path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-more-v" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 8.8a14 14 0 0 1 19 0M5.5 12.2a9.5 9.5 0 0 1 13 0M8.7 15.5a5 5 0 0 1 6.6 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M2.5 8.8a14 14 0 0 1 4.3-2.7M10.5 4.6a14 14 0 0 1 11 4.2M5.5 12.2a9.5 9.5 0 0 1 4-2.2M8.7 15.5a5 5 0 0 1 6.6 0M3.5 3.5l17 17"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.2c0 4.6-3.1 8.4-7.5 9.8-4.4-1.4-7.5-5.2-7.5-9.8V6z"/><path d="M12 8v4.5"/><circle cx="12" cy="15.8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-usb" viewBox="0 0 24 24"><path d="M12 21V4.5M9.5 7L12 4.5 14.5 7M12 16l-4.2-2.2V11M12 13.5l4.2-2V9"/><circle cx="7.8" cy="10" r="1.3"/><rect x="15" y="6.6" width="2.4" height="2.4" rx=".4"/><circle cx="12" cy="20" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-net" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M10.9 7.5l-4.3 8.5M13.1 7.5l4.3 8.5M7.7 18h8.6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4.5 19.5l3.8-.9L19 7.9a1.9 1.9 0 0 0-2.7-2.7L5.6 15.9z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="5" y="5" width="5" height="5" rx="1"/><rect x="14" y="5" width="5" height="5" rx="1"/><rect x="5" y="14" width="5" height="5" rx="1"/><rect x="14" y="14" width="5" height="5" rx="1"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M7 6h10M7 10h10M7 14h6"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-settings-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/></symbol>
+</svg>
+
+<header class="doc">
+  <h1>WinDock: phone connection screens</h1>
+  <p>Native screens around the shared dock, for Android and iPhone, in landscape. These are mockups; the spec is in <code class="cmd">docs/design/PHONE-CONNECTION-FLOW.md</code>. Keyboards and system alerts are drawn approximately; build them with the platform's own components.</p>
+  <p>Screenshot one screen: open this file with <code class="cmd">#solo=&lt;id&gt;</code> at the frame's size.</p>
+  <div class="legend"><span>iPhone 844 × 390 (notch) and 932 × 430 (Dynamic Island)</span><span>Android 844 × 390 dp (punch hole)</span><span>Sample computers: Studio PC (Windows), Geris-MacBook-Air (macOS)</span></div>
+</header>
+
+<!-- =============================== LAUNCH =============================== -->
+<h2 class="group-title">Launch</h2>
+
+<figure class="frame" id="01-launch-connecting" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="center">
+        <div class="mark lg"><i></i><i></i><i></i><i></i></div>
+        <p class="t-title">Opening Studio PC</p>
+        <div class="status-line"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-2)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg>Connecting…</div>
+      </div>
+      <div class="bottom-link"><span class="btn ghost">Choose another computer</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>01 · Opening the last computer</b> iPhone 844 <code>#solo=01-launch-connecting</code> Shown only if the dock isn't ready after 400 ms.</figcaption>
+</figure>
+
+<figure class="frame" id="02-launch-new-address" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="center">
+        <div class="mark lg"><i></i><i></i><i></i><i></i></div>
+        <p class="t-title">Opening Studio PC</p>
+        <div class="status-line"><svg class="i" style="width:16px;height:16px;color:var(--accent)"><use href="#i-check"/></svg>Found it at a new address, 192.168.1.47</div>
+      </div>
+      <div class="bottom-link"><span class="btn ghost">Choose another computer</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>02 · Computer moved to a new address</b> iPhone 844 <code>#solo=02-launch-new-address</code> Found again by identity and certificate; no PIN. Shown for 600 ms, then the dock.</figcaption>
+</figure>
+
+<!-- =============================== FIRST LAUNCH =============================== -->
+<h2 class="group-title">First launch and discovery</h2>
+
+<figure class="frame" id="03-first-launch-priming" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Your computer.<br><em>Within reach.</em></h1>
+        <p class="t-body">Open WinDock on your computer, then pick it here.</p>
+      </div>
+      <div class="content">
+        <div class="empty">
+          <div class="glyph lg on"><svg class="i"><use href="#i-net"/></svg></div>
+          <p class="t-title">Find computers on your Wi-Fi</p>
+          <p class="t-body">WinDock looks for computers on your local network and only talks to them there. iOS will ask you to allow this next.</p>
+          <div class="btn-row"><span class="btn primary">Continue</span><span class="btn ghost">Enter an address</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>03 · Before the Local Network prompt</b> iPhone only, first launch <code>#solo=03-first-launch-priming</code> Optional: see decision D2.</figcaption>
+</figure>
+
+<figure class="frame" id="04-first-launch-found" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Your computer.<br><em>Within reach.</em></h1>
+        <p class="t-body">Open WinDock on your computer, then pick it here.</p>
+        <div class="rail-actions"><div class="rail-link"><svg class="i"><use href="#i-plus"/></svg>Add by address</div></div>
+      </div>
+      <div class="content">
+        <div class="sec-head"><p class="t-label">On this network</p><span class="t-cap"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-3)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg>Looking</span></div>
+        <div class="group">
+          <div class="row pressed">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">DESKTOP-7H2KQ9L</div><div class="row-sub">Windows <span class="sep">·</span> <span class="addr">192.168.1.20</span></div></div>
+            <div class="trail"><span class="pill">Pair</span></div>
+          </div>
+          <div class="row">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub">macOS <span class="sep">·</span> <span class="addr">192.168.1.34</span></div></div>
+            <div class="trail"><span class="pill">Pair</span></div>
+          </div>
+        </div>
+        <p class="t-cap list-foot">Don’t see your computer? Check that WinDock is running on it and that both are on the same Wi-Fi.</p>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>04 · First launch, computers found</b> iPhone 844 <code>#solo=04-first-launch-found</code> Rows arrive as discovery finds them. First row shown pressed.</figcaption>
+</figure>
+
+<figure class="frame" id="05-first-launch-empty" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Your computer.<br><em>Within reach.</em></h1>
+        <p class="t-body">Open WinDock on your computer, then pick it here.</p>
+        <div class="rail-actions">
+          <div class="rail-link"><svg class="i"><use href="#i-usb"/></svg>Connect by USB<small>Windows</small></div>
+          <div class="rail-link"><svg class="i"><use href="#i-phone"/></svg>This phone</div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="sec-head"><p class="t-label">On this network</p><span class="t-cap"><span class="spin-and"></span>Still looking</span></div>
+        <div class="empty" style="padding-top:4px">
+          <div class="glyph lg"><svg class="i"><use href="#i-search"/></svg></div>
+          <p class="t-title">No computers found yet</p>
+          <p class="t-body">Make sure WinDock is running on your computer and both devices are on the same Wi-Fi. Guest networks often keep devices from seeing each other.</p>
+          <div class="btn-row"><span class="btn">Enter an address</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>05 · First launch, nothing found after 8 s</b> Android 844 <code>#solo=05-first-launch-empty</code> Discovery keeps running; a computer that appears replaces the empty state.</figcaption>
+</figure>
+
+<!-- =============================== COMPUTERS =============================== -->
+<h2 class="group-title">Computers (the hub)</h2>
+
+<figure class="frame" id="06-computers-ios" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932">
+    <div class="hw-island"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Computers</h1>
+        <p class="t-body">Tap one to open its dock. Each computer keeps its own apps.</p>
+        <div class="rail-actions"><div class="rail-link"><svg class="i"><use href="#i-plus"/></svg>Add by address</div></div>
+      </div>
+      <div class="content fade-bottom">
+        <div class="sec-head"><p class="t-label">Paired</p></div>
+        <div class="group">
+          <div class="row">
+            <div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Studio PC</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> Last used <span class="sep">·</span> <span class="addr">192.168.1.20</span></div></div>
+            <div class="trail"><span class="icon-btn" aria-label="More for Studio PC"><svg class="i"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> macOS <span class="sep">·</span> <span class="addr">192.168.1.34</span></div></div>
+            <div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="glyph warn"><svg class="i"><use href="#i-shield"/></svg></div>
+            <div class="row-text"><div class="row-title">Living room mini</div><div class="row-sub warn"><span class="dot warn"></span>Security code changed. Tap to check.</div></div>
+            <div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Reception desk iMac, ground floor, next to the printer</div><div class="row-sub"><span class="dot ring"></span>Not found on this network <span class="sep">·</span> <span class="addr">10.0.4.12</span></div></div>
+            <div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div>
+          </div>
+        </div>
+        <div class="sec-head"><p class="t-label">On this network</p></div>
+        <div class="group">
+          <div class="row">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">DESKTOP-4MF81QZ</div><div class="row-sub">Windows <span class="sep">·</span> <span class="addr">192.168.1.52</span></div></div>
+            <div class="trail"><span class="pill">Pair</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>06 · Computers</b> iPhone 932 <code>#solo=06-computers-ios</code> Every row state: online + last used, online, security code changed, not found (long name truncates), discovered.</figcaption>
+</figure>
+
+<figure class="frame" id="07-computers-android-menu" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Computers</h1>
+        <p class="t-body">Tap one to open its dock.</p>
+        <div class="rail-actions">
+          <div class="rail-link"><svg class="i"><use href="#i-plus"/></svg>Add by address</div>
+          <div class="rail-link"><svg class="i"><use href="#i-usb"/></svg>Connect by USB<small>Windows</small></div>
+          <div class="rail-link"><svg class="i"><use href="#i-phone"/></svg>This phone</div>
+        </div>
+      </div>
+      <div class="content fade-bottom">
+        <div class="sec-head"><p class="t-label">Paired</p></div>
+        <div class="group">
+          <div class="row">
+            <div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Studio PC</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> Last used <span class="sep">·</span> <span class="addr">192.168.1.20</span></div></div>
+            <div class="trail"><span class="icon-btn" style="background:rgba(255,255,255,.08);color:var(--text)"><svg class="i"><use href="#i-more-v"/></svg></span></div>
+          </div>
+          <div class="row">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub"><span class="spin-and" style="width:11px;height:11px;border-width:1.5px"></span>Checking…</div></div>
+            <div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more-v"/></svg></span></div>
+          </div>
+        </div>
+        <div class="sec-head"><p class="t-label">On this network</p></div>
+        <div class="group">
+          <div class="row">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <div class="row-text"><div class="row-title">DESKTOP-4MF81QZ</div><div class="row-sub">Windows <span class="sep">·</span> <span class="addr">192.168.1.52</span></div></div>
+            <div class="trail"><span class="pill">Pair</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="menu" style="right:96px;top:62px"><div>Open dock</div><div>Rename</div><div>Forget</div></div>
+  </div></div>
+  <figcaption><b>07 · Computers on Android, row menu open</b> Android 844 <code>#solo=07-computers-android-menu</code> ⋮ opens a PopupMenu; long-press does the same. USB and This phone live in the rail.</figcaption>
+</figure>
+
+<figure class="frame" id="08-rename" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Computers</h1>
+        <p class="t-body">Tap one to open its dock.</p>
+      </div>
+      <div class="content">
+        <div class="sec-head"><p class="t-label">Paired</p></div>
+        <div class="group">
+          <div class="row"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">DESKTOP-7H2KQ9L</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> Last used</div></div><div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+          <div class="row"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub"><span class="dot"></span>Online</div></div><div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="scrim" style="background:rgba(0,0,0,.45)"></div>
+    <div class="alert" style="top:24px;transform:none">
+      <div class="a-body">
+        <div class="a-title">Rename computer</div>
+        <div class="a-msg">Only this phone uses this name. Leave it empty to use DESKTOP-7H2KQ9L.</div>
+        <div style="margin-top:12px;height:30px;border-radius:7px;background:#1b1f20;box-shadow:inset 0 0 0 .5px #ffffff30;display:flex;align-items:center;padding:0 8px;font-size:13px;text-align:left">Studio PC<span style="width:1.5px;height:17px;background:var(--accent);margin-left:1px"></span></div>
+      </div>
+      <div class="a-acts"><div>Cancel</div><div style="font-weight:600">Save</div></div>
+    </div>
+    <div class="kbd punct" style="padding:6px 64px 22px;gap:6px">
+      <div class="r"><div class="k">q</div><div class="k">w</div><div class="k">e</div><div class="k">r</div><div class="k">t</div><div class="k">y</div><div class="k">u</div><div class="k">i</div><div class="k">o</div><div class="k">p</div></div>
+      <div class="r" style="padding:0 30px"><div class="k">a</div><div class="k">s</div><div class="k">d</div><div class="k">f</div><div class="k">g</div><div class="k">h</div><div class="k">j</div><div class="k">k</div><div class="k">l</div><div class="k fn">⌫</div></div>
+      <div class="r last"><div class="k fn">123</div><div class="k">space</div><div class="k go">Done</div></div>
+    </div>
+  </div></div>
+  <figcaption><b>08 · Rename</b> iPhone 844 <code>#solo=08-rename</code> System alert with a text field. Nickname is local to this phone.</figcaption>
+</figure>
+
+<figure class="frame" id="09-forget" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Computers</h1>
+        <p class="t-body">Tap one to open its dock. Each computer keeps its own apps.</p>
+        <div class="rail-actions"><div class="rail-link"><svg class="i"><use href="#i-plus"/></svg>Add by address</div></div>
+      </div>
+      <div class="content">
+        <div class="sec-head"><p class="t-label">Paired</p></div>
+        <div class="group">
+          <div class="row"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Studio PC</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> Last used</div></div><div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+          <div class="row"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub"><span class="dot"></span>Online</div></div><div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="scrim" style="background:rgba(0,0,0,.45)"></div>
+    <div class="alert">
+      <div class="a-body">
+        <div class="a-title">Forget Studio PC?</div>
+        <div class="a-msg">To connect again, you’ll check the security code and enter a new PIN. Your dock stays on Studio PC.</div>
+      </div>
+      <div class="a-acts"><div>Cancel</div><div class="destr">Forget</div></div>
+    </div>
+  </div></div>
+  <figcaption><b>09 · Forget</b> iPhone 844 <code>#solo=09-forget</code> System alert. Cancel is the default; Forget is destructive.</figcaption>
+</figure>
+
+<!-- =============================== PAIRING =============================== -->
+<h2 class="group-title">Pairing a new computer</h2>
+
+<figure class="frame" id="10-pair-code-windows" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="topbar"><span class="icon-btn filled" aria-label="Cancel pairing"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="split" style="padding-top:28px">
+        <div class="l" style="width:250px">
+          <div class="ident"><div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title" style="font-size:17px">DESKTOP-4MF81QZ</div><div class="row-sub">Windows <span class="sep">·</span> <span class="addr">192.168.1.52</span></div></div></div>
+          <div class="steps">
+            <div class="step now"><b>1</b>Check the security code</div>
+            <div class="step"><b>2</b>Enter the PIN</div>
+          </div>
+        </div>
+        <div class="r">
+          <p class="t-label" style="margin-bottom:8px">Does this match your computer?</p>
+          <div class="code">D87C<span class="dash">-</span>92C9<span class="dash">-</span>1B8B</div>
+          <div class="how" style="margin-top:18px">
+            <div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div>
+            <p class="t-sub">On DESKTOP-4MF81QZ, click the WinDock icon in the taskbar tray, by the clock, and choose <kbd class="k">Show connection info</kbd>.</p>
+          </div>
+          <div class="btn-row" style="margin-top:20px"><span class="btn primary">Codes match</span><span class="btn">They don’t match</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>10 · Pair, step 1: security code (Windows)</b> iPhone 844 <code>#solo=10-pair-code-windows</code> Instruction follows the computer's platform from /health.</figcaption>
+</figure>
+
+<figure class="frame" id="11-pair-code-mac" data-w="932" data-h="430">
+  <div class="device android"><div class="screen android w932">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="topbar"><span class="icon-btn" aria-label="Back"><svg class="i"><use href="#i-back"/></svg></span><p class="t-head">Pair a computer</p></div>
+      <div class="split" style="padding-top:36px">
+        <div class="l" style="width:270px">
+          <div class="ident"><div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title" style="font-size:17px">Geris-MacBook-Air</div><div class="row-sub">macOS <span class="sep">·</span> <span class="addr">192.168.1.34</span></div></div></div>
+          <div class="steps">
+            <div class="step now"><b>1</b>Check the security code</div>
+            <div class="step"><b>2</b>Enter the PIN</div>
+          </div>
+        </div>
+        <div class="r">
+          <p class="t-label" style="margin-bottom:8px">Does this match your computer?</p>
+          <div class="code" style="font-size:38px">4F1A<span class="dash">-</span>07EE<span class="dash">-</span>C2D3</div>
+          <div class="how" style="margin-top:20px">
+            <div class="glyph"><svg class="i"><use href="#i-terminal"/></svg></div>
+            <p class="t-sub">On the Mac, open Terminal in the WinDock folder and run <code class="cmd">npm run info</code>.</p>
+          </div>
+          <div class="btn-row" style="margin-top:22px"><span class="btn primary">Codes match</span><span class="btn">They don’t match</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>11 · Pair, step 1: security code (Mac host, Android phone)</b> Android 932 <code>#solo=11-pair-code-mac</code> Android uses a back arrow and title; system Back does the same.</figcaption>
+</figure>
+
+<figure class="frame" id="12-pair-pin" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div>
+    <div class="safe" style="bottom:0">
+      <div class="topbar" style="height:52px;padding-top:6px"><span class="icon-btn filled" aria-label="Cancel pairing"><svg class="i"><use href="#i-close"/></svg></span><p class="t-head" style="text-align:center">Enter the PIN from DESKTOP-4MF81QZ</p><span class="t-cap" style="width:44px;text-align:right">2 of 2</span></div>
+      <div style="position:absolute;left:0;right:0;top:60px;display:flex;flex-direction:column;align-items:center;gap:12px">
+        <div class="pin"><i>4</i><i>8</i><i>1</i><span class="gap"></span><i class="cur"></i><i></i><i></i></div>
+        <p class="t-cap">It’s on the same screen as the security code.</p>
+      </div>
+    </div>
+    <div class="kbd num">
+      <div class="r"><div class="k">1</div><div class="k">2<small>ABC</small></div><div class="k">3<small>DEF</small></div></div>
+      <div class="r"><div class="k">4<small>GHI</small></div><div class="k">5<small>JKL</small></div><div class="k">6<small>MNO</small></div></div>
+      <div class="r"><div class="k">7<small>PQRS</small></div><div class="k">8<small>TUV</small></div><div class="k">9<small>WXYZ</small></div></div>
+      <div class="r"><div class="k fn" style="background:transparent;box-shadow:none"></div><div class="k">0</div><div class="k fn">⌫</div></div>
+    </div>
+  </div></div>
+  <figcaption><b>12 · Pair, step 2: PIN (native)</b> iPhone 844, keyboard up <code>#solo=12-pair-pin</code> Pairs on the sixth digit. Compact layout so the boxes stay above the number pad.</figcaption>
+</figure>
+
+<figure class="frame" id="13-pair-pin-wrong" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="topbar" style="height:56px;padding-top:4px"><span class="icon-btn" aria-label="Back"><svg class="i"><use href="#i-back"/></svg></span><p class="t-head">Enter the PIN from DESKTOP-4MF81QZ</p><span class="t-cap">2 of 2</span></div>
+      <div style="position:absolute;left:0;right:0;top:64px;display:flex;flex-direction:column;align-items:center;gap:12px">
+        <div class="pin error"><i>4</i><i>8</i><i>1</i><span class="gap"></span><i>2</i><i>9</i><i>0</i></div>
+        <div class="msg err" role="alert"><svg class="i"><use href="#i-shield"/></svg>That PIN didn’t work. Check the 6 digits on DESKTOP-4MF81QZ and try again.</div>
+      </div>
+    </div>
+    <div class="kbd and num">
+      <div class="r"><div class="k">1</div><div class="k">2</div><div class="k">3</div><div class="k fn">−</div></div>
+      <div class="r"><div class="k">4</div><div class="k">5</div><div class="k">6</div><div class="k fn">␣</div></div>
+      <div class="r"><div class="k">7</div><div class="k">8</div><div class="k">9</div><div class="k fn">⌫</div></div>
+      <div class="r"><div class="k fn">,</div><div class="k">0</div><div class="k fn">.</div><div class="k go">✓</div></div>
+    </div>
+  </div></div>
+  <figcaption><b>13 · Wrong PIN</b> Android 844 <code>#solo=13-pair-pin-wrong</code> Boxes shake once and keep the digits until the next keypress, which clears them.</figcaption>
+</figure>
+
+<figure class="frame" id="14-pair-closed" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="topbar"><span class="icon-btn filled" aria-label="Cancel pairing"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="split" style="padding-top:28px">
+        <div class="l" style="width:250px">
+          <div class="ident"><div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title" style="font-size:17px">DESKTOP-4MF81QZ</div><div class="row-sub">Windows <span class="sep">·</span> <span class="addr">192.168.1.52</span></div></div></div>
+          <div class="steps">
+            <div class="step done"><b><svg class="i" style="width:14px;height:14px"><use href="#i-check"/></svg></b>Security code checked</div>
+            <div class="step now"><b>2</b>Enter the PIN</div>
+          </div>
+        </div>
+        <div class="r">
+          <div class="glyph lg" style="margin-bottom:16px"><svg class="i"><use href="#i-clock"/></svg></div>
+          <p class="t-title">Pairing is closed on DESKTOP-4MF81QZ</p>
+          <p class="t-body" style="margin-top:8px">Choose <kbd class="k">Show connection info</kbd> from the WinDock tray icon. That opens pairing for 10 minutes, and this screen continues by itself.</p>
+          <div class="status-line" style="margin-top:18px;font-size:13px"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-2)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg>Waiting for pairing to open</div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>14 · Pairing window closed</b> iPhone 844 <code>#solo=14-pair-closed</code> Polls /health pairingOpen every 2 s and moves to the PIN boxes when it opens.</figcaption>
+</figure>
+
+<figure class="frame" id="15-add-by-address" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div>
+    <div class="safe" style="bottom:0">
+      <div class="topbar" style="height:52px;padding-top:6px"><span class="icon-btn filled" aria-label="Cancel"><svg class="i"><use href="#i-close"/></svg></span><p class="t-head" style="text-align:center;margin-right:52px">Add by address</p></div>
+      <div style="position:absolute;left:80px;right:80px;top:60px">
+        <div style="display:flex;gap:10px">
+          <div class="field" style="flex:1">192.168.1.2<span class="caret" style="margin-left:-6px"></span><span class="ph">:8620</span></div>
+          <span class="btn primary" style="height:52px">Connect</span>
+        </div>
+        <p class="t-cap" style="margin-top:8px">The address is in Show connection info (Windows tray) or <code class="cmd" style="font-size:11px">npm run info</code> (Mac). The port is usually 8620.</p>
+      </div>
+    </div>
+    <div class="kbd punct">
+      <div class="r"><div class="k">1</div><div class="k">2</div><div class="k">3</div><div class="k">4</div><div class="k">5</div><div class="k">6</div><div class="k">7</div><div class="k">8</div><div class="k">9</div><div class="k">0</div></div>
+      <div class="r"><div class="k">-</div><div class="k">/</div><div class="k">:</div><div class="k">;</div><div class="k">(</div><div class="k">)</div><div class="k">$</div><div class="k">&amp;</div><div class="k">@</div><div class="k">"</div></div>
+      <div class="r"><div class="k fn">#+=</div><div class="k">.</div><div class="k">,</div><div class="k">?</div><div class="k">!</div><div class="k">'</div><div class="k fn" style="grid-column:span 3"></div><div class="k fn">⌫</div></div>
+      <div class="r last"><div class="k fn">ABC</div><div class="k">space</div><div class="k go">Go</div></div>
+    </div>
+  </div></div>
+  <figcaption><b>15 · Add by address</b> iPhone 844, keyboard up <code>#solo=15-add-by-address</code> Port suggestion is ghost text; omitting it means 8620.</figcaption>
+</figure>
+
+<!-- =============================== PROBLEMS =============================== -->
+<h2 class="group-title">When something is in the way</h2>
+
+<figure class="frame" id="16-cant-reach" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932">
+    <div class="hw-island"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="split" style="align-items:stretch;padding:32px 0 20px">
+        <div class="l" style="display:flex;flex-direction:column">
+          <div class="glyph lg" style="margin-bottom:18px"><svg class="i"><use href="#i-monitor"/></svg></div>
+          <p class="t-title">Can’t reach Studio PC</p>
+          <p class="t-body" style="margin-top:8px">WinDock keeps trying while this screen is open and opens the dock as soon as Studio PC answers.</p>
+          <div class="status-line" style="font-size:13px;margin-top:14px"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-3)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg><span style="color:var(--text-3)">Looking on this network</span></div>
+          <div class="btn-row" style="margin-top:auto"><span class="btn primary">Try again</span><span class="btn">Other computers</span></div>
+        </div>
+        <div class="r checks" style="align-self:center">
+          <div class="chk likely"><span class="n">1</span><div><p class="t-head">This phone is on a different network <span class="tag">Likely</span></p><p class="t-sub">This phone is at <span class="mono" style="font-size:12px">10.0.4.17</span>, but Studio PC was at <span class="mono" style="font-size:12px">192.168.1.20</span>. Join the same Wi-Fi as the computer.</p></div></div>
+          <div class="chk"><span class="n">2</span><div><p class="t-head">WinDock is running on Studio PC</p><p class="t-sub">Look for the WinDock icon in the taskbar tray, by the clock.</p></div></div>
+          <div class="chk"><span class="n">3</span><div><p class="t-head">The network lets devices see each other</p><p class="t-sub">Guest, hotel and office Wi-Fi often keep devices apart.</p></div></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>16 · Can't reach the last computer</b> iPhone 932 <code>#solo=16-cant-reach</code> Checks are ordered by what the phone can detect; the likely cause is marked.</figcaption>
+</figure>
+
+<figure class="frame" id="17-no-wifi" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="split">
+        <div class="l" style="width:290px">
+          <div class="glyph lg" style="margin-bottom:18px"><svg class="i"><use href="#i-wifi-off"/></svg></div>
+          <p class="t-title">This phone isn’t on Wi-Fi</p>
+          <p class="t-body" style="margin-top:8px">WinDock reaches Studio PC over your local network. Join the same Wi-Fi and it will connect by itself.</p>
+        </div>
+        <div class="r" style="display:flex;flex-direction:column;gap:10px;max-width:300px">
+          <span class="btn primary block">Open Wi-Fi settings</span>
+          <span class="btn block"><svg class="i"><use href="#i-usb"/></svg>Connect by USB instead</span>
+          <span class="btn ghost block">Other computers</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>17 · No Wi-Fi</b> Android 844 <code>#solo=17-no-wifi</code> USB appears only when the computer is Windows. iPhone has no Wi-Fi button (see spec).</figcaption>
+</figure>
+
+<figure class="frame" id="18-security-changed" data-w="844" data-h="390">
+  <div class="device"><div class="screen no-glow">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="split" style="align-items:stretch;padding:30px 0 18px;gap:36px">
+        <div class="l" style="width:330px;display:flex;flex-direction:column">
+          <div class="glyph lg warn" style="margin-bottom:16px"><svg class="i"><use href="#i-shield"/></svg></div>
+          <p class="t-title">Studio PC has a new security code</p>
+          <p class="t-sub" style="margin-top:8px;font-size:14px">That’s expected if WinDock was reinstalled or reset on Studio PC. If it wasn’t, another device may be pretending to be it. Don’t continue until you’ve checked.</p>
+          <div class="btn-row" style="margin-top:auto"><span class="btn danger">Forget and pair again</span><span class="btn focus">Not now</span></div>
+        </div>
+        <div class="r" style="align-self:center">
+          <div class="code-card"><div class="k">When you paired</div><div class="code sm" style="color:var(--text-2)">D87C<span class="dash">-</span>92C9<span class="dash">-</span>1B8B</div></div>
+          <div class="code-card now"><div class="k">Now</div><div class="code sm">4F1A<span class="dash">-</span>07EE<span class="dash">-</span>C2D3</div></div>
+          <p class="t-cap" style="margin-top:12px">To check, open Show connection info on Studio PC. If it shows the new code, pair again.</p>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>18 · Security code changed</b> iPhone 844 <code>#solo=18-security-changed</code> Full screen, not an alert. "Not now" holds focus; the forward action is tinted, not filled.</figcaption>
+</figure>
+
+<figure class="frame" id="19-local-network-denied" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="hw-notch"></div><div class="hw-home"></div>
+    <div class="safe">
+      <div class="split">
+        <div class="l" style="width:320px">
+          <div class="glyph lg" style="margin-bottom:18px"><svg class="i"><use href="#i-net"/></svg></div>
+          <p class="t-title">Turn on Local Network for WinDock</p>
+          <p class="t-body" style="margin-top:8px">WinDock needs it to find your computers and talk to them on your Wi-Fi. Nothing leaves your network.</p>
+        </div>
+        <div class="r" style="max-width:320px">
+          <div class="how" style="margin-bottom:16px"><div class="glyph on"><svg class="i"><use href="#i-settings-gear"/></svg></div><p class="t-sub">In Settings, WinDock’s page opens. Turn on <span class="strong">Local Network</span>, then come back here.</p></div>
+          <span class="btn primary block">Open Settings</span>
+          <p class="t-cap" style="margin-top:10px;text-align:center">WinDock checks again when you return.</p>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>19 · Local Network permission off</b> iPhone only <code>#solo=19-local-network-denied</code> No manual-address escape hatch: it would fail for the same reason.</figcaption>
+</figure>
+
+<!-- =============================== IN THE DOCK =============================== -->
+<h2 class="group-title">Switching computers from the dock</h2>
+
+<figure class="frame" id="20-dock-drawer" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932 no-glow">
+    <div class="dock-bg"><span></span><span></span><span></span></div>
+    <div class="tiles">
+      <div class="app" style="background:linear-gradient(145deg,#2c3238,#151a1e)"><svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#3d7bf0,#2350b8)"><svg viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#f3c34a,#e19a1c)"><svg viewBox="0 0 24 24"><path d="M7 6h10M7 10h10M7 14h6"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#ff6a7d,#d83a56)"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#49c6a0,#23866b)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/></svg></div>
+    </div>
+    <div class="scrim light"></div>
+    <div class="drawer glass">
+      <div class="grip"><span></span></div>
+      <div class="acts">
+        <div><svg class="i"><use href="#i-plus"/></svg>Apps</div>
+        <div><svg class="i"><use href="#i-sun"/></svg>Appearance</div>
+        <div><svg class="i"><use href="#i-pencil"/></svg>Arrange</div>
+        <div><svg class="i"><use href="#i-monitor"/></svg>Fullscreen</div>
+      </div>
+      <div class="conn focus"><svg class="i"><use href="#i-monitor"/></svg><span class="name">Studio PC</span><span class="state"><span class="dot"></span>Connected</span><span class="switch">Switch<svg class="i"><use href="#i-updown"/></svg></span></div>
+    </div>
+  </div></div>
+  <figcaption><b>20 · Dock drawer: the computer row becomes the switcher</b> iPhone 932 <code>#solo=20-dock-drawer</code> Shared web UI; only the bottom row changes (shown with focus ring).</figcaption>
+</figure>
+
+<figure class="frame" id="21-switcher-sheet" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932 no-glow">
+    <div class="dock-bg"><span></span><span></span><span></span></div>
+    <div class="tiles">
+      <div class="app" style="background:linear-gradient(145deg,#2c3238,#151a1e)"><svg viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#3d7bf0,#2350b8)"><svg viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#f3c34a,#e19a1c)"><svg viewBox="0 0 24 24"><path d="M7 6h10M7 10h10M7 14h6"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#ff6a7d,#d83a56)"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></svg></div>
+      <div class="app" style="background:linear-gradient(145deg,#49c6a0,#23866b)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/></svg></div>
+    </div>
+    <div class="scrim"></div>
+    <div class="sheet">
+      <div class="handle"><span></span></div>
+      <div class="sheet-head"><p class="t-head">Switch computer</p><span class="btn ghost small">Manage</span></div>
+      <div class="group">
+        <div class="row compact"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Studio PC</div><div class="row-sub"><span class="dot"></span>Connected</div></div><svg class="i check"><use href="#i-check"/></svg></div>
+        <div class="row compact pressed"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub"><span class="dot"></span>Online</div></div></div>
+        <div class="row compact"><div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Living room mini</div><div class="row-sub"><span class="dot ring"></span>Not found on this network</div></div></div>
+        <div class="row compact row-add"><div class="glyph"><svg class="i"><use href="#i-plus"/></svg></div><div class="row-text"><div class="row-title">Add a computer</div></div></div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>21 · Switch computer sheet</b> iPhone 932 <code>#solo=21-switcher-sheet</code> Native sheet over the live dock. Android: same content in a bottom dialog; system Back closes it.</figcaption>
+</figure>
+
+<figure class="frame" id="22-usb-sheet" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android">
+    <div class="hw-hole"></div>
+    <div class="safe">
+      <div class="rail">
+        <div class="brand"><div class="mark"><i></i><i></i><i></i><i></i></div>WinDock</div>
+        <h1 class="t-display">Computers</h1>
+      </div>
+    </div>
+    <div class="scrim"></div>
+    <div class="sheet" style="left:calc(50% - 280px);width:560px">
+      <div class="handle"><span></span></div>
+      <div class="sheet-head"><p class="t-head">Connect by USB</p><span class="t-cap">Windows only</span></div>
+      <div class="checks" style="gap:6px">
+        <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">1</span><p class="t-sub" style="margin:2px 0 0">Plug this phone into the Windows computer with a USB data cable.</p></div>
+        <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">2</span><p class="t-sub" style="margin:2px 0 0">Turn on <span class="strong">USB tethering</span> in Android settings, under Hotspot &amp; tethering.</p></div>
+        <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">3</span><p class="t-sub" style="margin:2px 0 0">Keep WinDock running on Windows.</p></div>
+      </div>
+      <p class="t-cap" style="margin:10px 4px 12px">Tethering can share this phone’s mobile data with the computer. Turn off mobile data if you don’t want that.</p>
+      <div class="btn-row" style="justify-content:flex-end"><span class="btn ghost">Tethering settings</span><span class="btn primary">Find computer over USB</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>22 · Connect by USB</b> Android only <code>#solo=22-usb-sheet</code> Bottom dialog from the rail. Replaces the current long AlertDialog text.</figcaption>
+</figure>
+
+<script>
+  // Solo mode for screenshots: #solo=<figure id>
+  const m = location.hash.match(/solo=([\w-]+)/);
+  if (m) {
+    const f = document.getElementById(m[1]);
+    if (f) { document.body.classList.add("solo"); f.classList.add("is-solo"); }
+  }
+</script>
+</body>
+</html>
