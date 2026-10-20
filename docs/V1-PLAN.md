@@ -133,3 +133,37 @@ cookie. This decision is reversible: a phone-side cache can be added later.
   evaluation. It must be pinned, never "accept all".
 - **macOS host behavior.** The firewall prompts for Node. JXA is old but present
   on macOS 27. The user needs Node installed until packaging.
+
+## Status log
+
+### 2026-10-20: milestone 1 (shared host fixes and macOS host), done
+
+- Pairing sessions now persist as hashed tokens and survive host restarts.
+- `/health` reports `hostId`, `hostName` and `api`.
+- macOS data directory is `~/Library/Application Support/WinDock`.
+- New macOS provider:
+  - JXA catalog with 95 apps on the dev Mac, identified by bundle ID;
+  - 256px icons;
+  - running apps;
+  - launch with `open -b`, plus focus and polite quit.
+- Per-host `features` map; the UI hides controls, capture and touchpad when a host lacks them.
+- Catalog cache serves stale results while it refreshes; launch rescans once on a miss.
+- Launch errors are clear: 404 for an unknown app, 502 when the launch fails.
+- Tiles whose app has gone are dimmed.
+- `npm test`: 20/20.
+
+Validation (emulator and simulator only, **not real devices**), with the macOS host
+reached over the LAN IP so pairing was exercised:
+
+| Combination | Result |
+| --- | --- |
+| macOS host + Android emulator (API 37) | Pass: manual IP, wrong/correct PIN, add apps, launch Calculator, restart host with no re-pair, cold relaunch. UDP discovery did not cross the emulator NAT (expected). |
+| macOS host + iOS simulator (iPhone 17) | Pass: manual IP, pair, shared dock, launch TextEdit, live running state on the other phone. XCTest 7/7. |
+| Windows host + either phone | Not re-run here (no Windows machine). Windows provider unchanged; shared changes covered by mocked oracles. |
+
+Open items carried forward:
+- Leftover PC/Windows wording in the web pairing page and in the iOS and Android shells.
+- The macOS host has no UI showing the PIN.
+- "1 apps" plural bug.
+- No visible disconnected state on the dock.
+- Dock layout with few tiles.
