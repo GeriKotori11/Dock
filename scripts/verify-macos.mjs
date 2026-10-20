@@ -72,7 +72,7 @@ t.deepEqual(osascriptArgv("S", ["a"]), ["-l", "JavaScript", "-e", "S", "--", "a"
 // ---- parseInventory ----
 const apps = parseInventory(inventoryRaw);
 const byName = Object.fromEntries(apps.map((a) => [a.name, a]));
-t.equal(apps.length, 8, "inventory keeps the eight valid, non-agent, unique apps");
+t.equal(apps.length, 10, "inventory keeps the ten valid, non-background-only, unique apps");
 t.equal(byName.Safari?.id, "com.apple.Safari", "bundle id becomes the stable id");
 t.equal(byName.Safari?.target, "/Applications/Safari.app", "first directory wins on duplicate id");
 t.ok(!byName["Safari (user copy)"], "~/Applications duplicate is dropped");
@@ -81,7 +81,13 @@ t.equal(byName["Unsigned Tool"]?.bundleId, null, "path-id app has null bundleId"
 t.equal(byName["Bad Id"]?.id, "path:/applications/bad id.app", "invalid bundle id (space) falls back to path id");
 t.equal(byName["Bad Id"]?.bundleId, null, "invalid bundle id is not kept");
 t.equal(byName["Dash Id"]?.id, "path:/applications/dash id.app", "bundle id starting with '-' falls back to path id");
-t.ok(!byName["Menu Agent"], "agent (LSUIElement/LSBackgroundOnly) app is skipped");
+t.equal(byName["Menu Agent"]?.id, "com.docker.docker", "menu-bar (LSUIElement) app stays in the catalog");
+t.ok(!byName["Background Daemon"], "LSBackgroundOnly app is skipped");
+t.equal(byName["Image Capture"]?.id, "com.apple.Image_Capture", "bundle id with '_' is the stable id");
+t.equal(byName["Image Capture"]?.bundleId, "com.apple.Image_Capture", "bundle id with '_' is kept");
+t.ok(INVENTORY_JXA.includes("LSBackgroundOnly"), "inventory script reads LSBackgroundOnly");
+t.ok(!INVENTORY_JXA.includes("LSUIElement"), "inventory script no longer filters LSUIElement apps");
+t.ok(INVENTORY_JXA.includes("backgroundOnly:"), "inventory script emits backgroundOnly");
 t.ok(!byName.Relative, "relative path is skipped");
 t.ok(!byName["Not An App"], "non-.app path is skipped");
 t.ok(!byName["No Path"], "row without path is skipped");
@@ -89,7 +95,7 @@ t.ok(!apps.some((a) => a.target === "/Applications/NoName.app"), "row without na
 t.equal(byName["Microsoft Word"]?.target, "/Applications/Microsoft Office/Microsoft Word.app", "one-level subfolder entry is present");
 t.deepEqual(
   apps.map((a) => a.name),
-  ["Activity Monitor", "Bad Id", "Calculator", "Dash Id", "Microsoft Word", "Safari", "Unsigned Tool", "zed"],
+  ["Activity Monitor", "Bad Id", "Calculator", "Dash Id", "Image Capture", "Menu Agent", "Microsoft Word", "Safari", "Unsigned Tool", "zed"],
   "inventory is sorted by name, case-insensitively",
 );
 t.deepEqual(
@@ -104,11 +110,12 @@ t.deepEqual(parseInventory('{"name":"x"}'), [], "non-array output parses to []")
 
 // ---- parseRunning ----
 const running = parseRunning(runningRaw);
-t.deepEqual(running.map((r) => r.pid), [77, 411, 512, 902], "valid pids kept, deduped and sorted");
+t.deepEqual(running.map((r) => r.pid), [77, 300, 411, 512, 902], "valid pids kept, deduped and sorted");
 const runById = Object.fromEntries(running.map((r) => [r.pid, r]));
 t.equal(runById[902].id, byName.Safari.id, "running Safari id matches inventory id");
 t.equal(runById[411].id, byName["Unsigned Tool"].id, "running path-id app matches inventory id");
 t.equal(runById[512].id, byName["Bad Id"].id, "running invalid-bundle-id app matches inventory path id");
+t.equal(runById[300].id, byName["Image Capture"].id, "running '_' bundle id matches inventory id");
 t.equal(runById[77].id, byName["Microsoft Word"].id, "running subfolder app matches inventory id");
 t.deepEqual(
   runById[902],
@@ -122,10 +129,11 @@ t.equal(macAppId("bad id", "/A.app"), "path:/a.app", "macAppId falls back to pat
 t.equal(macAppId(null, "rel.app"), null, "macAppId rejects relative path");
 
 // ---- validators ----
-for (const bad of ["-b", "-oops", "com.example bad", "com.x\nrm", "com.x;rm", "", "a".repeat(256), null, 42]) {
+for (const bad of ["-b", "-oops", "-foo", "_foo", ".foo", "com.example bad", "com.x\nrm", "com.x;rm", "", "a".repeat(256), null, 42]) {
   t.equal(validBundleId(bad), null, `bundle id rejected: ${JSON.stringify(bad)}`);
 }
 t.equal(validBundleId("com.apple.calculator"), "com.apple.calculator", "valid bundle id accepted");
+t.equal(validBundleId("com.apple.Image_Capture"), "com.apple.Image_Capture", "bundle id with '_' accepted");
 for (const bad of ["Applications/X.app", "./X.app", "/Applications/X", "/Applications/X.exe", "/A/../X.app", "/A/X.app\n", null]) {
   t.equal(validAppPath(bad), null, `app path rejected: ${JSON.stringify(bad)}`);
 }
@@ -143,6 +151,10 @@ await mac.launchApp({ bundleId: "com.x; rm -rf /", target: "/Applications/X.app"
 t.deepEqual(rec.calls[3].args, ["/Applications/X.app"], "bundle id with ';' and spaces is never passed");
 await mac.launchApp({ bundleId: "com.x\nevil", target: "/Applications/Y.app" });
 t.deepEqual(rec.calls[4].args, ["/Applications/Y.app"], "bundle id with newline is never passed");
+await mac.launchApp({ bundleId: "com.apple.Image_Capture", target: "/System/Applications/Image Capture.app" });
+t.deepEqual(rec.calls[5].args, ["-b", "com.apple.Image_Capture"], "bundle id with '_' launches via open -b");
+await mac.launchApp({ bundleId: "_foo", target: "/Applications/Z.app" });
+t.deepEqual(rec.calls[6].args, ["/Applications/Z.app"], "bundle id starting with '_' is never passed");
 const callsBefore = rec.calls.length;
 await t.rejects(() => mac.launchApp({ target: "Applications/Rel.app" }), "relative path rejected");
 await t.rejects(() => mac.launchApp({ target: "/Applications/tool" }), "non-.app path rejected");
@@ -192,7 +204,7 @@ rec = recorder(runningRaw);
 mac = createMacProvider({ exec: rec.exec, appDirs: dirs });
 const run = await mac.listRunningApps();
 t.deepEqual(rec.calls[0].args, ["-l", "JavaScript", "-e", RUNNING_JXA, "--"], "running argv carries no caller data");
-t.equal(run.length, 4, "provider running uses parseRunning");
+t.equal(run.length, 5, "provider running uses parseRunning");
 
 const failing = createMacProvider({ exec: async () => { throw new Error("osascript failed"); }, appDirs: dirs });
 await t.rejects(() => failing.listInstalledApps(), "inventory script failure propagates");

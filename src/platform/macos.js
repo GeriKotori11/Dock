@@ -46,7 +46,8 @@ export function defaultAppDirs(home = homedir()) {
  * Constant JXA: list `.app` bundles in each argv directory, plus `.app`
  * bundles one level down in plain (non-.app) subfolders. Never descends into a
  * bundle. Unreadable directories yield nothing. Emits a JSON array of
- * `{ bundleId, name, path, agent }`.
+ * `{ bundleId, name, path, backgroundOnly }`. Menu-bar (LSUIElement) apps are
+ * reported like any other app; only LSBackgroundOnly apps are flagged.
  */
 export const INVENTORY_JXA = [
   "function run(argv) {",
@@ -65,8 +66,8 @@ export const INVENTORY_JXA = [
   "      var info = has ? b.infoDictionary : null;",
   "      var name = str(fm.displayNameAtPath(p)) || '';",
   "      if (/\\.app$/i.test(name)) name = name.slice(0, -4);",
-  "      var agent = info && !info.isNil() ? (truthy(info.objectForKey('LSUIElement')) || truthy(info.objectForKey('LSBackgroundOnly'))) : false;",
-  "      out.push({ bundleId: has ? str(b.bundleIdentifier) : null, name: name, path: p, agent: agent });",
+  "      var backgroundOnly = info && !info.isNil() ? truthy(info.objectForKey('LSBackgroundOnly')) : false;",
+  "      out.push({ bundleId: has ? str(b.bundleIdentifier) : null, name: name, path: p, backgroundOnly: backgroundOnly });",
   "    } catch (e) {}",
   "  }",
   "  for (var i = 0; i < argv.length; i++) {",
@@ -164,7 +165,7 @@ export function osascriptArgv(script, args = []) {
   return [...OSASCRIPT_FLAGS, script, "--", ...args];
 }
 
-const BUNDLE_ID = /^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$/;
+const BUNDLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 
 /** A bundle identifier we will pass to `open -b`, or null. Cannot start with `-`. */
 export function validBundleId(value) {
@@ -202,7 +203,9 @@ function jsonArray(raw) {
 export function parseInventory(raw) {
   const byId = new Map();
   for (const row of jsonArray(raw)) {
-    if (!row || typeof row !== "object" || row.agent === true) continue;
+    // Faceless background apps cannot be launched into anything useful.
+    // Menu-bar (LSUIElement) apps stay: users launch them from the dock.
+    if (!row || typeof row !== "object" || row.backgroundOnly === true) continue;
     const name = typeof row.name === "string" ? row.name.trim() : "";
     const path = validAppPath(typeof row.path === "string" ? row.path.trim() : "");
     if (!name || !path) continue;

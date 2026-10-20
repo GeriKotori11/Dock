@@ -1,5 +1,6 @@
 [
   { "pid": 902, "name": "Safari", "bundleId": "com.apple.Safari", "path": "/Applications/Safari.app" },
+  { "pid": 300, "name": "Image Capture", "bundleId": "com.apple.Image_Capture", "path": "/System/Applications/Image Capture.app" },
   { "pid": 411, "name": "Unsigned Tool", "bundleId": null, "path": "/Applications/Unsigned Tool.app" },
   { "pid": 512, "name": "Bad Id", "bundleId": "com.example.bad id", "path": "/Applications/Bad Id.app" },
   { "pid": 902, "name": "Safari duplicate", "bundleId": "com.apple.Safari", "path": "/Applications/Safari.app" },
