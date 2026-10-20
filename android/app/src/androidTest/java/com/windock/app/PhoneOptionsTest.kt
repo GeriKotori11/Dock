@@ -1,12 +1,10 @@
 package com.windock.app
 
-import android.graphics.Bitmap
 import android.os.Build
 import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebView
-import android.widget.Button
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
@@ -15,13 +13,12 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
+import com.windock.app.Fixture.awaitUi
+import com.windock.app.Fixture.js
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /** Emulator only: start scripts/android-smoke-host.mjs first. */
 @RunWith(AndroidJUnit4::class)
@@ -29,62 +26,18 @@ class PhoneOptionsTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val device = UiDevice.getInstance(instrumentation)
-    // The fixture serves https too, so the app remembers the verified https form of this endpoint.
     private val endpoint = "http://10.0.2.2:" + (InstrumentationRegistry.getArguments().getString("smokePort") ?: "18622")
 
+    /** Already paired with the fixture, as after an update: the app opens straight into the dock. */
     private fun prepare() {
         assumeTrue("This fixture must not change a personal phone", Build.MODEL.contains("sdk"))
         device.wakeUp()
-        PhonePreferences.setUsbOnly(context, false)
         PhonePreferences.saveDisplay(context, DisplayPolicy(0))
-        ServerUrl.save(context, endpoint)
-    }
-
-    private fun js(web: WebView, expression: String): String {
-        val done = CountDownLatch(1)
-        var result = "null"
-        instrumentation.runOnMainSync { web.evaluateJavascript(expression) { result = it; done.countDown() } }
-        assertTrue(done.await(5, TimeUnit.SECONDS))
-        return result
-    }
-
-    private fun awaitUi(scenario: ActivityScenario<MainActivity>, timeout: Long = 15000,
-                        check: (MainActivity) -> Boolean) {
-        val deadline = SystemClock.uptimeMillis() + timeout
-        while (SystemClock.uptimeMillis() < deadline) {
-            var ready = false
-            scenario.onActivity { ready = check(it) }
-            if (ready) return
-            SystemClock.sleep(100)
-        }
-        fail("Timed out waiting for native display/connection state")
-    }
-
-    /**
-     * Wait until a USB connection attempt settles. Another WinDock host on the Mac
-     * (e.g. port 8620) may answer discovery through the emulator's wired link; it is
-     * never trusted here: its security code dialog is cancelled. Returns whether that happened.
-     */
-    private fun awaitUsbAttempt(scenario: ActivityScenario<MainActivity>): Boolean {
-        var cancelled = false
-        val deadline = SystemClock.uptimeMillis() + 20000
-        while (true) {
-            if (device.hasObject(By.text("Check the security code"))) {
-                device.findObject(By.res("android", "button2"))?.click()
-                cancelled = true
-            }
-            var idle = false
-            scenario.onActivity { idle = it.findViewById<Button>(R.id.usb_connect).isEnabled }
-            if (idle && !device.hasObject(By.text("Check the security code"))) return cancelled
-            assertTrue("Timed out waiting for the USB attempt", SystemClock.uptimeMillis() < deadline)
-            SystemClock.sleep(200)
-        }
+        Fixture.pair(context, endpoint)
     }
 
     private fun loaded(scenario: ActivityScenario<MainActivity>): WebView {
-        // The fixture serves https; confirm its security code when not yet paired.
-        device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)codes match"))), 3000)?.click()
-        awaitUi(scenario) { it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE }
+        awaitUi(scenario, 20000, "dock") { Fixture.dockShown(it) }
         lateinit var web: WebView
         scenario.onActivity { web = it.findViewById(R.id.web) }
         val deadline = SystemClock.uptimeMillis() + 10000
@@ -96,14 +49,6 @@ class PhoneOptionsTest {
         return web
     }
 
-    private fun screenshot(name: String) {
-        val bitmap = instrumentation.uiAutomation.takeScreenshot()
-        File(context.getExternalFilesDir(null), name).outputStream().use {
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
-        bitmap.recycle()
-    }
-
     private fun choose(id: String, label: String) {
         val spinner = device.wait(Until.findObject(By.res("com.windock.app", id)), 5000)
         assertNotNull("Spinner $id", spinner)
@@ -111,6 +56,14 @@ class PhoneOptionsTest {
         val choice = device.wait(Until.findObject(By.text(label)), 5000)
         assertNotNull(label, choice)
         choice.click()
+    }
+
+    /** Back in the dock opens the Switch sheet; Manage opens the hub over the dock. */
+    private fun openHub(scenario: ActivityScenario<MainActivity>) {
+        scenario.onActivity { @Suppress("DEPRECATION") it.onBackPressed() }
+        assertTrue(device.wait(Until.hasObject(By.text("Switch computer")), 5000))
+        device.findObject(By.text("Manage")).click()
+        awaitUi(scenario, what = "hub") { it.findViewById<View>(R.id.rail_usb)?.isShown == true }
     }
 
     @Test fun nativeSettingsPersistDimConsumeWakeAndKeepScreenOn() {
@@ -122,9 +75,9 @@ class PhoneOptionsTest {
                 js(web, "document.getElementById('phone-options').click()")
                 assertTrue(device.wait(Until.hasObject(By.text("This phone")), 5000))
                 assertFalse("The Screen off option is gone", device.hasObject(By.text("Screen off")))
-                screenshot("phone-options.png")
+                Fixture.screenshot(context, "s14-phone-options.png")
                 choose("dim_delay", "After 15 seconds")
-                device.findObject(By.res("android", "button1")).click()
+                device.findObject(By.res("com.windock.app", "phone_save")).click()
                 awaitUi(scenario) { PhonePreferences.display(context) == DisplayPolicy(15_000, 10) }
                 assertEquals(DisplayPolicy(15_000, 10), PhonePreferences.display(context))
 
@@ -149,9 +102,10 @@ class PhoneOptionsTest {
                 scenario.onActivity {
                     assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                 }
-                // The connection screen keeps the screen on too.
-                scenario.onActivity { @Suppress("DEPRECATION") it.onBackPressed() }
-                awaitUi(scenario) { it.findViewById<View>(R.id.connection).visibility == View.VISIBLE }
+                // The native Computers screen keeps the screen on too.
+                device.click(x, y)
+                awaitUi(scenario) { it.window.attributes.screenBrightness == -1f }
+                openHub(scenario)
                 scenario.onActivity {
                     assertTrue(it.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                 }
@@ -168,54 +122,44 @@ class PhoneOptionsTest {
         } finally { PhonePreferences.saveDisplay(context, DisplayPolicy()) }
     }
 
-    @Test fun usbGuideRemembersChoiceAndAllowsReturnToLan() {
+    @Test fun usbSheetSearchesOnlyTheCableAndReturnsToTheDock() {
         prepare()
-        ServerUrl.save(context, "http://192.168.42.10:8620", true)
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 loaded(scenario)
-                scenario.onActivity { @Suppress("DEPRECATION") it.onBackPressed() }
-                awaitUi(scenario) { it.findViewById<View>(R.id.connection).visibility == View.VISIBLE }
-                scenario.onActivity {
-                    assertEquals("Connect by Wi-Fi", it.findViewById<Button>(R.id.retry).text.toString())
-                    assertEquals(it.getString(R.string.mode_wifi), it.findViewById<TextView>(R.id.connection_mode).text)
-                }
-                scenario.onActivity { it.findViewById<Button>(R.id.usb_connect).performClick() }
+                openHub(scenario)
+                scenario.onActivity { it.findViewById<View>(R.id.rail_usb).performClick() }
                 assertTrue(device.wait(Until.hasObject(By.text("Connect by USB")), 5000))
-                screenshot("usb-setup.png")
-                device.findObject(By.res("android", "button1")).click()
-                awaitUi(scenario) { PhonePreferences.usbOnly(context) }
-                assertTrue(PhonePreferences.usbOnly(context))
-                assertEquals(EndpointPolicy.withScheme(endpoint, "https"), ServerUrl.load(context, false))
-                val cancelledUnknownHost = awaitUsbAttempt(scenario)
-                // Recent emulators expose both wlan0 and a virtual eth0. A
-                // connected result must belong to that wired subnet; this is
-                // not evidence of physical USB hardware support.
-                scenario.onActivity {
-                    if (it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE)
-                        assertTrue(Discovery.permitsRememberedEndpoint(ServerUrl.load(context)!!, true, LocalNetwork.available()))
-                    else assertEquals(it.getString(if (cancelledUnknownHost) R.string.connection_cancelled else R.string.usb_not_found),
-                        it.findViewById<TextView>(R.id.status).text)
+                assertTrue(device.hasObject(By.text("Windows only")))
+                assertTrue(device.hasObject(By.text("Tethering settings")))
+                Fixture.screenshot(context, "s13-usb-sheet.png")
+                device.findObject(By.res("com.windock.app", "usb_find")).click()
+                // Recent emulators expose a virtual wired eth0 next to wlan0. Either nothing
+                // answers over the cable, or the sheet hands the answer to the normal checks.
+                val deadline = SystemClock.uptimeMillis() + 20000
+                var settled = false
+                while (!settled && SystemClock.uptimeMillis() < deadline) {
+                    val message = device.findObject(By.res("com.windock.app", "usb_message"))?.text
+                    settled = message == context.getString(R.string.usb_not_found) || !device.hasObject(By.text("Find computer over USB")) &&
+                        !device.hasObject(By.text("Looking over USB…"))
+                    SystemClock.sleep(200)
                 }
-                scenario.recreate()
-                awaitUsbAttempt(scenario)
-                assertEquals(LocalNetwork.available().any { it.wired }, PhonePreferences.usbOnly(context))
-                scenario.onActivity {
-                    if (it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE) {
-                        @Suppress("DEPRECATION") it.onBackPressed()
-                    }
+                assertTrue("The USB search settles", settled)
+                SystemClock.sleep(3000) // An answer is probed before anything opens.
+                var pairing = false
+                scenario.onActivity { pairing = it.findViewById<View>(R.id.pair_code)?.isShown == true }
+                if (pairing) {
+                    // Something answered over the cable: an unknown host goes to step 1, never straight in.
+                    assertEquals(1, ComputerStore.of(context).all().size)
+                    Fixture.screenshot(context, "s13-usb-found-pairing.png")
+                    return@use
                 }
-                awaitUi(scenario) { it.findViewById<View>(R.id.connection).visibility == View.VISIBLE }
-                val rememberedUsb = ServerUrl.load(context, true)
-                scenario.onActivity { it.findViewById<Button>(R.id.retry).performClick() }
-                loaded(scenario)
-                assertFalse(PhonePreferences.usbOnly(context))
-                assertEquals(EndpointPolicy.withScheme(endpoint, "https"), ServerUrl.load(context, false))
-                assertEquals(rememberedUsb, ServerUrl.load(context, true))
+                if (device.hasObject(By.text("Windows only"))) device.pressBack()
+                assertTrue(device.wait(Until.gone(By.text("Windows only")), 5000))
+                // Closing the hub returns to the same dock.
+                scenario.onActivity { if (it.findViewById<View>(R.id.hub_close)?.isShown == true) it.findViewById<View>(R.id.hub_close).performClick() }
+                awaitUi(scenario, 20000, "dock") { Fixture.dockShown(it) }
             }
-        } finally {
-            PhonePreferences.setUsbOnly(context, false)
-            PhonePreferences.saveDisplay(context, DisplayPolicy())
-        }
+        } finally { PhonePreferences.saveDisplay(context, DisplayPolicy()) }
     }
 }

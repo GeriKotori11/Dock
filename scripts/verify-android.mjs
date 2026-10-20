@@ -5,7 +5,7 @@
  * JavaScript host describe the same protocol. Drift between them is the failure
  * that would compile perfectly and then simply never find the PC.
  */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createChecker } from "./lib/assert.mjs";
 import { PROBE, REPLY_PREFIX, DISCOVERY_PORT, replyFor, parseReply } from "../src/discovery.js";
@@ -67,15 +67,23 @@ t.equal(
 // ---- the app must only use routes the host serves ----
 const server = readFileSync(join(root, "server.js"), "utf8");
 const main = read("app/src/main/java/com/windock/app/MainActivity.kt");
-const routes = [...main.matchAll(/"\$endpoint(\/[a-z/]+)"/g)].map((m) => m[1]);
+const SRC = "app/src/main/java/com/windock/app";
+const kotlinFiles = readdirSync(join(AND, SRC)).filter((f) => f.endsWith(".kt"));
+const sources = Object.fromEntries(kotlinFiles.map((f) => [f, read(`${SRC}/${f}`)]));
+const allKotlin = Object.values(sources).join("\n");
+const routes = [...new Set([
+  ...[...allKotlin.matchAll(/"\$\w+(\/[a-z/]+)"/g)].map((m) => m[1]),
+  ...[...allKotlin.matchAll(/"(\/health|\/api\/[a-z/]+)"/g)].map((m) => m[1]),
+])];
 t.ok(routes.length > 0, `the app references at least one host route (${routes.join(", ")})`);
 for (const route of routes) {
   t.ok(server.includes(`"${route}"`), `host serves the route the app calls: ${route}`);
 }
 // /health is the only unauthenticated route, so a reachability probe must use it.
 t.ok(routes.includes("/health"), "the app probes /health, the only public route");
+t.ok(routes.includes("/api/auth") && routes.includes("/api/session"), "native pairing and forget use the host's routes");
 t.ok(
-  main.includes('optString("app") == "windock"'),
+  allKotlin.includes('optString("app") == "windock"'),
   "the app verifies the host identity, not just a 200",
 );
 
@@ -96,7 +104,7 @@ t.ok(netcfg.includes('cleartextTrafficPermitted="true"'), "cleartext is permitte
 t.ok(!netcfg.includes("<domain"), "network policy does not mistake IP literals for subnets");
 t.ok(main.includes("EndpointPolicy.allowsRequest"), "WebView requests are scoped to the selected origin");
 
-// ---- pairing credentials stay in the WebView; the remote IME may mask PC typing ----
+// ---- credentials: the shell itself stays free of them; only small classes touch them ----
 /** Strip comments: the invariant is about code, and documenting the boundary
  *  in prose must not fail the check that enforces it. */
 function stripComments(source) {
@@ -108,10 +116,25 @@ const kotlinCode = stripComments(
 for (const word of ["pin", "cookie", "token"]) {
   t.ok(
     !new RegExp(`\\b${word}\\b`, "i").test(kotlinCode),
-    `the native layer never handles ${word} in code (pairing stays in the WebView)`,
+    `the activity and discovery never handle ${word} in code (pairing lives in PairingScreen/HostClient)`,
   );
 }
-t.ok(!/CookieManager|\/api\/pair/.test(kotlinCode), "native keyboard does not bypass WebView pairing");
+t.ok(!/CookieManager|\/api\/pair/.test(kotlinCode), "the activity does not touch the cookie store or the PIN route");
+// The WebView cookie store is touched in exactly one small class.
+const cookieUsers = Object.entries(sources)
+  .filter(([, code]) => /CookieManager/.test(stripComments(code)))
+  .map(([file]) => file);
+t.deepEqual(cookieUsers, ["SessionCookies.kt"], `CookieManager is used only in SessionCookies.kt (${cookieUsers.join(", ")})`);
+// The session request header is built only for the pinned DELETE /api/session.
+t.ok(/"Cookie"/.test(sources["HostClient.kt"] ?? ""), "HostClient sends the session only on its own request");
+// No trust-all TLS: every custom trust manager either records or compares a fingerprint.
+for (const [file, code] of Object.entries(sources)) {
+  const managers = (stripComments(code).match(/object\s*:\s*X509TrustManager/g) || []).length;
+  if (!managers) continue;
+  t.ok(/Fingerprint\.of\(/.test(code), `${file}: its trust managers compute the presented fingerprint`);
+  t.ok(!/getDefault\(\)|ALLOW_ALL|setDefaultSSLSocketFactory|setDefaultHostnameVerifier/.test(code),
+    `${file}: no process-wide TLS overrides`);
+}
 // Positive control: the stripper must not simply blank the source, or the
 // assertions above would pass for any file at all.
 t.ok(kotlinCode.includes("DatagramSocket"), "positive control: real code survives comment stripping");

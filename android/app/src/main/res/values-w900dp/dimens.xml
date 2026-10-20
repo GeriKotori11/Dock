@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The 932 reference size (Pro Max / Plus class). -->
+<resources>
+    <dimen name="rail_width">268dp</dimen>
+    <dimen name="rail_gap">40dp</dimen>
+    <dimen name="content_top">24dp</dimen>
+    <dimen name="split_left">330dp</dimen>
+</resources>

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <item name="dim_delay" type="id" />
-    <item name="dim_level" type="id" />
+    <item name="hub_enter_address" type="id" />
+    <item name="pin_box_text" type="id" />
+    <item name="pin_box_caret" type="id" />
 </resources>

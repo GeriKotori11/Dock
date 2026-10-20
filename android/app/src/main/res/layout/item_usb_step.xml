@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:layout_marginBottom="6dp" android:background="@drawable/bg_sheet_group"
+    android:orientation="horizontal" android:gravity="center_vertical" android:minHeight="44dp"
+    android:paddingStart="14dp" android:paddingEnd="14dp" android:paddingTop="10dp" android:paddingBottom="10dp">
+    <TextView android:id="@+id/usb_step_number" android:layout_width="24dp" android:layout_height="24dp"
+        android:background="@drawable/bg_number" android:gravity="center" android:textSize="13sp"
+        android:fontFamily="sans-serif-medium" android:textColor="@color/text_2" android:importantForAccessibility="no" />
+    <TextView android:id="@+id/usb_step_text" android:layout_width="0dp" android:layout_height="wrap_content"
+        android:layout_weight="1" android:layout_marginStart="14dp" android:textSize="13sp" android:textColor="@color/text_2" />
+</LinearLayout>

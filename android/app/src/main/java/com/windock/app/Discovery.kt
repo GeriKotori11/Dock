@@ -63,6 +63,19 @@ object Discovery {
         return null
     }
 
+    /**
+     * Every endpoint that answers one probe round on every link (Wi-Fi and USB alike),
+     * for the Computers list. Runs on a background thread.
+     */
+    fun scan(networks: List<LocalNetwork> = LocalNetwork.available()): Set<String> {
+        val found = linkedSetOf<String>()
+        for (link in networks + listOf<LocalNetwork?>(null)) {
+            if (Thread.currentThread().isInterrupted) break
+            findOnLink(link) { found.add(it); false }
+        }
+        return found
+    }
+
     private fun findOnLink(link: LocalNetwork?, reachable: (String) -> Boolean): String? = try {
         DatagramSocket(null).use { socket ->
             socket.bind(InetSocketAddress(link?.let { InetAddress.getByName(it.address) }, 0))

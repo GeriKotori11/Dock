@@ -1,11 +1,104 @@
 <resources>
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#88E9C4</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimary">@color/bg</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/text_2</item>
+        <item name="android:colorControlHighlight">@color/ripple_light</item>
         <item name="android:windowBackground">@color/dock_background</item>
         <item name="android:windowLightStatusBar">false</item>
         <!-- Insets hide the system bars; legacy fullscreen prevents IME resizing. -->
         <item name="android:windowFullscreen">false</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/WinDockDialog</item>
+        <item name="android:popupMenuStyle">@style/WinDockPopup</item>
+        <item name="android:textCursorDrawable">@null</item>
+    </style>
+
+    <!-- S4 Rename / Forget: system dialogs in the token colours. -->
+    <style name="WinDockDialog" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorBackground">@color/sheet</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:textColorSecondary">@color/text_2</item>
+        <item name="android:colorControlActivated">@color/accent</item>
+        <item name="android:colorControlNormal">@color/text_3</item>
+    </style>
+
+    <style name="WinDockPopup" parent="android:style/Widget.Material.PopupMenu">
+        <item name="android:popupBackground">@drawable/bg_menu</item>
+    </style>
+
+    <!-- S12 / S13 / S14 bottom sheets (android.app.Dialog). -->
+    <style name="WinDockSheet" parent="android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.62</item>
+        <item name="android:windowAnimationStyle">@style/WinDockSheetAnimation</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:colorControlActivated">@color/accent</item>
+        <item name="android:colorControlNormal">@color/text_3</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+    </style>
+
+    <style name="WinDockSheetAnimation">
+        <item name="android:windowEnterAnimation">@anim/sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_out</item>
+    </style>
+
+    <!-- Text roles (section 6, Android column). -->
+    <style name="T" />
+    <style name="T.Display"><item name="android:textSize">28sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/text</item><item name="android:lineSpacingMultiplier">1.0</item></style>
+    <style name="T.Title"><item name="android:textSize">21sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/text</item></style>
+    <style name="T.Head"><item name="android:textSize">16sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/text</item></style>
+    <style name="T.Body"><item name="android:textSize">15sp</item><item name="android:textColor">@color/text_2</item><item name="android:lineSpacingMultiplier">1.2</item></style>
+    <style name="T.Sub"><item name="android:textSize">13sp</item><item name="android:textColor">@color/text_2</item></style>
+    <style name="T.Label"><item name="android:textSize">13sp</item><item name="android:fontFamily">sans-serif-medium</item><item name="android:textColor">@color/text_2</item></style>
+    <style name="T.Cap"><item name="android:textSize">12sp</item><item name="android:textColor">@color/text_3</item></style>
+
+    <style name="Btn">
+        <item name="android:layout_height">48dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">20dp</item>
+        <item name="android:paddingEnd">20dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0.007</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:clickable">true</item>
+    </style>
+    <style name="Btn.Primary"><item name="android:background">@drawable/bg_button_primary</item><item name="android:textColor">@color/on_accent</item></style>
+    <style name="Btn.Secondary"><item name="android:background">@drawable/bg_button_secondary</item><item name="android:textColor">@color/text</item></style>
+    <style name="Btn.Ghost"><item name="android:background">@drawable/bg_button_ghost</item><item name="android:textColor">@color/accent</item><item name="android:paddingStart">12dp</item><item name="android:paddingEnd">12dp</item></style>
+    <style name="Btn.Danger"><item name="android:background">@drawable/bg_button_danger</item><item name="android:textColor">@color/danger_text</item></style>
+
+    <style name="RailLink">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:background">@drawable/bg_rail_link</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+    <style name="IconBtn">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:background">@drawable/bg_icon_button</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
     </style>
 </resources>

@@ -51,15 +51,12 @@ class NowPlayingSmokeTest {
     }
     @Test fun mediaUpdatesWithoutRefreshAndResumesAfterBackgrounding() {
         fixture("""{"media":{"title":"Android first","artist":"First artist","playing":true},"delayMs":0,"fail":false}""")
-        ServerUrl.save(instrumentation.targetContext, "http://10.0.2.2:18623")
+        // Paired natively with the fixture's PIN (plain http, no TLS), then opened straight into the dock.
+        Fixture.pair(instrumentation.targetContext, "http://10.0.2.2:18623")
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             lateinit var web: WebView
             scenario.onActivity { web = it.findViewById(R.id.web) }
-            awaitJs(web, "!!document.getElementById('pin')", 15000)
-            awaitJs(web, "!document.getElementById('pair').hidden || !document.getElementById('app').hidden")
-            if (js(web, "!document.getElementById('pair').hidden") == "true") {
-                js(web, "document.getElementById('pin').value='864200'; document.querySelector('#pair-form button').click()")
-            }
+            awaitJs(web, "!!document.getElementById('app') && !document.getElementById('app').hidden", 15000)
             awaitJs(web, "document.getElementById('conn').textContent === 'Connected'", 15000)
             awaitJs(web, "document.querySelector('.np__title')?.textContent === 'Android first'")
             js(web, "window.mediaRefreshClicks=0; document.getElementById('refresh').addEventListener('click',()=>window.mediaRefreshClicks++)")

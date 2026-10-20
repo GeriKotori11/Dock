@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="rail_width">248dp</dimen>
+    <dimen name="rail_gap">32dp</dimen>
+    <dimen name="content_top">20dp</dimen>
+    <dimen name="side_inset">40dp</dimen>
+    <dimen name="button_height">48dp</dimen>
+    <dimen name="row_height">64dp</dimen>
+    <dimen name="row_compact">56dp</dimen>
+    <dimen name="glyph">40dp</dimen>
+    <dimen name="glyph_lg">56dp</dimen>
+    <dimen name="split_left">300dp</dimen>
+</resources>

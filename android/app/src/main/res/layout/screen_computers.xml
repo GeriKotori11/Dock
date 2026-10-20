@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- S2 / S3 Computers (mockups 04, 05, 07): rail on the left, list on the right. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="horizontal">
+    <LinearLayout android:id="@+id/hub_rail" android:layout_width="@dimen/rail_width"
+        android:layout_height="match_parent" android:orientation="vertical"
+        android:paddingTop="24dp" android:paddingBottom="16dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical"
+            android:layout_marginBottom="28dp">
+            <ImageButton android:id="@+id/hub_close" style="@style/IconBtn"
+                android:layout_marginStart="-12dp" android:layout_marginEnd="4dp"
+                android:src="@drawable/ic_back" android:tint="@color/text"
+                android:contentDescription="@string/hub_close" android:visibility="gone" />
+            <ImageView android:layout_width="26dp" android:layout_height="26dp"
+                android:src="@drawable/brand_mark" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginStart="10dp" android:text="@string/app_name"
+                android:textSize="17sp" android:fontFamily="sans-serif-medium"
+                android:textColor="@color/text" android:importantForAccessibility="no" />
+        </LinearLayout>
+        <TextView android:id="@+id/hub_display" style="@style/T.Display"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:accessibilityHeading="true" />
+        <TextView android:id="@+id/hub_body" style="@style/T.Body"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="10dp" />
+        <Space android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginStart="-12dp" android:orientation="vertical">
+            <LinearLayout android:id="@+id/rail_add" style="@style/RailLink">
+                <ImageView android:layout_width="20dp" android:layout_height="20dp"
+                    android:src="@drawable/ic_plus" android:tint="@color/accent" android:importantForAccessibility="no" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:text="@string/hub_add"
+                    android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/text" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/rail_usb" style="@style/RailLink">
+                <ImageView android:layout_width="20dp" android:layout_height="20dp"
+                    android:src="@drawable/ic_usb" android:tint="@color/accent" android:importantForAccessibility="no" />
+                <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:text="@string/usb_title"
+                    android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/text" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/rail_usb_caption" android:textSize="12sp" android:textColor="@color/text_3" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/rail_phone" style="@style/RailLink">
+                <ImageView android:layout_width="20dp" android:layout_height="20dp"
+                    android:src="@drawable/ic_phone" android:tint="@color/accent" android:importantForAccessibility="no" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp" android:text="@string/phone_options"
+                    android:textSize="15sp" android:fontFamily="sans-serif-medium" android:textColor="@color/text" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <FrameLayout android:layout_width="0dp" android:layout_height="match_parent"
+        android:layout_weight="1" android:layout_marginStart="@dimen/rail_gap">
+        <ScrollView android:id="@+id/hub_scroll" android:layout_width="match_parent"
+            android:layout_height="match_parent" android:fillViewport="true"
+            android:scrollbars="none" android:overScrollMode="never">
+            <LinearLayout android:id="@+id/hub_list" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:orientation="vertical"
+                android:paddingTop="@dimen/content_top" android:paddingBottom="24dp" />
+        </ScrollView>
+        <View android:layout_width="match_parent" android:layout_height="28dp"
+            android:layout_gravity="bottom" android:background="@drawable/fade_bottom" />
+    </FrameLayout>
+</LinearLayout>

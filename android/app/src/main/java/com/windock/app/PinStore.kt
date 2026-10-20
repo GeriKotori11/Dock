@@ -25,6 +25,11 @@ object PinStore {
         return prefs(context).edit().putString(hostId, fingerprint).commit()
     }
 
+    /** Every valid pin, for the one-time move to the saved-computers list. */
+    fun all(context: Context): Map<String, String> = prefs(context).all.entries
+        .mapNotNull { (k, v) -> (v as? String)?.takeIf { isHostId(k) && Fingerprint.isValid(it) }?.let { k to it } }
+        .toMap()
+
     fun remove(context: Context, hostId: String) {
         if (isHostId(hostId)) prefs(context).edit().remove(hostId).commit()
     }

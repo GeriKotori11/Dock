@@ -19,8 +19,6 @@ import kotlin.concurrent.thread
 class RemoteKeyboardBridgeTest {
     @Test fun opensNativeImeAndReturnsEmojiToTrustedPage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val prefs = context.getSharedPreferences("windock", android.content.Context.MODE_PRIVATE)
-        val remembered = prefs.getString("endpoint", null)
         val server = ServerSocket(0)
         val endpoint = "http://127.0.0.1:" + server.localPort
         val host = thread(isDaemon = true) {
@@ -31,7 +29,7 @@ class RemoteKeyboardBridgeTest {
                         val request = reader.readLine().orEmpty()
                         while (!reader.readLine().isNullOrEmpty()) { }
                         val health = request.startsWith("GET /health ")
-                        val body = if (health) """{"app":"windock"}""" else
+                        val body = if (health) """{"app":"windock","hostId":"7d3c1a52-0b8e-4c55-9a1f-3e2d4c5b6a71","hostName":"Keyboard test","platform":"windows","api":1,"tls":null,"pairingOpen":true}""" else
                             """<html><body>ready<script>
                             window.addEventListener('windock-keyboard-input',e=>{document.body.textContent=JSON.stringify(e.detail)});
                             </script></body></html>"""
@@ -53,7 +51,10 @@ class RemoteKeyboardBridgeTest {
         }
         try {
             androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).wakeUp()
-            ServerUrl.save(context, endpoint)
+            // A plain-http host paired on this phone, as kept for hosts without TLS.
+            Fixture.reset(context)
+            ComputerStore.of(context).save(Computer("7d3c1a52-0b8e-4c55-9a1f-3e2d4c5b6a71", "Keyboard test", null, "windows",
+                endpoint, System.currentTimeMillis(), System.currentTimeMillis()))
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 scenario.onActivity {
                     it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -83,7 +84,7 @@ class RemoteKeyboardBridgeTest {
                     val focus = windows.lineSequence().filter { it.contains("mCurrentFocus=") || it.contains("mFocusedApp=") }.joinToString()
                     fail("Timed out waiting for native keyboard state: " + state + "; " + focus)
                 }
-                awaitState { it.hasWindowFocus() && it.findViewById<WebView>(R.id.web).visibility == View.VISIBLE }
+                awaitState { it.hasWindowFocus() && Fixture.dockShown(it) }
                 scenario.onActivity { it.findViewById<WebView>(R.id.web).evaluateJavascript("WinDockAndroid.showKeyboard('42',false)", null) }
                 awaitState {
                     val root = it.findViewById<View>(R.id.root)
@@ -105,7 +106,7 @@ class RemoteKeyboardBridgeTest {
             }
         } finally {
             server.close(); host.join(500)
-            prefs.edit().apply { if (remembered == null) remove("endpoint") else putString("endpoint", remembered) }.commit()
+            Fixture.reset(context)
         }
     }
 }

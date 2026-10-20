@@ -1,2 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources><color name="dock_background">#0B1019</color></resources>
+<!-- Tokens from docs/design/PHONE-CONNECTION-FLOW.md section 6. -->
+<resources>
+    <color name="dock_background">#090E10</color>
+    <color name="bg">#090E10</color>
+    <color name="row">#13191B</color>
+    <color name="row_pressed">#1A2224</color>
+    <color name="sheet">#151D20</color>
+    <color name="field">#171F22</color>
+    <color name="line">#12FFFFFF</color>
+    <color name="line_strong">#1FFFFFFF</color>
+    <color name="text">#EEF3F1</color>
+    <color name="text_2">#A0AFAF</color>
+    <color name="text_3">#7D8C8E</color>
+    <color name="idle">#5E6E70</color>
+    <color name="accent">#82E8BF</color>
+    <color name="on_accent">#0A1C1A</color>
+    <color name="accent_tint">#1A82E8BF</color>
+    <color name="accent_line">#4D82E8BF</color>
+    <color name="accent_ripple">#2982E8BF</color>
+    <color name="live">#A3E6BE</color>
+    <color name="danger">#ED9695</color>
+    <color name="danger_text">#F1AAA6</color>
+    <color name="danger_tint">#1FED9695</color>
+    <color name="danger_line">#4DF1AAA6</color>
+    <color name="scrim">#9E030709</color>
+    <color name="white_6">#0FFFFFFF</color>
+    <color name="white_7">#12FFFFFF</color>
+    <color name="white_8">#14FFFFFF</color>
+    <color name="white_4">#0AFFFFFF</color>
+    <color name="white_22">#38FFFFFF</color>
+    <color name="menu">#20282B</color>
+    <color name="ripple_light">#1FFFFFFF</color>
+    <color name="brand_1">#82E8BF</color>
+    <color name="brand_2">#C7FAE8</color>
+    <color name="brand_3">#80BAFF</color>
+    <color name="brand_4">#69D9CC</color>
+</resources>

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- S7 Add by address (mockup 15): field and Connect on one line above the keyboard. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:paddingTop="60dp"
+        android:paddingStart="40dp" android:paddingEnd="40dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="52dp"
+            android:layout_marginTop="4dp" android:orientation="horizontal">
+            <FrameLayout android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1">
+                <EditText android:id="@+id/address_input" android:layout_width="match_parent" android:layout_height="52dp"
+                    android:background="@drawable/bg_field" android:paddingStart="14dp" android:paddingEnd="14dp"
+                    android:fontFamily="monospace" android:textSize="18sp" android:textColor="@color/text"
+                    android:textColorHint="@color/text_3" android:hint="@string/address_placeholder"
+                    android:inputType="textUri" android:imeOptions="actionGo|flagNoExtractUi"
+                    android:singleLine="true" android:maxLength="200" android:importantForAutofill="no"
+                    android:contentDescription="@string/address_label" />
+                <TextView android:id="@+id/address_suffix" android:layout_width="wrap_content" android:layout_height="match_parent"
+                    android:gravity="center_vertical" android:fontFamily="monospace" android:textSize="18sp"
+                    android:textColor="@color/text_3" android:text=":8620" android:visibility="gone"
+                    android:importantForAccessibility="no" />
+            </FrameLayout>
+            <LinearLayout android:id="@+id/address_connect" android:layout_width="wrap_content" android:layout_height="52dp"
+                android:layout_marginStart="12dp" android:background="@drawable/bg_button_primary"
+                android:orientation="horizontal" android:gravity="center" android:paddingStart="20dp" android:paddingEnd="20dp"
+                android:clickable="true" android:focusable="true">
+                <ProgressBar android:id="@+id/address_spinner" android:layout_width="16dp" android:layout_height="16dp"
+                    android:layout_marginEnd="8dp" android:indeterminateTint="@color/on_accent" android:visibility="gone"
+                    android:importantForAccessibility="no" />
+                <TextView android:id="@+id/address_connect_text" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="@string/address_connect" android:textSize="15sp" android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/on_accent" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="10dp" android:orientation="horizontal">
+            <ImageView android:id="@+id/address_error_icon" android:layout_width="16dp" android:layout_height="16dp"
+                android:layout_marginTop="1dp" android:layout_marginEnd="8dp" android:src="@drawable/ic_shield"
+                android:tint="@color/danger_text" android:visibility="gone" android:importantForAccessibility="no" />
+            <TextView android:id="@+id/address_message" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textSize="13sp" android:textColor="@color/text_3" android:lineSpacingMultiplier="1.15"
+                android:accessibilityLiveRegion="assertive" />
+        </LinearLayout>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="60dp"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingTop="8dp">
+        <ImageButton android:id="@+id/address_back" style="@style/IconBtn" android:layout_marginStart="-12dp"
+            android:src="@drawable/ic_back" android:tint="@color/text_2" android:contentDescription="@string/cancel" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:gravity="center" android:layout_marginEnd="36dp" android:text="@string/address_title" android:textSize="17sp"
+            android:fontFamily="sans-serif-medium" android:textColor="@color/text" android:accessibilityHeading="true" />
+    </LinearLayout>
+</FrameLayout>

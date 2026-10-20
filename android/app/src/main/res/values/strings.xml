@@ -1,33 +1,168 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Copy deck: docs/design/PHONE-CONNECTION-FLOW.md section 13. -->
 <resources>
     <string name="app_name">WinDock</string>
-    <string name="searching">Looking for your computer on Wi-Fi…</string>
-    <string name="not_found">Keep WinDock running on your computer and connect both devices to the same network.\nTry again, or enter the address WinDock shows on your computer.</string>
-    <string name="connecting">Opening your dock…</string>
-    <string name="connection_lost">Could not reach your computer. Check the connection and try again.</string>
-    <string name="choose_pc">Connect to your computer, or search for another one.</string>
-    <string name="address_hint">Computer address · 192.168.1.40:8620</string>
-    <string name="invalid_address">Enter the local IPv4 address WinDock shows on your computer.</string>
-    <string name="retry">Connect by Wi-Fi</string>
-    <string name="connect">Use this address</string>
-    <string name="mode_wifi">Wi-Fi selected · Phone and computer on the same network</string>
-    <string name="mode_usb">USB selected · USB tethering must be on</string>
-    <string name="usb_address_hint">PC USB address · 192.168.42.10:8620</string>
-    <string name="usb_disconnected">USB disconnected. Looking for your computer on Wi-Fi…</string>
+
+    <!-- S1 Connecting -->
+    <string name="connecting_title">Opening %1$s</string>
+    <string name="connecting_status_connecting">Connecting…</string>
+    <string name="connecting_status_looking">Looking for %1$s on this network…</string>
+    <string name="connecting_status_moved">Found it at a new address, %1$s</string>
+    <string name="connecting_other">Choose another computer</string>
+
+    <!-- S2 / S3 Computers -->
+    <string name="welcome_title_1">Your computer.</string>
+    <string name="welcome_title_2">Within reach.</string>
+    <string name="welcome_body">Open WinDock on your computer, then pick it here.</string>
+    <string name="hub_title">Computers</string>
+    <string name="hub_body">Tap one to open its dock. Each computer keeps its own apps.</string>
+    <string name="hub_body_short">Tap one to open its dock.</string>
+    <string name="hub_section_paired">Paired</string>
+    <string name="hub_section_network">On this network</string>
+    <string name="hub_searching">Looking</string>
+    <string name="hub_searching_long">Still looking</string>
+    <string name="hub_foot">Don’t see your computer? Check that WinDock is running on it and that both are on the same Wi-Fi.</string>
+    <string name="hub_empty_title">No computers found yet</string>
+    <string name="hub_empty_body">Make sure WinDock is running on your computer and both devices are on the same Wi-Fi. Guest networks often keep devices from seeing each other.</string>
+    <string name="hub_add">Add by address</string>
+    <string name="hub_enter_address">Enter an address</string>
+    <string name="hub_close">Back to the dock</string>
+    <string name="rail_usb_caption">Windows</string>
+
+    <!-- Rows -->
+    <string name="row_online">Online</string>
+    <string name="row_last_used">Last used</string>
+    <string name="row_checking">Checking…</string>
+    <string name="row_not_found">Not found on this network</string>
+    <string name="row_security_changed">Security code changed. Tap to check.</string>
+    <string name="row_needs_pin">Needs a new PIN</string>
+    <string name="row_pair">Pair</string>
+    <string name="row_more">More for %1$s</string>
+    <string name="row_open_hint">Opens its dock.</string>
+    <string name="row_pair_hint">Starts pairing.</string>
+    <string name="row_not_paired">not paired</string>
+    <string name="menu_open">Open dock</string>
+    <string name="menu_rename">Rename</string>
+    <string name="menu_forget">Forget</string>
+
+    <!-- S4 Rename / Forget -->
+    <string name="rename_title">Rename computer</string>
+    <string name="rename_message">Only this phone uses this name. Leave it empty to use %1$s.</string>
+    <string name="rename_save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="forget_title">Forget %1$s?</string>
+    <string name="forget_message">To connect again, you’ll check the security code and enter a new PIN. Your dock stays on %1$s.</string>
+    <string name="forget_message_removed">This phone will also be removed from %1$s.</string>
+    <string name="forget_message_unreachable">%1$s isn’t reachable right now, so it will still list this phone until you remove it there.</string>
+    <string name="forget_confirm">Forget</string>
+
+    <!-- S5 / S6 Pairing -->
+    <string name="pair_close_label">Cancel pairing</string>
+    <string name="pair_title">Pair a computer</string>
+    <string name="pair_step1">Check the security code</string>
+    <string name="pair_step1_done">Security code checked</string>
+    <string name="pair_step2">Enter the PIN</string>
+    <string name="pair_step_label">Step %1$d of %2$d, %3$s, %4$s</string>
+    <string name="pair_step_current">current</string>
+    <string name="pair_step_done">done</string>
+    <string name="pair_step_upcoming">upcoming</string>
+    <string name="pair_code_label">Does this match your computer?</string>
+    <string name="pair_code_a11y">Security code</string>
+    <string name="pair_code_windows">On %1$s, click the WinDock icon in the taskbar tray, by the clock, and choose Show connection info.</string>
+    <string name="pair_code_mac">On the Mac, open Terminal in the WinDock folder and run npm run info.</string>
+    <string name="pair_code_other">Open WinDock’s connection info on %1$s.</string>
+    <string name="pair_match">Codes match</string>
+    <string name="pair_no_match">They don’t match</string>
+    <string name="pair_no_match_title">Don’t pair with this computer</string>
+    <string name="pair_no_match_body">If the codes are different, another device on this network may be answering for %1$s. Check that you picked the right computer, then try again.</string>
+    <string name="pair_no_match_back">Back to computers</string>
+    <string name="pin_title">Enter the PIN from %1$s</string>
+    <string name="pin_hint">It’s on the same screen as the security code.</string>
+    <string name="pin_label">PIN, 6 digits</string>
+    <string name="pin_value">%1$s, %2$d of 6</string>
+    <string name="pin_wrong">That PIN didn’t work. Check the 6 digits on %1$s and try again.</string>
+    <string name="pin_locked">Too many tries from this phone. Try again in %1$s.</string>
+    <string name="pin_failed">Couldn’t reach %1$s. Check that WinDock is running, then try again.</string>
+    <string name="pin_paired">Paired</string>
+    <string name="pin_revoked_title">%1$s no longer recognizes this phone</string>
+    <string name="pin_step_of">%1$d of %2$d</string>
+    <string name="closed_title">Pairing is closed on %1$s</string>
+    <string name="closed_body_windows">Choose Show connection info from the WinDock tray icon. That opens pairing for 10 minutes, and this screen continues by itself.</string>
+    <string name="closed_body_mac">Run npm run info on the Mac. That opens pairing for 10 minutes, and this screen continues by itself.</string>
+    <string name="closed_budget">Too many wrong PINs, so %1$s closed pairing.</string>
+    <string name="closed_waiting">Waiting for pairing to open</string>
+
+    <!-- S7 Add by address -->
+    <string name="address_title">Add by address</string>
+    <string name="address_label">Computer address</string>
+    <string name="address_placeholder">192.168.1.20:8620</string>
+    <string name="address_hint">The address is in Show connection info (Windows tray) or npm run info (Mac). The port is usually 8620.</string>
+    <string name="address_connect">Connect</string>
+    <string name="address_checking">Checking…</string>
+    <string name="address_invalid">Enter a local address like 192.168.1.20:8620.</string>
+    <string name="address_public">WinDock only connects to computers on your local network, like 192.168.x.x or 10.x.x.x.</string>
+    <string name="address_no_answer">No WinDock answered at %1$s. Check the address and that WinDock is running.</string>
+
+    <!-- S8 Can't reach -->
+    <string name="reach_title">Can’t reach %1$s</string>
+    <string name="reach_body">WinDock keeps trying while this screen is open and opens the dock as soon as %1$s answers.</string>
+    <string name="reach_status">Looking on this network</string>
+    <string name="reach_status_long">Still looking</string>
+    <string name="reach_retry">Try again</string>
+    <string name="reach_other">Other computers</string>
+    <string name="reach_likely">Likely</string>
+    <string name="check_subnet_title">This phone is on a different network</string>
+    <string name="check_subnet_body">This phone is at %1$s, but %2$s was at %3$s. Join the same Wi-Fi as the computer.</string>
+    <string name="check_running_title">WinDock is running on %1$s</string>
+    <string name="check_running_windows">Look for the WinDock icon in the taskbar tray, by the clock.</string>
+    <string name="check_running_mac">On the Mac, run npm run mac:status to check.</string>
+    <string name="check_isolation_title">The network lets devices see each other</string>
+    <string name="check_isolation_body">Guest, hotel and office Wi-Fi often keep devices apart.</string>
+    <string name="check_firewall_title">macOS allows incoming connections</string>
+    <string name="check_firewall_body">If macOS asked about node, choose Allow. You can change it in System Settings → Network → Firewall.</string>
+
+    <!-- S9 No Wi-Fi -->
+    <string name="wifi_title">This phone isn’t on Wi-Fi</string>
+    <string name="wifi_body">WinDock reaches %1$s over your local network. Join the same Wi-Fi and it will connect by itself.</string>
+    <string name="wifi_settings">Open Wi-Fi settings</string>
+    <string name="wifi_usb">Connect by USB instead</string>
+
+    <!-- S10 Security code changed -->
+    <string name="changed_title">%1$s has a new security code</string>
+    <string name="changed_body">That’s expected if WinDock was reinstalled or reset on %1$s. If it wasn’t, another device may be pretending to be it. Don’t continue until you’ve checked.</string>
+    <string name="changed_then">When you paired</string>
+    <string name="changed_now">Now</string>
+    <string name="changed_none">No security code</string>
+    <string name="changed_howto">To check, open Show connection info on %1$s. If it shows the new code, pair again.</string>
+    <string name="changed_forget">Forget and pair again</string>
+    <string name="changed_not_now">Not now</string>
+
+    <!-- S12 Switch computer -->
+    <string name="switch_title">Switch computer</string>
+    <string name="switch_manage">Manage</string>
+    <string name="switch_add">Add a computer</string>
+    <string name="switch_connected">Connected</string>
+
+    <!-- S13 Connect by USB -->
     <string name="usb_title">Connect by USB</string>
-    <string name="usb_instructions">1. Connect your phone to the PC with a data-capable USB cable.\n\n2. In Android Settings, turn on USB tethering (usually under Hotspot &amp; tethering). USB debugging is not needed.\n\n3. Keep WinDock running on Windows, then return here and tap Find USB PC.\n\nIf Windows asks, allow WinDock on your trusted USB network. Tethering may also share your mobile data with Windows; disable mobile data if you do not want that.\n\nThis USB attempt stays on the cable. Choose Connect by Wi-Fi for wireless. Reopening the app without a USB link returns to Wi-Fi.</string>
-    <string name="network_settings">Open network settings</string>
-    <string name="find_usb_pc">Find USB PC</string>
-    <string name="usb_searching">Looking for your PC over USB…</string>
-    <string name="usb_not_found">No USB PC found. Check the cable, USB tethering, and WinDock on Windows. For wireless, tap Connect by Wi-Fi above. You can also enter the PC’s USB IPv4 address below.</string>
-    <string name="securing">Securing connection…</string>
-    <string name="connection_cancelled">Connection cancelled.</string>
-    <string name="trust_confirm_title">Check the security code</string>
-    <string name="trust_confirm_message">Make sure this code matches the one WinDock shows on %1$s:\n\n%2$s\n\nWindows: tray → Show connection info · Mac: npm run info</string>
-    <string name="trust_confirm_accept">Codes match</string>
-    <string name="trust_mismatch_title">Security code changed</string>
-    <string name="trust_mismatch_message">%1$s is presenting a different security identity than when you paired. This happens if WinDock was reinstalled or its data was reset on that computer, or if another device is pretending to be it.</string>
-    <string name="trust_mismatch_forget">Forget and pair again</string>
+    <string name="usb_caption">Windows only</string>
+    <string name="usb_step1">Plug this phone into the Windows computer with a USB data cable.</string>
+    <string name="usb_step2">Turn on USB tethering in Android settings, under Hotspot &amp; tethering.</string>
+    <string name="usb_step2_bold">USB tethering</string>
+    <string name="usb_step3">Keep WinDock running on Windows.</string>
+    <string name="usb_data">Tethering can share this phone’s mobile data with the computer. Turn off mobile data if you don’t want that.</string>
+    <string name="usb_settings">Tethering settings</string>
+    <string name="usb_find">Find computer over USB</string>
+    <string name="usb_searching">Looking over USB…</string>
+    <string name="usb_not_found">No computer found over USB. Check the cable and that USB tethering is on.</string>
+
+    <!-- Dock -->
+    <string name="dock_prepare_failed">Couldn’t open the dock. Try again, or choose another computer.</string>
+    <string name="dock_timeout">The dock took too long to load. Check that WinDock is still running on %1$s, then try again.</string>
+    <string name="keyboard_hide">Hide keyboard</string>
+    <string name="keyboard_sign">Draw and insert a signature</string>
+
+    <!-- S14 This phone -->
     <string name="phone_options">This phone</string>
     <string name="phone_options_intro">Display settings for this phone only. Your computer’s display is unchanged.</string>
     <string name="dim_after">Dim after inactivity</string>

@@ -26,6 +26,8 @@ const provider = {
   },
 };
 const app = await createApp({
+  // The phone apps key paired computers by host ID.
+  identity: { hostId: "3c9d2f10-6a4b-4e8c-b1d2-0f5e6a7b8c91" },
   provider, pairing: createPairing({ pin: "864200", nextPin: () => "864200", windowMs: 24 * 60 * 60 * 1000 }), trustLoopback: false, allowDestructive: false,
   configStore: { load: async () => ({ tiles: [] }) },
 });
