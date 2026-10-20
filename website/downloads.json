@@ -1,0 +1,16 @@
+{
+  "version": "0.2.2-preview.1",
+  "available": true,
+  "generatedAt": "2026-10-19T16:13:47.1541087Z",
+  "windows": {
+    "url": "https://github.com/aliihsaad/WinDock/releases/download/v0.2.2-preview.1/WinDockSetup.exe",
+    "sha256": "ccf2535a5c80ad646a230f3db15571a5356e24588cba2673077cf014dd22465c",
+    "bytes": 122161691
+  },
+  "android": {
+    "url": "https://github.com/aliihsaad/WinDock/releases/download/v0.2.2-preview.1/WinDock-android-debug.apk",
+    "sha256": "e7ba7a77c6cb26a6528e20b22d2aac853a6e56f192881aa77e2312bf6b8c7bc2",
+    "bytes": 2143809
+  },
+  "checksums": "https://github.com/aliihsaad/WinDock/releases/download/v0.2.2-preview.1/SHA256SUMS.txt"
+}

@@ -1,0 +1,30 @@
+node_modules/
+.playwright-cli/
+output/playwright/
+*.log
+
+# unlazy pipeline + hook state
+.unlazy/
+.unlazy-hook-state.json
+.claude/settings.local.json
+
+# .NET build output
+bin/
+obj/
+*.user
+
+# local host config
+config.json
+
+# Local toolchains and packaged applications
+.tools/
+artifacts/
+website/demo/
+.vercel/
+WinDockHelper.exe
+android/.gradle/
+android/local.properties
+android/**/build/
+ios/WinDock.xcodeproj/
+ios/build/
+ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png

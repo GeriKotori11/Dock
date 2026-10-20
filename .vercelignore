@@ -1,0 +1,12 @@
+.tools
+artifacts
+node_modules
+android
+native
+test
+WinDockHelper.exe
+config.json
+*.log
+.claude
+.unlazy
+Codex Image*.png
