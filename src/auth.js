@@ -5,7 +5,9 @@
  * opaque session token. PIN comparison is constant-time, failures are counted
  * per client, and a client is locked out after a threshold. Loopback is trusted
  * so the tray app on the host itself does not have to pair with the machine the
- * user is already sitting at.
+ * user is already sitting at, but only when the Host header also names a
+ * loopback literal: a DNS-rebinding page reaches the host from 127.0.0.1 too,
+ * yet its browser always sends the attacker's hostname as Host.
  */
 
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
@@ -46,6 +48,48 @@ export function isLoopback(address) {
   if (typeof address !== "string" || !address) return false;
   const addr = address.startsWith("::ffff:") ? address.slice(7) : address;
   return addr === "127.0.0.1" || addr === "::1" || addr.startsWith("127.");
+}
+
+const IPV4_OCTET = /^\d{1,3}$/;
+
+/**
+ * True only when a Host header names a loopback literal: `localhost`, a
+ * 127.0.0.0/8 dotted quad or `[::1]`, each with an optional numeric port.
+ * Any other name (including `127.evil.com` or `localhost.evil.com`) could be
+ * an attacker's DNS name rebound to 127.0.0.1, so it is never trusted.
+ */
+export function isLoopbackHost(hostHeader) {
+  if (typeof hostHeader !== "string" || !hostHeader || hostHeader.length > 300) return false;
+  const value = hostHeader.toLowerCase();
+  let name;
+  let rest;
+  if (value.startsWith("[")) {
+    const close = value.indexOf("]");
+    if (close < 0) return false;
+    name = value.slice(0, close + 1);
+    rest = value.slice(close + 1);
+  } else {
+    const colon = value.indexOf(":");
+    name = colon < 0 ? value : value.slice(0, colon);
+    rest = colon < 0 ? "" : value.slice(colon);
+  }
+  if (rest !== "") {
+    const port = rest.slice(1);
+    if (rest[0] !== ":" || !/^\d{1,5}$/.test(port) || Number(port) > 65535) return false;
+  }
+  if (name === "localhost" || name === "[::1]") return true;
+  const octets = name.split(".");
+  return octets.length === 4
+    && octets[0] === "127"
+    && octets.every((o) => IPV4_OCTET.test(o) && Number(o) <= 255);
+}
+
+/**
+ * Loopback trust for one request: the socket must come from loopback AND the
+ * Host header must be a loopback literal (see isLoopbackHost).
+ */
+export function isTrustedLoopback(req, remote = req?.socket?.remoteAddress) {
+  return isLoopback(remote) && isLoopbackHost(req?.headers?.host);
 }
 
 /** Per-client failure tracking with a time-boxed lockout. */
@@ -264,10 +308,11 @@ export function sessionCookie(token, { secure = false, maxAgeMs = SESSION_TTL_MS
 
 /**
  * The authorization decision for one request.
- * `key` is the rate-limit bucket, normally the remote address.
+ * `remote` is the rate-limit bucket, normally the remote address. A loopback
+ * request whose Host is not a loopback literal falls through to session auth.
  */
 export function authorize({ req, sessions, lockout, remote, trustLoopback = true }) {
-  if (trustLoopback && isLoopback(remote)) return { ok: true, via: "loopback" };
+  if (trustLoopback && isTrustedLoopback(req, remote)) return { ok: true, via: "loopback" };
   const status = lockout.status(remote);
   if (status.locked) {
     return { ok: false, via: "locked", retryInMs: status.retryInMs, code: 429 };

@@ -21,6 +21,7 @@ screen — all over your local network, with no account or cloud service.
 | Platform | Availability |
 | --- | --- |
 | Windows 10 / 11, x64 | [Download the installer](https://github.com/aliihsaad/WinDock/releases/download/v0.2.2-preview.1/WinDockSetup.exe) |
+| macOS (host, Node.js 20+) | [Run it from source](docs/INSTALL-MACOS.md): apps, icons, launch, focus and quit; no packaged app yet |
 | Android 7.0+ | [Download the APK](https://github.com/aliihsaad/WinDock/releases/download/v0.2.2-preview.1/WinDock-android-debug.apk) |
 | iOS | Coming soon — [native companion development & GitHub builds](ios/README.md); no installable public release yet. |
 
@@ -176,7 +177,12 @@ Windows and Android are the downloadable app platforms.
 
 | Command | Purpose |
 | --- | --- |
-| `npm test` | Run the 16 platform-independent verification scripts |
+| `npm test` | Run the 21 platform-independent verification scripts |
+| `npm start` | Run the host in this terminal; it prints the address and PIN |
+| `npm run info` | Show the running host's address and PIN (works only on the host machine) |
+| `npm run mac:install` | macOS: run the host at login as a LaunchAgent ([guide](docs/INSTALL-MACOS.md)) |
+| `npm run mac:status` | macOS: show whether the login item is loaded and healthy |
+| `npm run mac:uninstall` | macOS: stop the host and remove the login item |
 | `npm run build:windows` | Package the Windows helper, tray, Node host, and web UI |
 | `npm run test:windows` | Run native Windows smoke checks |
 | `npm run build:installer` | Create `artifacts/installer/WinDockSetup.exe` |
@@ -190,6 +196,7 @@ both installers. The website deploys to Vercel automatically from `main`; GitHub
 Releases host the public download files.
 
 More detail: [developer reference](docs/DEVELOPMENT.md) ·
+[macOS host](docs/INSTALL-MACOS.md) ·
 [Android build and testing](android/README.md) ·
 [website deployment](website/README.md).
 

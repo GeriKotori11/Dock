@@ -8,6 +8,8 @@ import {
   isValidPinShape,
   safeEqual,
   isLoopback,
+  isLoopbackHost,
+  isTrustedLoopback,
   createLockout,
   createSessionStore,
   parseCookies,
@@ -53,6 +55,28 @@ for (const addr of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "127.0.1.5"]) {
 for (const addr of ["192.168.1.40", "10.0.0.2", "", null, "::ffff:192.168.1.40", "8.8.8.8"]) {
   t.ok(!isLoopback(addr), `${addr} is not loopback`);
 }
+
+// ---- loopback Host header (DNS-rebinding defence) ----
+for (const host of [
+  "127.0.0.1:8620", "127.0.0.1", "localhost:8620", "localhost", "LOCALHOST:1", "[::1]:8620", "[::1]",
+  "127.1.2.3:65535", "127.255.255.255",
+]) {
+  t.ok(isLoopbackHost(host), `Host ${host} is a loopback literal`);
+}
+for (const host of [
+  "evil.example:8620", "evil.example", "127.evil.com", "127.evil.com:8620", "localhost.evil.com",
+  "localhost.evil.com:8620", "127.0.0.1.evil.com", "evil.localhost", "127.0.0.256", "127.0.0", "127.0.0.1.1",
+  "128.0.0.1", "192.168.1.40:8620", "::1", "[::2]:8620", "[::1].evil.com", "[::1", "localhost:", "localhost:abc",
+  "localhost:99999", "127.0.0.1:8620:1", "localhost:8620@evil.example", " localhost", "localhost ", "", null,
+  undefined, 127, ["localhost"],
+]) {
+  t.ok(!isLoopbackHost(host), `Host ${JSON.stringify(host)} is not a loopback literal`);
+}
+const hostReq = (host, address = "127.0.0.1") => ({ headers: host === undefined ? {} : { host }, socket: { remoteAddress: address } });
+t.ok(isTrustedLoopback(hostReq("127.0.0.1:8620")), "loopback socket + loopback Host is trusted");
+t.ok(!isTrustedLoopback(hostReq("evil.example:8620")), "loopback socket + rebinding Host is not trusted");
+t.ok(!isTrustedLoopback(hostReq(undefined)), "loopback socket without a Host header is not trusted");
+t.ok(!isTrustedLoopback(hostReq("127.0.0.1:8620", "192.168.1.5")), "a LAN socket claiming a loopback Host is not trusted");
 
 // ---- lockout ----
 let clock = 1_000_000;
@@ -129,10 +153,22 @@ t.equal(tokenFromRequest({ headers: {} }), "", "absent cookie yields an empty to
 const asess = createSessionStore();
 const alock = createLockout();
 const live = asess.issue();
-const reqWith = (tok) => ({ headers: { cookie: tok ? `${COOKIE_NAME}=${tok}` : "" }, socket: {} });
+const reqWith = (tok, host = "192.168.1.20:8620") =>
+  ({ headers: { cookie: tok ? `${COOKIE_NAME}=${tok}` : "", host }, socket: {} });
 
-t.ok(authorize({ req: reqWith(null), sessions: asess, lockout: alock, remote: "127.0.0.1" }).ok,
-  "loopback is authorized without a session");
+for (const host of ["127.0.0.1:8620", "localhost:8620", "[::1]:8620"]) {
+  const via = authorize({ req: reqWith(null, host), sessions: asess, lockout: alock, remote: "127.0.0.1" });
+  t.ok(via.ok && via.via === "loopback", `loopback with Host ${host} is authorized without a session`);
+}
+t.ok(authorize({ req: reqWith(null, "[::1]:8620"), sessions: asess, lockout: alock, remote: "::1" }).ok,
+  "an IPv6 loopback socket with Host [::1] is authorized");
+const rebound = authorize({ req: reqWith(null, "evil.example:8620"), sessions: asess, lockout: alock, remote: "127.0.0.1" });
+t.ok(!rebound.ok, "loopback with a rebinding Host and no session is refused");
+t.equal(rebound.code, 401, "loopback with a rebinding Host yields 401");
+const reboundSession = authorize({ req: reqWith(live, "evil.example:8620"), sessions: asess, lockout: alock, remote: "127.0.0.1" });
+t.ok(reboundSession.ok && reboundSession.via === "session", "loopback with a rebinding Host still honours a valid session");
+t.ok(!authorize({ req: reqWith(null, "127.0.0.1:8620"), sessions: asess, lockout: alock, remote: "127.0.0.1", trustLoopback: false }).ok,
+  "trustLoopback: false refuses even a loopback Host");
 t.ok(authorize({ req: reqWith(live), sessions: asess, lockout: alock, remote: "192.168.1.5" }).ok,
   "a valid session is authorized from the LAN");
 

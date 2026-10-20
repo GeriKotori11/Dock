@@ -66,8 +66,35 @@ used instead. `host.json` holds a random host ID created on first run.
 phone apps' probes accept, and never includes the PIN or session data.
 
 State-changing requests and WebSocket upgrades check the request origin.
-Loopback is trusted by default for the tray; `trustLoopback: false` in
-`createApp` also requires pairing on the host. Discovery never includes the PIN.
+Loopback is trusted by default for the tray, which calls
+`http://127.0.0.1:<port>`. Trust needs **both** a loopback socket address and a
+`Host` header naming a loopback literal: `localhost`, a `127.0.0.0/8` dotted quad
+or `[::1]`, with any port (`isLoopbackHost` in `src/auth.js`). This blocks DNS
+rebinding: a website on the host can point its own hostname at 127.0.0.1, but
+the browser then sends that hostname as `Host` (and a matching `Origin`), so the
+request gets no loopback trust. A loopback request with any other `Host`, or
+none, falls through to ordinary session auth, so a paired cookie still works
+and a bare request gets 401. The same rule covers the `/` and `/input`
+WebSocket upgrades. `trustLoopback: false` in `createApp` also requires pairing
+on the host. Discovery never includes the PIN.
+
+`GET /api/pairing` returns `{ endpoint, pin, hostName, hostId }` (`endpoint` is
+the LAN URL the host advertises). It answers only loopback-trusted requests and
+returns 403 to everyone else, including paired phones. `npm run info`
+(`scripts/windock-info.mjs`) reads it from `http://127.0.0.1:${PORT:-8620}`.
+With `WINDOCK_HIDE_PIN=1` the startup banner prints
+`PIN:      (run "npm run info" to show it)` instead of the PIN, so the PIN stays
+out of log files; the macOS LaunchAgent sets it. The default banner is unchanged
+because the Windows tray parses `open:` and `PIN: dddd` from it.
+
+On macOS, `npm run mac:install` (`scripts/macos-agent.mjs`) writes
+`~/Library/LaunchAgents/dev.windock.host.plist` and bootstraps it into the
+`gui/<uid>` domain with `launchctl` (argv only, no shell). The agent runs
+`server.js` with the absolute Node path that ran the installer, `RunAtLoad`,
+`KeepAlive: { SuccessfulExit: false }` and a fixed system `PATH`, and logs to
+`~/Library/Logs/WinDock/host.log`. `--label` and `--port` install a separate copy
+for testing; a non-default label logs to `<label>.log`. See
+[Install on macOS](INSTALL-MACOS.md).
 The four-digit PIN and LAN HTTP design are intended for a trusted local network;
 do not expose the host port directly to the internet.
 
@@ -144,6 +171,7 @@ for the known focus-smoke failure and other hardware acceptance evidence.
 | --- | --- | --- |
 | GET | `/health` | Public health check |
 | POST | `/api/auth` | Exchange PIN for a session |
+| GET | `/api/pairing` | Address and PIN for `npm run info`; loopback only, 403 otherwise |
 | GET | `/api/state` | Tiles, running apps, available verbs |
 | GET | `/api/apps/installed` | Installed-app inventory |
 | GET | `/api/apps/icon` | App icon by validated ID |

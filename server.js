@@ -128,8 +128,11 @@ export async function createApp({
   allowDestructive = true,
   trustLoopback = true,
   identity = null,
+  endpoint = null,
 } = {}) {
-  const state = { pin };
+  // `endpoint` is the LAN URL the host advertises; start() fills it in once
+  // the listening port is known.
+  const state = { pin, endpoint };
   const appIcon = createIconCache(provider);
   const features = featuresOf(provider);
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
@@ -241,6 +244,18 @@ export async function createApp({
       const auth = authorize({ req, sessions, lockout, remote, trustLoopback });
       if (!auth.ok) {
         return sendJson(res, auth.code, { error: auth.via, retryInMs: auth.retryInMs });
+      }
+
+      if (path === "/api/pairing" && req.method === "GET") {
+        // The PIN itself: only for software on this machine (`npm run info`),
+        // never for a paired phone's session.
+        if (auth.via !== "loopback") return sendJson(res, 403, { error: "local only" });
+        return sendJson(res, 200, {
+          endpoint: state.endpoint ?? null,
+          pin: state.pin,
+          hostName: String(hostname()).slice(0, 255),
+          hostId: identity?.hostId ?? null,
+        });
       }
 
       const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
@@ -397,17 +412,32 @@ export async function start({ port = Number(process.env.PORT) || DEFAULT_PORT, h
 
   port = app.server.address().port;
   const endpoint = address ? `http://${address}:${port}` : `http://localhost:${port}`;
+  app.state.endpoint = endpoint;
   const discovery = startDiscovery({ endpoint, port: DISCOVERY_PORT });
   return { ...app, endpoint, discovery, port };
+}
+
+/**
+ * The startup banner. The Windows tray parses `open:\s*(\S+)` and
+ * `PIN:\s*(\d{4})` from it, so the default form must not change. With
+ * `hidePin` (WINDOCK_HIDE_PIN=1, set by the macOS LaunchAgent) the PIN stays
+ * out of stdout and therefore out of any log file.
+ */
+export function readyBanner({ providerName, endpoint, pin, hidePin = false }) {
+  const pinText = hidePin ? '(run "npm run info" to show it)' : pin;
+  return `WinDock host ready\n  provider: ${providerName}\n  open:     ${endpoint}\n  PIN:      ${pinText}\n`;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename);
 if (isMain) {
   start()
     .then(({ endpoint, state, provider }) => {
-      process.stdout.write(
-        `WinDock host ready\n  provider: ${provider.displayName}\n  open:     ${endpoint}\n  PIN:      ${state.pin}\n`,
-      );
+      process.stdout.write(readyBanner({
+        providerName: provider.displayName,
+        endpoint,
+        pin: state.pin,
+        hidePin: process.env.WINDOCK_HIDE_PIN === "1",
+      }));
     })
     .catch((err) => {
       process.stderr.write(`WinDock failed to start: ${err.message}\n`);

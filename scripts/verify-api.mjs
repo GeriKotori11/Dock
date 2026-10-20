@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { request, Agent } from "node:http";
 import { createChecker } from "./lib/assert.mjs";
-import { createApp } from "../server.js";
+import { WebSocket } from "ws";
+import { createApp, readyBanner } from "../server.js";
 import { createWindowsProvider } from "../src/platform/windows.js";
 import { createConfigStore } from "../src/config.js";
 import { createSessionStore } from "../src/auth.js";
@@ -249,16 +250,125 @@ t.equal(anonAction.status, 401, "an invalid session cannot trigger a power actio
 await anonAction.arrayBuffer();
 cookie = saved;
 
-// ---- loopback trust is a real feature: verify it works when enabled ----
+// ---- /api/pairing is never readable by a paired session ----
+const sessionPairing = await call("/api/pairing");
+t.equal(sessionPairing.status, 403, "a paired session cannot read /api/pairing when loopback is not trusted");
+t.ok(!sessionPairing.text.includes(PIN), "the refused /api/pairing response does not carry the PIN");
+
+// ---- loopback trust is a real feature, limited to loopback Host literals ----
 const trusting = await createApp({ provider, configStore, pin: PIN, trustLoopback: true });
 await new Promise((r) => trusting.server.listen(0, "127.0.0.1", r));
 const tport = trusting.server.address().port;
 const trusted = await fetch(`http://127.0.0.1:${tport}/api/state`);
 t.equal(trusted.status, 200, "loopback is trusted when trustLoopback is enabled");
 await trusted.arrayBuffer();
+
+/** A request to the loopback listener with an explicit Host header (fetch cannot set Host). */
+function hostCall(host, path, { method = "GET", body, headers = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const req = request({
+      host: "127.0.0.1", port: tport, path, method, agent: false,
+      headers: { host, ...(payload ? { "content-type": "application/json" } : {}), ...headers },
+    }, (res) => {
+      const data = [];
+      res.on("data", (chunk) => data.push(chunk));
+      res.on("error", reject);
+      res.on("end", () => {
+        const text = Buffer.concat(data).toString();
+        let json = null;
+        try { json = JSON.parse(text); } catch { /* not JSON */ }
+        resolve({ status: res.statusCode, text, json, headers: res.headers });
+      });
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+/** Resolve with the upgrade outcome: "open" or the refusing HTTP status. */
+function upgradeOutcome(host, path = "/", headers = {}) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${tport}${path}`, { headers: { host, ...headers } });
+    const timer = setTimeout(() => { ws.terminate(); resolve("timeout"); }, 2500);
+    ws.on("open", () => { clearTimeout(timer); ws.terminate(); resolve("open"); });
+    ws.on("unexpected-response", (_req, res) => { clearTimeout(timer); res.resume(); ws.terminate(); resolve(res.statusCode); });
+    ws.on("error", () => { clearTimeout(timer); resolve("error"); });
+  });
+}
+
+const EVIL = `evil.example:${tport}`;
+for (const host of [`127.0.0.1:${tport}`, `localhost:${tport}`, `[::1]:${tport}`]) {
+  t.equal((await hostCall(host, "/api/state")).status, 200, `loopback with Host ${host} is trusted`);
+}
+t.equal((await hostCall(EVIL, "/api/state")).status, 401, "loopback with a rebinding Host cannot read state");
+for (const host of ["127.evil.com", "localhost.evil.com"]) {
+  t.equal((await hostCall(`${host}:${tport}`, "/api/state")).status, 401, `Host ${host} is not treated as loopback`);
+}
+const launchesBefore = helperCalls.length;
+const evilLaunch = await hostCall(EVIL, "/api/apps/launch", {
+  method: "POST", body: { id: "c:/windows/notepad.exe" }, headers: { origin: `http://${EVIL}` },
+});
+t.equal(evilLaunch.status, 401, "a rebinding page cannot launch apps (same-origin Origin and Host)");
+const evilPower = await hostCall(EVIL, "/api/control", {
+  method: "POST", body: { verb: "shutdown" }, headers: { origin: `http://${EVIL}` },
+});
+t.equal(evilPower.status, 401, "a rebinding page cannot run power actions");
+t.equal(helperCalls.length, launchesBefore, "refused rebinding requests never reach the native helper");
+t.equal(await upgradeOutcome(EVIL, "/", { origin: `http://${EVIL}` }), 401, "a rebinding page cannot open the sync socket");
+t.equal(await upgradeOutcome(EVIL), 401, "a rebinding Host without Origin cannot open the sync socket");
+t.equal(await upgradeOutcome(EVIL, "/input", { origin: `http://${EVIL}` }), 401, "a rebinding page cannot open the input socket");
+t.equal(await upgradeOutcome(`127.0.0.1:${tport}`), "open", "positive control: a loopback Host opens the sync socket");
+
+// /api/pairing: local software only.
+const localPairing = await hostCall(`127.0.0.1:${tport}`, "/api/pairing");
+t.equal(localPairing.status, 200, "loopback with a loopback Host reads /api/pairing");
+t.deepEqual(Object.keys(localPairing.json).sort(), ["endpoint", "hostId", "hostName", "pin"],
+  "/api/pairing exposes only its documented fields");
+t.equal(localPairing.json.pin, PIN, "/api/pairing reports the PIN");
+t.equal(localPairing.json.endpoint, null, "/api/pairing endpoint defaults to null");
+t.ok(typeof localPairing.json.hostName === "string" && localPairing.json.hostName.length > 0, "/api/pairing names the host");
+t.equal(localPairing.json.hostId, null, "/api/pairing hostId is null without an identity");
+t.equal(localPairing.headers["cache-control"], "no-store", "/api/pairing is not cacheable");
+t.equal((await hostCall(`localhost:${tport}`, "/api/pairing")).status, 200, "Host localhost also reads /api/pairing");
+const evilPairing = await hostCall(EVIL, "/api/pairing");
+t.equal(evilPairing.status, 401, "a rebinding Host cannot read /api/pairing");
+t.ok(!evilPairing.text.includes(PIN), "the rebinding refusal carries no PIN");
+
+// A session cookie still works behind a non-loopback Host, but never for /api/pairing.
+const evilPair = await hostCall(EVIL, "/api/auth", { method: "POST", body: { pin: PIN } });
+t.equal(evilPair.status, 200, "pairing with the PIN works under any Host");
+const evilCookie = String(evilPair.headers["set-cookie"] || "").split(";")[0];
+t.ok(evilCookie.startsWith("windock_session="), "pairing under a non-loopback Host issues a session");
+t.equal((await hostCall(EVIL, "/api/state", { headers: { cookie: evilCookie } })).status, 200,
+  "a valid session is honoured when the Host is not loopback");
+const sessionOnly = await hostCall(EVIL, "/api/pairing", { headers: { cookie: evilCookie } });
+t.equal(sessionOnly.status, 403, "a valid session behind a non-loopback Host cannot read /api/pairing");
+t.ok(!sessionOnly.text.includes(PIN), "the session refusal carries no PIN");
+t.equal(await upgradeOutcome(EVIL, "/", { cookie: evilCookie }), "open", "a valid session opens the sync socket under a non-loopback Host");
 await trusting.hub.close();
 trusting.server.closeAllConnections?.();
 await new Promise((r) => trusting.server.close(r));
+
+// The advertised endpoint passes through to /api/pairing.
+const advertised = await createApp({ provider, configStore, pin: PIN, endpoint: "http://192.168.1.20:8620" });
+await new Promise((r) => advertised.server.listen(0, "127.0.0.1", r));
+const advPairing = await (await fetch(`http://127.0.0.1:${advertised.server.address().port}/api/pairing`)).json();
+t.equal(advPairing.endpoint, "http://192.168.1.20:8620", "/api/pairing reports the endpoint passed to createApp");
+await advertised.hub.close();
+advertised.server.closeAllConnections?.();
+await new Promise((r) => advertised.server.close(r));
+
+// ---- startup banner: the tray parses it, so the default form is byte-stable ----
+const banner = readyBanner({ providerName: "Windows", endpoint: "http://192.168.1.20:8620", pin: "0427" });
+t.equal(banner, "WinDock host ready\n  provider: Windows\n  open:     http://192.168.1.20:8620\n  PIN:      0427\n",
+  "the default banner is unchanged");
+t.equal((banner.match(/PIN:\s*(\d{4})/) || [])[1], "0427", "the tray's PIN pattern still matches");
+t.equal((banner.match(/open:\s*(\S+)/) || [])[1], "http://192.168.1.20:8620", "the tray's endpoint pattern still matches");
+const hidden = readyBanner({ providerName: "macOS", endpoint: "http://192.168.1.20:8620", pin: "0427", hidePin: true });
+t.ok(!hidden.includes("0427"), "WINDOCK_HIDE_PIN keeps the PIN out of the banner");
+t.ok(hidden.includes('  PIN:      (run "npm run info" to show it)\n'), "the hidden banner points to npm run info");
+t.ok(!/PIN:\s*\d{4}/.test(hidden), "the hidden banner has no PIN for a parser to find");
 
 // ---- identity in /health and sessions that survive a host restart ----
 async function stop(a) {
