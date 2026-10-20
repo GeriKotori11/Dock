@@ -4,6 +4,7 @@ import { addAppTile, addControlTile, removeTile, moveTile, toWireTiles, availabl
 import { normalizeLayout, renderPages, pageCount, moveToTile } from "./launcher.js";
 import { createInputPad } from "./input-pad.js";
 import { createNowPlayingPoller } from "./now-playing.js";
+import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow } from "./native-bridge.js";
 
 const $ = (id) => document.getElementById(id);
 const pluralize = (count, word, plural = word + "s") => count + " " + (count === 1 ? word : plural);
@@ -14,6 +15,8 @@ let currentPage = 0, toastTimer, selectedKey = "", suppressClickUntil = 0;
 let pageHintTimer, offlineTimer;
 let captureState = { available: false, phase: "idle" }, captureBusy = false, capturePoll = false, captureReceivedAt = Date.now();
 let nowPlayingHtml = "";
+// Native shell hand-shakes: ready is posted once, unauthorized once per lost session.
+let readySent = false, handedOff = false;
 // Hosts before per-host features sent no `features`; treat that as everything on.
 const feature = (name) => state.features?.[name] !== false;
 // App tiles the host's catalog no longer has. Kept apart from state.tiles so
@@ -108,7 +111,7 @@ async function api(path, options = {}) {
     headers: options.body ? { "content-type": "application/json" } : {},
     ...options,
   });
-  if (res.status === 401 && path !== "/api/auth") { showPair("Enter the current PIN to reconnect."); throw new Error("unauthorized"); }
+  if (res.status === 401 && path !== "/api/auth") { showPair("Enter the current PIN to reconnect.", true); throw new Error("unauthorized"); }
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({}))).error;
     const messages = { "wrong pin": "That PIN doesn’t match. Try the PIN shown on your computer.", "invalid pin": "Enter all six digits.", "pairing closed": "Pairing is closed. On your computer, show the PIN again (Windows: tray → Show connection info · Mac: npm run info), then enter the new PIN within 10 minutes.", locked: "Too many attempts. Wait a moment and try again.", "internal error": "Your computer couldn't complete that action. Try again.", "unknown app": "That app isn't installed on this computer anymore.", "launch failed": "The computer couldn't open that app. It may have been moved or removed.", "controls unavailable": "Controls aren't available on this computer." };
@@ -116,19 +119,27 @@ async function api(path, options = {}) {
   }
   return res.json();
 }
-function showPair(message = "") {
+function showPair(message = "", unauthorized = false) {
   paired = false;
   paintCapture();
   syncLayout();
   clearTimeout(reconnectTimer);
   if (socket) { socket.onclose = null; socket.close(); socket = null; }
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  // Inside a native shell, native asks for the new PIN (spec 4.13): keep the
+  // dock dimmed behind it rather than showing the web PIN page.
+  if (shouldHandOff(readNative(), unauthorized)) {
+    syncOffline();
+    $("dock").classList.add("is-offline");
+    if (!handedOff) handedOff = postToNative(window, { type: "unauthorized" });
+    return;
+  }
   $("pair").hidden = false;
   $("app").hidden = true;
   $("pair-error").textContent = message;
   syncOffline();
 }
-function showApp() { paired = true; $("pair").hidden = true; $("app").hidden = false; syncLayout(); paintCapture(); syncOffline(); }
+function showApp() { paired = true; handedOff = false; $("pair").hidden = true; $("app").hidden = false; syncLayout(); paintCapture(); syncOffline(); }
 function setConn(on) {
   online = on;
   if (!on) inputPad.disconnect();
@@ -144,7 +155,7 @@ function setConn(on) {
 function setOffline(visible) {
   clearTimeout(offlineTimer); offlineTimer = null;
   $("reconnect").dataset.visible = String(visible);
-  $("reconnect-text").textContent = visible ? "Reconnecting to " + (state.hostName || "your computer") + "…" : "";
+  $("reconnect-text").textContent = visible ? "Reconnecting to " + displayName(readNative(), state.hostName, "your computer") + "…" : "";
   $("dock").classList.toggle("is-offline", visible);
 }
 function syncOffline() {
@@ -192,6 +203,23 @@ function applyFeatures() {
 function platformLabel() {
   return { macos: "Mac", windows: "Windows" }[state.platform] || state.platformName || "Computer";
 }
+// The drawer's connection row: plain text in a browser, the switch-computer
+// button inside a native shell that offers one. Read at use time, since native
+// may inject WinDockNative after this module runs.
+function syncNative() {
+  const native = readNative();
+  const name = displayName(native, state.hostName || state.platformName, "Your computer");
+  const row = document.querySelector(".drawer-connection");
+  if (wantsSwitcher(native) && !row.classList.contains("has-switch")) {
+    row.classList.add("has-switch");
+    row.innerHTML = renderSwitchRow({ name, connState: $("conn").dataset.state, connText: $("conn").textContent });
+    row.firstElementChild.addEventListener("click", () => { $("drawer").close(); postToNative(window, { type: "switch" }); });
+  }
+  $("drawer-host").textContent = name;
+}
+function announceReady() {
+  if (!readySent && paired) readySent = postToNative(window, { type: "ready", switcher: true });
+}
 function paint() {
   applyFeatures();
   const running = new Set(state.running.map((app) => app.id));
@@ -202,7 +230,7 @@ function paint() {
   $("dock").classList.toggle("is-editing", editing);
   $("dock").scrollTo({ left: currentPage * $("dock").clientWidth, behavior: "instant" });
   $("host-name").textContent = state.hostName || state.platformName || "Your computer";
-  $("drawer-host").textContent = $("host-name").textContent;
+  syncNative();
   document.body.classList.toggle("is-arranging", editing);
   $("edit-done").hidden = !layout.immersive || !editing || !paired;
   $("drawer-edit").innerHTML = icon(editing ? "check" : "edit") + "<span>" + (editing ? "Done" : "Arrange") + "</span>";
@@ -588,7 +616,7 @@ $("pair-form").addEventListener("submit", async (event) => {
   button.disabled = true;
   try {
     await api("/api/auth", { method: "POST", body: JSON.stringify({ pin: $("pin").value, deviceName: deviceName() }) });
-    showApp(); await refresh(); connect();
+    showApp(); await refresh(); connect(); announceReady();
   } catch (error) { showPair(error.message); } finally { button.disabled = false; }
 });
 
@@ -597,8 +625,14 @@ if ("serviceWorker" in navigator) {
 }
 syncLayout();
 (async function boot() {
-  try { await refresh(); showApp(); connect(); }
-  catch (error) { showPair(error.message === "unauthorized" ? "" : "Start WinDock on your computer, then connect with its PIN."); }
+  try { await refresh(); showApp(); connect(); announceReady(); }
+  catch (error) { showPair(error.message === "unauthorized" ? "" : "Start WinDock on your computer, then connect with its PIN.", error.message === "unauthorized"); }
 })();
+// Natives may inject WinDockNative after this module ran, then say so.
+window.addEventListener("windock-native-ready", () => {
+  syncNative();
+  if ($("reconnect").dataset.visible === "true") setOffline(true);
+  announceReady();
+});
 // Refresh when returning to the dock. No background native polling while hidden.
 document.addEventListener("visibilitychange", () => { if (!document.hidden && paired) refresh().then(connect).catch(report); });

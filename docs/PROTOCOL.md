@@ -101,6 +101,13 @@ Checks run in this order:
 | 401 | `{ "error": "wrong pin", "locked": bool }` | Wrong PIN (per-client and global failure) |
 | 200 | `{ "ok": true }` + `Set-Cookie` | Paired; the PIN is now spent |
 
+Native clients (the iOS and Android shells) pair with the same request and no
+`Origin` header. The session is only in the `Set-Cookie` response header,
+`windock_session=<token>; Path=/; HttpOnly; SameSite=Lax; Max-Age=15552000`
+(plus `; Secure` over HTTPS): the shell reads the first `name=value` pair and
+stores it in its WebView's cookie store for that origin before loading the
+dock. The body never carries the token.
+
 ## Session
 
 | Item | Value |
@@ -109,6 +116,27 @@ Checks run in this order:
 | Scope | One session store for both schemes: a cookie from http works over https and vice versa |
 | Storage | The host keeps only the token's SHA-256 hash, plus a public device `id`, `name`, `issuedAt`, `lastSeenAt` |
 | Failure | Any `/api/*` route answers 401 `{ "error": "unauthorized" }` without a valid session (the phone shows the PIN screen again); 429 `locked` while the client is locked out |
+
+### `DELETE /api/session` (forget this computer)
+
+A phone removes itself from the computer's device list. Authenticated only by
+the session cookie: loopback trust does not apply, because there is no session
+to forget without one. Same-origin rule as other state-changing requests
+(native clients send no `Origin`).
+
+| Status | Body | When |
+| --- | --- | --- |
+| 403 | `{ "error": "bad origin" }` | Cross-origin request |
+| 429 | `{ "error": "locked", "retryInMs": n }` | This client is locked out |
+| 400 | `{ "error": "no session" }` | No `windock_session` cookie (also from loopback) |
+| 401 | `{ "error": "unauthorized" }` + clearing `Set-Cookie` | Cookie unknown, expired or already revoked |
+| 200 | `{ "ok": true }` + clearing `Set-Cookie` | That session (only) is revoked |
+
+Revoking works exactly like `DELETE /api/devices/<id>`: the cookie then gets
+401 and the session's open WebSockets close with `1008` `session revoked`.
+Other sessions are untouched. The clearing cookie is
+`windock_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0` (plus `Secure`
+over HTTPS).
 
 State-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) and WebSocket
 upgrades must be same-origin when they carry an `Origin` header; native clients

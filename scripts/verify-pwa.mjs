@@ -3,6 +3,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createChecker } from "./lib/assert.mjs";
 import { renderTiles, renderTile, renderNowPlaying, escapeHtml, glyphFor } from "../public/dock.js";
+import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow, COMPUTER_NAME_MAX } from "../public/native-bridge.js";
 
 const t = createChecker("pwa");
 const PUBLIC = join(import.meta.dirname, "..", "public");
@@ -178,7 +179,7 @@ const pill = html.match(/<div id="reconnect"[^>]*>/)?.[0] || "";
 t.ok(pill.includes('role="status"') && pill.includes('aria-live="polite"'), "the reconnect pill is a polite live region");
 t.ok(pill.includes('data-visible="false"'), "the reconnect pill starts hidden");
 t.ok(html.indexOf('id="reconnect"') < html.indexOf('id="dock"') && html.includes('id="reconnect-text"'), "the pill sits at the top of the dock with its own text");
-t.ok(appJs.includes('"Reconnecting to " + (state.hostName || "your computer") + "…"'), "the pill names the computer");
+t.ok(appJs.includes('"Reconnecting to " + displayName(readNative(), state.hostName, "your computer") + "…"'), "the pill names the computer (the phone's nickname inside a native shell)");
 t.ok(/offlineTimer = setTimeout\(\(\) => setOffline\(!online && paired\), 1500\)/.test(appJs), "the pill waits 1.5 s and rechecks before showing");
 t.ok(/function syncOffline\(\) \{\n  if \(online \|\| !paired\) return setOffline\(false\);/.test(appJs), "reconnecting or unpairing hides the pill at once");
 t.ok(/function setConn\(on\) \{[\s\S]*?syncOffline\(\);\n\}/.test(appJs), "every connection change updates the pill");
@@ -189,6 +190,78 @@ t.ok(/\.reconnect \{[^}]*var\(--glass-bg\)[^}]*var\(--glass-border\)/.test(css),
 t.ok(/@media \(prefers-reduced-motion: reduce\) \{ \.reconnect__dot \{ animation: none; \} \}/.test(css), "the pill's dot does not pulse with reduced motion");
 t.ok(/\.dock-page--single-row \{[^}]*align-content: center/.test(css), "a single row of tiles is vertically centred");
 t.ok(html.includes('id="host-name" class="bar__host">Your computer<') && html.includes('id="drawer-host">Your computer<'), "host name placeholders are platform neutral");
+
+// ---- native shell bridge (design spec section 11) ----
+t.equal(readNative({}), null, "a browser has no native capabilities");
+t.equal(readNative(undefined), null, "no window means no native capabilities");
+t.equal(readNative({ WinDockNative: "ios" }), null, "a non-object WinDockNative is ignored");
+t.equal(readNative({ WinDockNative: { platform: "windows", switcher: true } }), null, "an unknown platform is ignored");
+t.deepEqual(readNative({ WinDockNative: { platform: "ios", switcher: true, computerName: "Studio PC" } }),
+  { platform: "ios", switcher: true, computerName: "Studio PC" }, "iOS capabilities are read");
+t.deepEqual(readNative({ WinDockNative: { platform: "android", switcher: "yes", computerName: 42, extra: "<script>" } }),
+  { platform: "android", switcher: false, computerName: null }, "only a boolean switcher and a string name are trusted; other fields are dropped");
+t.equal(readNative({ WinDockNative: { platform: "ios", computerName: "x".repeat(COMPUTER_NAME_MAX + 1) } }).computerName, null, "an over-long name is ignored");
+t.equal(readNative({ WinDockNative: { platform: "ios", computerName: "x".repeat(COMPUTER_NAME_MAX) } }).computerName, "x".repeat(COMPUTER_NAME_MAX), "a 60-character name is kept");
+t.equal(readNative({ WinDockNative: { platform: "ios", computerName: "   " } }).computerName, null, "a blank name is ignored");
+t.equal(readNative({ get WinDockNative() { throw new Error("boom"); } }), null, "a throwing getter reads as a browser");
+// Read at use time: a window gaining WinDockNative later is seen on the next read.
+const lateWin = {};
+t.equal(readNative(lateWin), null, "before injection there are no capabilities");
+lateWin.WinDockNative = { platform: "android", switcher: true };
+t.equal(readNative(lateWin)?.platform, "android", "capabilities injected later are seen on the next read");
+
+t.equal(displayName(readNative({ WinDockNative: { platform: "ios", computerName: "Studio PC" } }), "DESKTOP-42", "Your computer"), "Studio PC", "the nickname replaces the host name");
+t.equal(displayName(readNative({ WinDockNative: { platform: "ios" } }), "DESKTOP-42", "Your computer"), "DESKTOP-42", "without a nickname the host name stays");
+t.equal(displayName(null, "DESKTOP-42", "Your computer"), "DESKTOP-42", "a browser keeps the host name");
+t.equal(displayName(null, "", "your computer"), "your computer", "with no names the fallback is used");
+
+t.equal(wantsSwitcher(null), false, "a browser keeps the plain drawer row");
+t.equal(wantsSwitcher(readNative({ WinDockNative: { platform: "ios", switcher: false } })), false, "a shell without a switcher keeps the plain row");
+t.equal(wantsSwitcher(readNative({ WinDockNative: { platform: "ios", switcher: true } })), true, "a shell with a switcher gets the switch button");
+
+const row = renderSwitchRow({ name: XSS, connState: "on", connText: "Connected" });
+t.ok(row.startsWith('<button id="drawer-switch" class="drawer-switch" type="button"'), "the switch row is one button");
+t.ok(row.includes('id="drawer-host"') && row.includes('id="drawer-conn" data-state="on">Connected<'), "the switch row keeps the host and connection ids");
+t.ok(!row.includes("<img") && row.includes("&lt;img"), "a hostile nickname is escaped in the switch row");
+t.ok(row.includes(">Switch<svg") && row.includes('<path d="m8 9 4-4 4 4M8 15l4 4 4-4"/>'), "the row ends with Switch and an up/down chevron");
+t.ok(row.includes('<rect x="3" y="4" width="18" height="13" rx="3"/>'), "the row starts with the monitor icon");
+t.ok(renderSwitchRow({ name: "PC", connState: '"><b>' }).includes('data-state="off"'), "an unexpected state renders as off");
+
+// Native dispatch to fake bridges.
+const sent = [];
+const iosWin = { webkit: { messageHandlers: { windock: { postMessage: (m) => sent.push(["ios", m]) } } } };
+const androidCalls = [];
+const androidWin = { WinDockAndroid: { switchComputer: () => androidCalls.push("switchComputer"), ready: () => androidCalls.push("ready"), unauthorized: () => androidCalls.push("unauthorized") } };
+t.equal(postToNative(iosWin, { type: "ready", switcher: true }), true, "ready reaches the iOS handler");
+t.equal(postToNative(iosWin, { type: "unauthorized" }), true, "unauthorized reaches the iOS handler");
+t.equal(postToNative(iosWin, { type: "switch" }), true, "switch reaches the iOS handler");
+t.deepEqual(sent, [["ios", { type: "ready", switcher: true }], ["ios", { type: "unauthorized" }], ["ios", { type: "switch" }]], "iOS gets the messages as posted");
+t.equal(postToNative(androidWin, { type: "ready", switcher: true }), true, "ready reaches WinDockAndroid.ready");
+t.equal(postToNative(androidWin, { type: "unauthorized" }), true, "unauthorized reaches WinDockAndroid.unauthorized");
+t.equal(postToNative(androidWin, { type: "switch" }), true, "switch reaches WinDockAndroid.switchComputer");
+t.deepEqual(androidCalls, ["ready", "unauthorized", "switchComputer"], "Android gets the matching bridge calls");
+t.equal(postToNative({}, { type: "ready", switcher: true }), false, "a browser has nowhere to post ready");
+t.equal(postToNative({ WinDockAndroid: { showPhoneSettings() {} } }, { type: "ready" }), false, "an older Android bridge without ready is left alone");
+t.equal(postToNative(iosWin, { type: "eval" }), false, "unknown message types are not sent");
+t.equal(postToNative({ webkit: { messageHandlers: { windock: { postMessage() { throw new Error("gone"); } } } } }, { type: "switch" }), false, "a throwing bridge does not break the dock");
+
+t.equal(shouldHandOff(readNative(iosWin), true), false, "a message handler alone (no WinDockNative) keeps the web PIN page");
+t.equal(shouldHandOff(readNative({ WinDockNative: { platform: "ios", switcher: true } }), true), true, "a 401 inside a native shell hands off instead of the web PIN page");
+t.equal(shouldHandOff(readNative({ WinDockNative: { platform: "ios" } }), false), false, "a non-401 failure is not handed off");
+t.equal(shouldHandOff(readNative({}), true), false, "browsers still get the web PIN page");
+
+// Wiring in app.js.
+t.ok(appJs.includes('showPair("Enter the current PIN to reconnect.", true)'), "every API 401 is flagged unauthorized");
+t.ok(/if \(shouldHandOff\(readNative\(\), unauthorized\)\) \{[\s\S]*?postToNative\(window, \{ type: "unauthorized" \}\);\n    return;\n  \}\n  \$\("pair"\)\.hidden = false;/.test(appJs),
+  "a native 401 posts unauthorized and returns before the web PIN page is shown");
+t.ok(appJs.includes('readySent = postToNative(window, { type: "ready", switcher: true })'), "the dock posts ready to native");
+t.ok(appJs.includes("try { await refresh(); showApp(); connect(); announceReady(); }"), "ready is posted after the first state is painted");
+t.ok(appJs.includes('window.addEventListener("windock-native-ready"'), "the dock listens for a late native injection");
+t.ok(appJs.includes('postToNative(window, { type: "switch" })'), "the switch row calls native");
+t.ok(appJs.includes('if (wantsSwitcher(native) && !row.classList.contains("has-switch"))'), "the switch row replaces the plain row only when native offers it");
+t.ok(html.includes('<div class="drawer-connection"><span id="drawer-host">Your computer</span><span id="drawer-conn" data-state="off">Connecting</span></div>'),
+  "without native the drawer row stays plain and non-interactive");
+t.ok(/\.drawer-switch \{[^}]*min-height: 48px[^}]*border-radius: 14px[^}]*background: #ffffff08/.test(css), "the switch row follows spec 5.12");
 
 t.equal(glyphFor({ kind: "control", verb: "lock" }), "🔒", "control tiles get their verb glyph");
 t.equal(glyphFor({ kind: "app", label: "firefox" }), "F", "app tiles fall back to an initial");

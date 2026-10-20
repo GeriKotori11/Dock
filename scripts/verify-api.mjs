@@ -849,6 +849,99 @@ t.ok(formatInfo({ hostName: "M", endpoint: "x", pin: "1", pairingOpenForMs: 30_0
   await new Promise((r) => upgraded.server.close(r));
 }
 
+// ---- DELETE /api/session: a phone forgets itself; native pairing ----
+{
+  const codes = ["600002", "600003", "600004"];
+  const forget = await createApp({
+    // An input provider that never becomes ready keeps the /input socket open.
+    provider: fakeProvider({
+      input: { open() { return { ready: new Promise(() => {}), send() {}, close() {} }; }, dispose() {} },
+    }),
+    configStore: createConfigStore({ path: join(dir, "forget.json") }),
+    pin: "600001",
+    nextPin: () => codes.shift(),
+    sessions: createSessionStore(),
+    trustLoopback: true,
+  });
+  await new Promise((r) => forget.server.listen(0, "127.0.0.1", r));
+  const fport = forget.server.address().port;
+  const PHONE = `192.168.100.9:${fport}`;
+  const LOCALHOST = `127.0.0.1:${fport}`;
+  const freq = (path, { method = "GET", body, host = PHONE, headers = {} } = {}) => new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const r = request({
+      host: "127.0.0.1", port: fport, path, method, agent: false,
+      headers: { host, ...(payload ? { "content-type": "application/json" } : {}), ...headers },
+    }, (res) => {
+      const data = [];
+      res.on("data", (c) => data.push(c));
+      res.on("end", () => {
+        let json = null;
+        try { json = JSON.parse(Buffer.concat(data).toString()); } catch { /* not JSON */ }
+        resolve({ status: res.statusCode, json, setCookie: res.headers["set-cookie"]?.[0] || "" });
+      });
+    });
+    r.on("error", reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+  // Native clients (the iOS and Android shells) send no Origin header.
+  const nativePair = await freq("/api/auth", { method: "POST", body: { pin: "600001", deviceName: "iPhone" } });
+  t.equal(nativePair.status, 200, "native POST /api/auth without an Origin header pairs");
+  t.ok(/^windock_session=[A-Za-z0-9_-]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+$/.test(nativePair.setCookie),
+    "native pairing returns the session in Set-Cookie for the shell to hand to its WebView");
+  const mine = nativePair.setCookie.split(";")[0];
+  const otherPair = await freq("/api/auth", { method: "POST", body: { pin: "600002", deviceName: "Pixel" } });
+  const other = otherPair.setCookie.split(";")[0];
+  t.ok(other.startsWith("windock_session=") && other !== mine, "a second phone pairs with its own session");
+
+  const sock = (path, cookieHeader) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${fport}${path}`, { headers: { host: PHONE, cookie: cookieHeader } });
+    ws.once("open", () => resolve(ws));
+    ws.once("error", reject);
+  });
+  const ended = (ws) => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ code: "timeout" }), 1500);
+    ws.once("close", (code, reason) => { clearTimeout(timer); resolve({ code, reason: reason.toString() }); });
+  });
+  const mySync = await sock("/", mine);
+  const myInput = await sock("/input", mine);
+  const otherSync = await sock("/", other);
+  const mySyncEnd = ended(mySync);
+  const myInputEnd = ended(myInput);
+
+  t.deepEqual((await freq("/api/session", { method: "DELETE", headers: { cookie: mine, origin: "http://evil.example" } })).json,
+    { error: "bad origin" }, "DELETE /api/session refuses a cross-origin request");
+  t.equal((await freq("/api/state", { headers: { cookie: mine } })).status, 200, "a refused cross-origin forget leaves the session working");
+
+  const forgot = await freq("/api/session", { method: "DELETE", headers: { cookie: mine } });
+  t.equal(forgot.status, 200, "DELETE /api/session with the session cookie succeeds");
+  t.deepEqual(forgot.json, { ok: true }, "DELETE /api/session answers { ok: true }");
+  t.equal(forgot.setCookie, "windock_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", "DELETE /api/session clears the cookie with the same attributes");
+  t.deepEqual(await mySyncEnd, { code: 1008, reason: "session revoked" }, "forgetting closes this phone's sync socket");
+  t.deepEqual(await myInputEnd, { code: 1008, reason: "session revoked" }, "forgetting closes this phone's input socket");
+  t.equal((await freq("/api/state", { headers: { cookie: mine } })).status, 401, "the forgotten session then gets 401");
+  t.equal((await freq("/api/state", { headers: { cookie: other } })).status, 200, "another phone's session is unaffected");
+  t.equal(otherSync.readyState, otherSync.OPEN, "another phone's socket stays open");
+  const remaining = (await freq("/api/devices", { host: LOCALHOST })).json.devices;
+  t.deepEqual(remaining.map((d) => d.name), ["Pixel"], "only the forgetting phone left the device list");
+
+  const again = await freq("/api/session", { method: "DELETE", headers: { cookie: mine } });
+  t.equal(again.status, 401, "forgetting an already revoked session is 401");
+  t.equal(again.setCookie, "windock_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", "a stale cookie is still cleared");
+  const none = await freq("/api/session", { method: "DELETE" });
+  t.equal(none.status, 400, "DELETE /api/session without a cookie is 400");
+  t.deepEqual(none.json, { error: "no session" }, "the refusal says no session");
+  const loopbackNone = await freq("/api/session", { method: "DELETE", host: LOCALHOST });
+  t.equal(loopbackNone.status, 400, "a loopback-trusted DELETE /api/session without a cookie is 400, not a free pass");
+  t.deepEqual(loopbackNone.json, { error: "no session" }, "the loopback refusal says no session");
+  t.equal((await freq("/api/devices", { host: LOCALHOST })).json.devices.length, 1, "a loopback forget without a cookie revokes nothing");
+  otherSync.terminate();
+  await forget.hub.close();
+  forget.server.closeAllConnections?.();
+  await new Promise((r) => forget.server.close(r));
+}
+
 await app.hub.close();
 // fetch keeps connections alive; close() alone would wait for them forever.
 app.server.closeAllConnections?.();

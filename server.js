@@ -29,6 +29,7 @@ import {
   createPairing,
   createSessionStore,
   sessionCookie,
+  tokenFromRequest,
   authorize,
   DEVICE_ID_RE,
 } from "./src/auth.js";
@@ -271,6 +272,23 @@ export async function createApp({
         } catch {
           return sendJson(res, 404, { error: "not found" });
         }
+      }
+
+      if (path === "/api/session" && req.method === "DELETE") {
+        // "Forget this computer" from a phone: revokes exactly the session the
+        // cookie names. Loopback trust does not apply, since there is no
+        // session to forget without a cookie.
+        if (!sameOrigin(req)) return sendJson(res, 403, { error: "bad origin" });
+        const status = lockout.status(remote);
+        if (status.locked) return sendJson(res, 429, { error: "locked", retryInMs: status.retryInMs });
+        const token = tokenFromRequest(req);
+        if (!token) return sendJson(res, 400, { error: "no session" });
+        const clear = { "set-cookie": sessionCookie("", { secure: Boolean(req.socket.encrypted), maxAgeMs: 0 }) };
+        const hash = sessions.verify(token) ? sessions.revokeToken(token) : null;
+        if (!hash) return sendJson(res, 401, { error: "unauthorized" }, clear);
+        hub.disconnect(hash);
+        inputHub.disconnect(hash);
+        return sendJson(res, 200, { ok: true }, clear);
       }
 
       const auth = authorize({ req, sessions, lockout, remote, trustLoopback });

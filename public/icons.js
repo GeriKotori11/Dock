@@ -16,6 +16,7 @@ const paths = {
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   left: '<path d="m14 6-6 6 6 6"/>',
   right: '<path d="m10 6 6 6-6 6"/>',
+  chevron: '<path d="m8 9 4-4 4 4M8 15l4 4 4-4"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
   volume: '<path d="m11 4-6 5H2v6h3l6 5zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
   quieter: '<path d="m11 4-6 5H2v6h3l6 5zM16 12h6"/>',

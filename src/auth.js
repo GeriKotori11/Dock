@@ -398,6 +398,14 @@ export function createSessionStore({
       }
       return null;
     },
+    /** Revoke the session a raw token belongs to; returns its hash, or null. */
+    revokeToken(token) {
+      if (typeof token !== "string" || !token) return null;
+      const hash = hashToken(token);
+      if (!sessions.delete(hash)) return null;
+      persist();
+      return hash;
+    },
     /** Revoke every session; returns the revoked hashes. */
     revokeAll() {
       const hashes = [...sessions.keys()];
