@@ -134,6 +134,23 @@ cookie. This decision is reversible: a phone-side cache can be added later.
 - **macOS host behavior.** The firewall prompts for Node. JXA is old but present
   on macOS 27. The user needs Node installed until packaging.
 
+
+## To-do (requested, not yet scheduled)
+
+- **Desktop host interface (user request, 2026-10-20).** The computer-side app
+  needs a real interface on both Windows and macOS. Today Windows has only a tray
+  menu, and macOS has a terminal plus `npm run info`. At minimum it should show:
+  - running status;
+  - address, PIN and pairing QR code;
+  - the security code;
+  - paired phones, with revoke;
+  - start at login;
+  - quit.
+
+  Design and technology are still to be decided. Options: a native shell on each
+  OS (extend the Windows tray, add a macOS menu-bar app) or one shared local
+  web page served on loopback.
+
 ## Status log
 
 ### 2026-10-20: milestone 1 (shared host fixes and macOS host), done
