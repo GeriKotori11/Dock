@@ -10,6 +10,7 @@ const ids = Object.keys(PROVIDERS);
 t.ok(ids.length >= 2, `expected at least two providers, found ${ids.length}`);
 t.ok(ids.includes("win32"), "win32 provider is registered");
 t.ok(ids.includes("linux"), "linux provider is registered");
+t.ok(ids.includes("darwin"), "darwin (macOS) provider is registered");
 
 for (const os of ids) {
   const provider = createProvider({ os, exec });
@@ -37,5 +38,6 @@ t.ok(
 
 t.throws(() => createProvider({ os: "sunos", exec }), "unsupported platform throws");
 t.throws(() => createProvider({ os: "win32", exec: null }), "provider without exec throws");
+t.throws(() => createProvider({ os: "darwin", exec: null }), "macOS provider without exec throws");
 
 t.done("contract verification passed");

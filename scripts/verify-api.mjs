@@ -7,6 +7,8 @@ import { createChecker } from "./lib/assert.mjs";
 import { createApp } from "../server.js";
 import { createWindowsProvider } from "../src/platform/windows.js";
 import { createConfigStore } from "../src/config.js";
+import { createSessionStore } from "../src/auth.js";
+import { loadHostIdentity } from "../src/identity.js";
 
 const t = createChecker("api");
 const PIN = "4321";
@@ -75,6 +77,14 @@ const health = await call("/health");
 t.equal(health.status, 200, "GET /health is public and returns 200");
 t.equal(health.json.ok, true, "health reports ok");
 t.equal(health.json.platform, "windows", "health names the active provider");
+t.equal(health.json.app, "windock", "health still identifies the app");
+t.equal(health.json.hostId, null, "health reports a null hostId when the app has no identity");
+t.ok(typeof health.json.hostName === "string" && health.json.hostName.length > 0, "health names the host");
+t.equal(health.json.api, 1, "health advertises API version 1");
+t.ok(Buffer.byteLength(health.text) <= 4096, `the health body fits the 4096-byte probe limit (${Buffer.byteLength(health.text)} bytes)`);
+t.ok(!health.text.includes(PIN), "health never includes the PIN");
+t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "platform"],
+  "health exposes only its documented fields");
 
 // ---- static ----
 const index = await call("/");
@@ -243,6 +253,53 @@ await trusted.arrayBuffer();
 await trusting.hub.close();
 trusting.server.closeAllConnections?.();
 await new Promise((r) => trusting.server.close(r));
+
+// ---- identity in /health and sessions that survive a host restart ----
+async function stop(a) {
+  await a.hub.close();
+  a.server.closeAllConnections?.();
+  await new Promise((r) => a.server.close(r));
+}
+const identity = await loadHostIdentity({ path: join(dir, "host.json") });
+const sessionsPath = join(dir, "sessions.json");
+const first = await createApp({
+  provider, configStore, pin: PIN, trustLoopback: false, identity,
+  sessions: createSessionStore({ path: sessionsPath }),
+});
+await new Promise((r) => first.server.listen(0, "127.0.0.1", r));
+const firstBase = `http://127.0.0.1:${first.server.address().port}`;
+const idHealth = await fetch(`${firstBase}/health`);
+const idHealthText = await idHealth.text();
+t.equal(JSON.parse(idHealthText).hostId, identity.hostId, "health reports the persisted host id");
+t.ok(Buffer.byteLength(idHealthText) <= 4096, "the health body with an identity fits 4096 bytes");
+t.ok(!idHealthText.includes(PIN), "health with an identity never includes the PIN");
+const pairFirst = await fetch(`${firstBase}/api/auth`, {
+  method: "POST",
+  headers: { "content-type": "application/json", origin: firstBase },
+  body: JSON.stringify({ pin: PIN }),
+});
+t.equal(pairFirst.status, 200, "pairing succeeds on a host with a persistent store");
+const persistentCookie = (pairFirst.headers.get("set-cookie") || "").split(";")[0];
+await pairFirst.arrayBuffer();
+await first.sessions.flush();
+await stop(first);
+
+const second = await createApp({
+  provider, configStore, pin: "9876", trustLoopback: false,
+  identity: await loadHostIdentity({ path: join(dir, "host.json") }),
+  sessions: createSessionStore({ path: sessionsPath }),
+});
+await new Promise((r) => second.server.listen(0, "127.0.0.1", r));
+const secondBase = `http://127.0.0.1:${second.server.address().port}`;
+const restarted = await fetch(`${secondBase}/api/state`, { headers: { cookie: persistentCookie } });
+t.equal(restarted.status, 200, "a paired session still works after a host restart (new PIN, new port)");
+await restarted.arrayBuffer();
+const reHealth = await (await fetch(`${secondBase}/health`)).json();
+t.equal(reHealth.hostId, identity.hostId, "the host id is unchanged after a restart");
+const stranger = await fetch(`${secondBase}/api/state`, { headers: { cookie: "windock_session=bogus" } });
+t.equal(stranger.status, 401, "an unknown session is still refused after a restart");
+await stranger.arrayBuffer();
+await stop(second);
 
 await app.hub.close();
 // fetch keeps connections alive; close() alone would wait for them forever.

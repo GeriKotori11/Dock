@@ -8,12 +8,15 @@
  * user is already sitting at.
  */
 
-import { randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { writeFileAtomic } from "./fsutil.js";
 
 export const PIN_LENGTH = 4;
 export const MAX_FAILS = 5;
 export const LOCK_MS = 60_000;
 export const SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000; // 180 days
+export const MAX_SESSIONS = 64;
 export const COOKIE_NAME = "windock_session";
 
 /** Cryptographically uniform PIN; avoids the modulo bias of randomBytes % 10. */
@@ -87,37 +90,140 @@ export function createLockout({ maxFails = MAX_FAILS, lockMs = LOCK_MS, now = Da
   };
 }
 
-/** Opaque session tokens with an expiry. */
-export function createSessionStore({ ttlMs = SESSION_TTL_MS, now = Date.now } = {}) {
+/** Hex SHA-256 of a session token; the only form a token is ever stored in. */
+export function hashToken(token) {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+const HASH_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Read a persisted session file synchronously. Anything missing, corrupt or
+ * wrongly shaped yields no sessions; expired and malformed entries are dropped.
+ * Returns the surviving entries oldest-first and whether anything was dropped.
+ */
+function readSessionFile(path, at, max) {
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return { entries: [], dropped: false };
+  }
+  if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.sessions)) {
+    // Not rewritten here: an unknown shape (e.g. a newer version) is left
+    // alone until the next pairing replaces it.
+    return { entries: [], dropped: false };
+  }
+  const seen = new Set();
+  const entries = [];
+  for (const raw of parsed.sessions) {
+    if (!raw || typeof raw !== "object") continue;
+    const { hash, issuedAt, expiresAt } = raw;
+    if (typeof hash !== "string" || !HASH_RE.test(hash) || seen.has(hash)) continue;
+    if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || expiresAt <= at) continue;
+    seen.add(hash);
+    entries.push({ hash, issuedAt, expiresAt });
+  }
+  entries.sort((a, b) => a.issuedAt - b.issuedAt);
+  const kept = entries.slice(-max);
+  return { entries: kept, dropped: kept.length !== parsed.sessions.length };
+}
+
+/**
+ * Opaque session tokens with an expiry.
+ *
+ * Only SHA-256 hashes of tokens are kept. With `path`, sessions are loaded
+ * synchronously at construction (so they are ready before the host listens)
+ * and every change is persisted with a serialized atomic write; `flush()`
+ * resolves once all pending writes have finished. A persistent store keeps at
+ * most `maxSessions`, dropping the oldest. Without `path` nothing touches disk.
+ */
+export function createSessionStore({
+  ttlMs = SESSION_TTL_MS,
+  now = Date.now,
+  path = null,
+  maxSessions = MAX_SESSIONS,
+} = {}) {
+  /** hash -> { issuedAt, expiresAt }, in issue order. */
   const sessions = new Map();
+  let chain = Promise.resolve();
+  let queued = false;
+
+  function persist() {
+    if (!path || queued) return;
+    queued = true;
+    chain = chain
+      .then(() => {
+        // The snapshot is taken when the write starts, so any change made
+        // after this point queues another write and nothing is lost.
+        queued = false;
+        const snapshot = { version: 1, sessions: [] };
+        for (const [hash, s] of sessions) {
+          snapshot.sessions.push({ hash, issuedAt: s.issuedAt, expiresAt: s.expiresAt });
+        }
+        return writeFileAtomic(path, `${JSON.stringify(snapshot)}\n`);
+      })
+      .catch(() => {
+        /* best effort: the in-memory store stays authoritative for this run */
+      });
+  }
 
   function prune(at) {
-    for (const [token, expiry] of sessions) if (expiry <= at) sessions.delete(token);
+    let removed = false;
+    for (const [hash, s] of sessions) {
+      if (s.expiresAt <= at) {
+        sessions.delete(hash);
+        removed = true;
+      }
+    }
+    return removed;
+  }
+
+  if (path) {
+    const { entries, dropped } = readSessionFile(path, now(), maxSessions);
+    for (const e of entries) sessions.set(e.hash, { issuedAt: e.issuedAt, expiresAt: e.expiresAt });
+    if (dropped) persist();
   }
 
   return {
+    path,
     issue() {
       const at = now();
       prune(at);
       const token = randomBytes(32).toString("base64url");
-      sessions.set(token, at + ttlMs);
+      sessions.set(hashToken(token), { issuedAt: at, expiresAt: at + ttlMs });
+      if (path) {
+        while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
+      }
+      persist();
       return token;
     },
     verify(token) {
       if (typeof token !== "string" || !token) return false;
-      const expiry = sessions.get(token);
-      if (expiry === undefined) return false;
-      if (expiry <= now()) {
-        sessions.delete(token);
+      const hash = hashToken(token);
+      const entry = sessions.get(hash);
+      if (entry === undefined) return false;
+      if (entry.expiresAt <= now()) {
+        sessions.delete(hash);
+        persist();
         return false;
       }
       return true;
     },
     revokeAll() {
       sessions.clear();
+      persist();
+    },
+    /** Resolves when every write queued so far has completed. */
+    async flush() {
+      while (true) {
+        const current = chain;
+        await current;
+        if (current === chain) return;
+      }
     },
     get size() {
-      prune(now());
+      if (prune(now())) persist();
       return sessions.size;
     },
   };

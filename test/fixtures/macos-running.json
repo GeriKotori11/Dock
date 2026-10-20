@@ -1,0 +1,11 @@
+[
+  { "pid": 902, "name": "Safari", "bundleId": "com.apple.Safari", "path": "/Applications/Safari.app" },
+  { "pid": 411, "name": "Unsigned Tool", "bundleId": null, "path": "/Applications/Unsigned Tool.app" },
+  { "pid": 512, "name": "Bad Id", "bundleId": "com.example.bad id", "path": "/Applications/Bad Id.app" },
+  { "pid": 902, "name": "Safari duplicate", "bundleId": "com.apple.Safari", "path": "/Applications/Safari.app" },
+  { "pid": -4, "name": "Negative", "bundleId": "com.example.neg", "path": "/Applications/Neg.app" },
+  { "pid": 0, "name": "Zero", "bundleId": "com.example.zero", "path": "/Applications/Zero.app" },
+  { "pid": 3.5, "name": "Fraction", "bundleId": "com.example.frac", "path": "/Applications/Frac.app" },
+  { "pid": "abc", "name": "Text", "bundleId": "com.example.text", "path": "/Applications/Text.app" },
+  { "pid": 77, "name": "Word", "bundleId": "com.microsoft.Word", "path": "/Applications/Microsoft Office/Microsoft Word.app" }
+]

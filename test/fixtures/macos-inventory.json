@@ -1,0 +1,16 @@
+[
+  { "bundleId": "com.apple.Safari", "name": "Safari", "path": "/Applications/Safari.app", "agent": false },
+  { "bundleId": "com.microsoft.Word", "name": "Microsoft Word", "path": "/Applications/Microsoft Office/Microsoft Word.app", "agent": false },
+  { "bundleId": null, "name": "Unsigned Tool", "path": "/Applications/Unsigned Tool.app", "agent": false },
+  { "bundleId": "com.example.bad id", "name": "Bad Id", "path": "/Applications/Bad Id.app", "agent": false },
+  { "bundleId": "-oops", "name": "Dash Id", "path": "/Applications/Dash Id.app", "agent": false },
+  { "bundleId": "com.docker.helper", "name": "Menu Agent", "path": "/Applications/Menu Agent.app", "agent": true },
+  { "bundleId": "com.apple.ActivityMonitor", "name": "Activity Monitor", "path": "/Applications/Utilities/Activity Monitor.app", "agent": false },
+  { "bundleId": "com.apple.calculator", "name": "Calculator", "path": "/System/Applications/Calculator.app", "agent": false },
+  { "bundleId": "com.apple.Safari", "name": "Safari (user copy)", "path": "/Users/me/Applications/Safari.app", "agent": false },
+  { "bundleId": "com.example.relative", "name": "Relative", "path": "Applications/Relative.app", "agent": false },
+  { "bundleId": "com.example.notapp", "name": "Not An App", "path": "/Applications/notes.txt", "agent": false },
+  { "bundleId": "com.example.noname", "name": "", "path": "/Applications/NoName.app", "agent": false },
+  { "bundleId": "com.example.nopath", "name": "No Path", "agent": false },
+  { "bundleId": "com.example.zed", "name": "zed", "path": "/Users/me/Applications/zed.app", "agent": false }
+]

@@ -12,7 +12,8 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { createProvider } from "./src/platform/index.js";
 import { validateControl, isDestructiveVerb, CONTROL_VERBS } from "./src/platform/contract.js";
-import { createConfigStore } from "./src/config.js";
+import { createConfigStore, defaultDataDir } from "./src/config.js";
+import { loadHostIdentity } from "./src/identity.js";
 import { createSyncHub } from "./src/sync.js";
 import { createInputHub } from "./src/input-hub.js";
 import { validateSignature } from "./src/input.js";
@@ -30,6 +31,8 @@ import {
 
 export const DEFAULT_PORT = 8620;
 export const BODY_MAX_BYTES = 64 * 1024;
+/** Version of the host HTTP API advertised by /health. */
+export const API_VERSION = 1;
 const PUBLIC_DIR = resolve(import.meta.dirname, "public");
 
 const MIME = {
@@ -124,6 +127,7 @@ export async function createApp({
   lockout = createLockout(),
   allowDestructive = true,
   trustLoopback = true,
+  identity = null,
 } = {}) {
   const state = { pin };
   const appIcon = createIconCache(provider);
@@ -166,7 +170,16 @@ export async function createApp({
 
     try {
       if (path === "/health") {
-        sendJson(res, 200, { ok: true, app: "windock", platform: provider.id });
+        // Public and probed by the phone apps, which reject bodies over 4096
+        // bytes. Identifiers only: never the PIN, tokens or paths.
+        sendJson(res, 200, {
+          ok: true,
+          app: "windock",
+          platform: provider.id,
+          hostId: identity?.hostId ?? null,
+          hostName: String(hostname()).slice(0, 255),
+          api: API_VERSION,
+        });
         return;
       }
 
@@ -337,12 +350,17 @@ export async function createApp({
     authorize({ req, sessions, lockout, remote: req.socket.remoteAddress || "", trustLoopback }).ok,
   });
   server.on("close", () => { provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
-  return { server, hub, inputHub, provider, configStore, dockState, state, sessions, lockout };
+  return { server, hub, inputHub, provider, configStore, dockState, state, sessions, lockout, identity };
 }
 
 export async function start({ port = Number(process.env.PORT) || DEFAULT_PORT, host = process.env.WINDOCK_HOST || "" } = {}) {
   const address = primaryAddress(undefined, host);
-  const app = await createApp();
+  // Sessions load synchronously when the store is built, so they are in place
+  // before the server listens; host restarts keep paired devices paired.
+  const dataDir = defaultDataDir();
+  const sessions = createSessionStore({ path: join(dataDir, "sessions.json") });
+  const identity = await loadHostIdentity({ path: join(dataDir, "host.json") });
+  const app = await createApp({ sessions, identity });
   await new Promise((resolve, reject) => {
     app.server.once("error", reject);
     app.server.listen(port, () => { app.server.off("error", reject); resolve(); });

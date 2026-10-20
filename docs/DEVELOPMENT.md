@@ -51,7 +51,19 @@ A Linux provider supports development without the Windows native layer.
 that session or trusted loopback access. `/health` and the web UI are public.
 PIN comparison is constant-time; five failed attempts lock a client out for
 60 seconds. Cookies use `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS.
-Their maximum age is 180 days, but in-memory sessions disappear on host restart.
+Their maximum age is 180 days. Sessions persist in `sessions.json` in the data
+directory as SHA-256 hashes of the tokens (never the tokens themselves), written
+atomically with owner-only permissions, so paired devices survive host restarts.
+Expired entries are dropped and at most 64 sessions are kept, oldest first out.
+
+The data directory holds `config.json`, `sessions.json` and `host.json`. It is
+`%APPDATA%\windock` on Windows, `~/Library/Application Support/WinDock` on macOS
+and `~/.config/windock` elsewhere; when `WINDOCK_CONFIG` is set, its directory is
+used instead. `host.json` holds a random host ID created on first run.
+
+`GET /health` returns `ok`, `app: "windock"`, `platform`, the stable `hostId`,
+`hostName` and `api` (currently `1`). It stays under 4096 bytes, the limit the
+phone apps' probes accept, and never includes the PIN or session data.
 
 State-changing requests and WebSocket upgrades check the request origin.
 Loopback is trusted by default for the tray; `trustLoopback: false` in
