@@ -45,15 +45,20 @@ final class DockIntegrationTests: XCTestCase {
     private func installController(autoConnect: Bool) {
         controller?.showConnection()
         controller = DockViewController(defaults: defaults, autoConnect: autoConnect)
-        let delegate = UIApplication.shared.delegate as! AppDelegate
-        delegate.window!.rootViewController = controller
-        delegate.window!.makeKeyAndVisible()
+        let window = appWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
         controller.confirmSecurityCode = { [unowned self] hostName, code, completion in
             XCTAssertFalse(hostName.isEmpty)
             confirmed.append(code)
             completion(confirmAnswer)
         }
         controller.loadViewIfNeeded()
+    }
+
+    private func appWindow() -> UIWindow {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first!
+        return (scene.delegate as! SceneDelegate).window!
     }
 
     private func dismissPresented() async {
