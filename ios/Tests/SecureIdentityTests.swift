@@ -75,13 +75,16 @@ final class SecureIdentityTests: XCTestCase {
         let body = #"{"ok":true,"app":"windock","hostId":"\#(hostId)","hostName":"Studio","tls":{"fingerprint":"\#(vectorFingerprint)","code":"D140-0484-0BEE"}}"#
         let info = try XCTUnwrap(HealthProbe.parse(Data(body.utf8)))
         XCTAssertEqual(info, HealthInfo(hostId: hostId, hostName: "Studio", tlsFingerprint: vectorFingerprint))
+        let current = try XCTUnwrap(HealthProbe.parse(Data(#"{"ok":true,"app":"windock","hostId":"\#(hostId)","hostName":"Studio","platform":"windows","pairingOpen":false,"tls":null}"#.utf8)))
+        XCTAssertEqual(current.platform, "windows")
+        XCTAssertEqual(current.pairingOpen, false)
         let older = try XCTUnwrap(HealthProbe.parse(Data(#"{"ok":true,"app":"windock","tls":null}"#.utf8)))
         XCTAssertNil(older.tlsFingerprint)
         XCTAssertNil(older.hostId)
     }
 
     func testDisplayNameIsTruncated() {
-        XCTAssertEqual(DockViewController.displayName(String(repeating: "a", count: 100)).count, 60)
-        XCTAssertEqual(DockViewController.displayName("  "), "your computer")
+        XCTAssertEqual(Computer.displayName(nickname: nil, hostName: String(repeating: "a", count: 100)).count, 60)
+        XCTAssertEqual(Computer.displayName(nickname: nil, hostName: "  "), "your computer")
     }
 }

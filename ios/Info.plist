@@ -30,7 +30,11 @@
     <key>UIColorName</key><string>LaunchBackground</string>
   </dict>
   <key>NSLocalNetworkUsageDescription</key>
-  <string>WinDock connects to your Windows PC on your Wi-Fi network so you can open apps and use your dock.</string>
+  <string>WinDock finds and connects to your computers on this Wi-Fi.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_windock._tcp</string>
+  </array>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSAllowsLocalNetworking</key><true/>
     <key>NSExceptionDomains</key><dict>
