@@ -43,10 +43,15 @@ export function originAllowed(req) {
  * @param {import('node:http').Server[]} [opts.servers]
  * @param {(req:import('node:http').IncomingMessage)=>boolean} opts.isAuthorized
  * @param {()=>Promise<object>} opts.getState
+ * @param {(req:import('node:http').IncomingMessage)=>string|null} [opts.sessionOf]
+ *   the session hash a socket is opened under (null for loopback trust), so a
+ *   revoked session's sockets can be closed with disconnect()/disconnectAll().
  */
-export function createSyncHub({ server, servers = [server], isAuthorized, getState, heartbeatMs = HEARTBEAT_MS }) {
+export function createSyncHub({ server, servers = [server], isAuthorized, getState, sessionOf = () => null, heartbeatMs = HEARTBEAT_MS }) {
   const wss = new WebSocketServer({ noServer: true });
   const alive = new WeakMap();
+  /** ws -> session hash, for sockets opened under a session. */
+  const sessionsBySocket = new Map();
 
   const onUpgrade = (req, socket, head) => {
     if (req.url?.split("?")[0] === "/input") return; // Separate bounded input channel.
@@ -55,7 +60,14 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    const hash = sessionOf(req);
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      if (hash) {
+        sessionsBySocket.set(ws, hash);
+        ws.once("close", () => sessionsBySocket.delete(ws));
+      }
+      wss.emit("connection", ws, req);
+    });
   };
   for (const target of servers) target.on("upgrade", onUpgrade);
 
@@ -86,8 +98,26 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
   }, heartbeatMs);
   if (typeof timer.unref === "function") timer.unref();
 
+  /** Close every socket whose session matches; returns how many. */
+  function disconnectWhere(match) {
+    let closed = 0;
+    for (const [ws, hash] of sessionsBySocket) {
+      if (!match(hash)) continue;
+      sessionsBySocket.delete(ws);
+      try {
+        ws.close(1008, "session revoked");
+      } catch {
+        ws.terminate();
+      }
+      closed += 1;
+    }
+    return closed;
+  }
+
   return {
     wss,
+    disconnect: (hash) => disconnectWhere((h) => h === hash),
+    disconnectAll: () => disconnectWhere(() => true),
     get clientCount() {
       return wss.clients.size;
     },

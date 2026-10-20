@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.js",
     "info": "node scripts/windock-info.mjs",
+    "devices": "node scripts/windock-devices.mjs",
     "mac:install": "node scripts/macos-agent.mjs install",
     "mac:uninstall": "node scripts/macos-agent.mjs uninstall",
     "mac:status": "node scripts/macos-agent.mjs status",

@@ -16,7 +16,7 @@ A Linux provider supports development without the Windows native layer.
 | --- | --- |
 | `server.js` | HTTP API, static serving, provider wiring |
 | `src/platform/` | Provider contract, Windows/Linux implementations, capture lifecycle |
-| `src/auth.js` | PIN pairing, sessions, lockout |
+| `src/auth.js` | PIN pairing window, sessions and paired devices, lockout |
 | `src/config.js` | Atomic tile persistence |
 | `src/discovery.js` | UDP responder |
 | `src/sync.js` | WebSocket updates |
@@ -47,14 +47,58 @@ A Linux provider supports development without the Windows native layer.
 
 ## Pairing and network access
 
-`POST /api/auth` exchanges a PIN for a session. Other `/api/*` routes require
-that session or trusted loopback access. `/health` and the web UI are public.
-PIN comparison is constant-time; five failed attempts lock a client out for
-60 seconds. Cookies use `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS.
-Their maximum age is 180 days. Sessions persist in `sessions.json` in the data
-directory as SHA-256 hashes of the tokens (never the tokens themselves), written
-atomically with owner-only permissions, so paired devices survive host restarts.
-Expired entries are dropped and at most 64 sessions are kept, oldest first out.
+The phone↔host contract (endpoints, fields, error codes) is written down in
+[PROTOCOL.md](PROTOCOL.md); this section covers how it is implemented.
+
+One TCP port serves both plain HTTP and HTTPS: `createSharedPortListener` in
+`src/tls.js` hands each connection to the http or https server by its first
+byte. The certificate is a self-signed ECDSA P-256 one kept in the data
+directory (`tls-key.pem`, `tls-cert.pem`); phones pin its SHA-256 fingerprint
+when they first pair, and the security code (first 6 bytes of the fingerprint,
+`XXXX-XXXX-XXXX`) lets a person compare phone and computer by eye.
+`WINDOCK_TLS=0` turns HTTPS off; `WINDOCK_PLAIN_HTTP=0` turns plain HTTP off.
+
+`POST /api/auth` exchanges a 6-digit PIN for a session. Other `/api/*` routes
+require that session or trusted loopback access. `/health` and the web UI are
+public. PIN comparison is constant-time; five failed attempts lock a client out
+for 60 seconds. On top of that (`createPairing` in `src/auth.js`):
+
+- **Pairing window.** Pairing is open for 10 minutes after the host starts and
+  again for 10 minutes after every local `GET /api/pairing` (`npm run info`,
+  `npm run mac:install`, the Windows tray's *Show connection info*). While it is
+  closed, `POST /api/auth` answers 403 `pairing closed` without looking at the
+  PIN and without counting a failure.
+- **Single-use codes.** A new code is generated after each successful pairing.
+- **Global failure budget.** Wrong PINs from every client share a budget of 10
+  per window. The tenth rotates the code and closes the window; only a local
+  `GET /api/pairing` reopens it, which also resets the count. Malformed PINs
+  (400 `invalid pin`) count against the per-client lockout only.
+
+`createApp` takes `nextPin` and `now` (or a whole `pairing`) so tests and the
+device fixture hosts can fix the code and the clock.
+
+Cookies use `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. Their maximum
+age is 180 days. Sessions persist in `sessions.json` in the data directory as
+SHA-256 hashes of the tokens (never the tokens themselves), written atomically
+with owner-only permissions, so paired devices survive host restarts. Expired
+entries are dropped and at most 64 sessions are kept, oldest first out.
+
+Each session is a **paired device** with a random public `id` (8 bytes hex,
+never derived from the token), a `name` (the phone's `deviceName`, sanitised,
+default `Phone`), `issuedAt` and `lastSeenAt`. `lastSeenAt` is written at most
+once an hour per session. Files from before device management load with a new
+id, the name `Phone` and `lastSeenAt = issuedAt`, and are rewritten in place
+(still `version: 1`). `GET /api/devices`, `DELETE /api/devices/<id>` and
+`DELETE /api/devices` list and revoke devices; like `/api/pairing` they answer
+loopback-trusted requests only. Revoking also closes that session's open sync
+and input WebSockets at once (`disconnect(hash)` / `disconnectAll()` on both
+hubs). `npm run devices` (`scripts/windock-devices.mjs`) is the local client:
+
+```sh
+npm run devices                    # name, short id, paired date, last seen
+npm run devices -- revoke <id>     # full id or a unique prefix (4+ characters)
+npm run devices -- revoke-all
+```
 
 The data directory holds `config.json`, `sessions.json` and `host.json`. It is
 `%APPDATA%\windock` on Windows, `~/Library/Application Support/WinDock` on macOS
@@ -62,8 +106,9 @@ and `~/.config/windock` elsewhere; when `WINDOCK_CONFIG` is set, its directory i
 used instead. `host.json` holds a random host ID created on first run.
 
 `GET /health` returns `ok`, `app: "windock"`, `platform`, the stable `hostId`,
-`hostName` and `api` (currently `1`). It stays under 4096 bytes, the limit the
-phone apps' probes accept, and never includes the PIN or session data.
+`hostName`, `api` (currently `1`), `tls` (fingerprint and code, or `null`) and
+`pairingOpen`. It stays under 4096 bytes, the limit the phone apps' probes
+accept, and never includes the PIN or session data.
 
 State-changing requests and WebSocket upgrades check the request origin.
 Loopback is trusted by default for the tray, which calls
@@ -78,14 +123,18 @@ and a bare request gets 401. The same rule covers the `/` and `/input`
 WebSocket upgrades. `trustLoopback: false` in `createApp` also requires pairing
 on the host. Discovery never includes the PIN.
 
-`GET /api/pairing` returns `{ endpoint, pin, hostName, hostId }` (`endpoint` is
-the LAN URL the host advertises). It answers only loopback-trusted requests and
-returns 403 to everyone else, including paired phones. `npm run info`
-(`scripts/windock-info.mjs`) reads it from `http://127.0.0.1:${PORT:-8620}`.
+`GET /api/pairing` returns `{ endpoint, pin, hostName, hostId, secureEndpoint,
+securityCode, pairingOpenForMs }` (`endpoint` is the LAN URL the host
+advertises) and reopens the pairing window. It answers only loopback-trusted
+requests and returns 403 to everyone else, including paired phones. `npm run
+info` (`scripts/windock-info.mjs`) reads it from `http://127.0.0.1:${PORT:-8620}`
+and prints `Pairing: open for N more minutes`.
 With `WINDOCK_HIDE_PIN=1` the startup banner prints
 `PIN:      (run "npm run info" to show it)` instead of the PIN, so the PIN stays
-out of log files; the macOS LaunchAgent sets it. The default banner is unchanged
-because the Windows tray parses `open:` and `PIN: dddd` from it.
+out of log files; the macOS LaunchAgent sets it. The default banner keeps its
+format because the Windows tray parses `open:` and `PIN:\s*(\d{4,8})` from it;
+the banner shows the initial code, so the tray's *Show connection info* asks
+`/api/pairing` for the current one (falling back to the banner's).
 
 On macOS, `npm run mac:install` (`scripts/macos-agent.mjs`) writes
 `~/Library/LaunchAgents/dev.windock.host.plist` and bootstraps it into the
@@ -95,8 +144,8 @@ On macOS, `npm run mac:install` (`scripts/macos-agent.mjs`) writes
 `~/Library/Logs/WinDock/host.log`. `--label` and `--port` install a separate copy
 for testing; a non-default label logs to `<label>.log`. See
 [Install on macOS](INSTALL-MACOS.md).
-The four-digit PIN and LAN HTTP design are intended for a trusted local network;
-do not expose the host port directly to the internet.
+The PIN pairing and LAN design are intended for a trusted local network; do not
+expose the host port directly to the internet.
 
 ## Windows configuration and checks
 
@@ -170,8 +219,11 @@ for the known focus-smoke failure and other hardware acceptance evidence.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Public health check |
-| POST | `/api/auth` | Exchange PIN for a session |
-| GET | `/api/pairing` | Address and PIN for `npm run info`; loopback only, 403 otherwise |
+| POST | `/api/auth` | Exchange PIN (and optional `deviceName`) for a session |
+| GET | `/api/pairing` | Address and PIN for `npm run info`; reopens pairing; loopback only, 403 otherwise |
+| GET | `/api/devices` | Paired devices, newest first; loopback only |
+| DELETE | `/api/devices/<id>` | Revoke one device and close its sockets; loopback only |
+| DELETE | `/api/devices` | Revoke every device; loopback only |
 | GET | `/api/state` | Tiles, running apps, available verbs |
 | GET | `/api/apps/installed` | Installed-app inventory |
 | GET | `/api/apps/icon` | App icon by validated ID |

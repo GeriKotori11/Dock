@@ -24,11 +24,12 @@ import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_M
 import {
   newPin,
   isValidPinShape,
-  safeEqual,
   createLockout,
+  createPairing,
   createSessionStore,
   sessionCookie,
   authorize,
+  DEVICE_ID_RE,
 } from "./src/auth.js";
 
 export const DEFAULT_PORT = 8620;
@@ -125,6 +126,11 @@ export async function createApp({
   provider = createProvider(),
   configStore = createConfigStore(),
   pin = newPin(),
+  // How each new code is made after a pairing or a spent failure budget, and
+  // the clock for the pairing window; both injectable for tests and fixtures.
+  nextPin = () => newPin(),
+  now = Date.now,
+  pairing = createPairing({ pin, nextPin, now }),
   sessions = createSessionStore(),
   lockout = createLockout(),
   allowDestructive = true,
@@ -140,7 +146,11 @@ export async function createApp({
   // https form; start() fills them in once the listening port is known.
   // `tls` ({ key, cert, fingerprint, code }) adds HTTPS on the same port.
   if (!plainHttp && !tls) throw new TypeError("plainHttp: false needs tls");
-  const state = { pin, endpoint, secureEndpoint };
+  const state = {
+    get pin() { return pairing.pin; },
+    endpoint,
+    secureEndpoint,
+  };
   const appIcon = createIconCache(provider);
   const features = featuresOf(provider);
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
@@ -211,6 +221,8 @@ export async function createApp({
           // must compare its pin with the certificate the TLS handshake
           // actually presented, never with this field.
           tls: tls ? { fingerprint: tls.fingerprint, code: tls.code } : null,
+          // Not secret: lets the phone explain a "pairing closed" refusal.
+          pairingOpen: pairing.isOpen(),
         });
         return;
       }
@@ -222,16 +234,23 @@ export async function createApp({
           return sendJson(res, 429, { error: "locked", retryInMs: status.retryInMs });
         }
         const body = await readJsonBody(req);
+        // A closed window refuses before the PIN is looked at, and counts as
+        // nobody's failure: only a local GET /api/pairing reopens it.
+        if (!pairing.isOpen()) return sendJson(res, 403, { error: "pairing closed" });
         if (!isValidPinShape(body.pin)) {
           lockout.recordFailure(remote);
           return sendJson(res, 400, { error: "invalid pin" });
         }
-        if (!safeEqual(body.pin, state.pin)) {
+        if (!pairing.matches(body.pin)) {
           const fail = lockout.recordFailure(remote);
+          // Wrong guesses from every client share one budget; spending it
+          // rotates the code and closes the window.
+          pairing.recordFailure();
           return sendJson(res, 401, { error: "wrong pin", locked: fail.locked });
         }
         lockout.recordSuccess(remote);
-        const token = sessions.issue();
+        pairing.recordSuccess(); // each code pairs exactly one device
+        const token = sessions.issue({ name: body.deviceName });
         return sendJson(res, 200, { ok: true }, {
           "set-cookie": sessionCookie(token, { secure: Boolean(req.socket.encrypted) }),
         });
@@ -262,6 +281,8 @@ export async function createApp({
         // The PIN itself: only for software on this machine (`npm run info`),
         // never for a paired phone's session.
         if (auth.via !== "loopback") return sendJson(res, 403, { error: "local only" });
+        // Showing the PIN on this computer is what (re)opens pairing.
+        pairing.reopen();
         return sendJson(res, 200, {
           endpoint: state.endpoint ?? null,
           pin: state.pin,
@@ -269,11 +290,35 @@ export async function createApp({
           hostId: identity?.hostId ?? null,
           secureEndpoint: tls ? state.secureEndpoint ?? null : null,
           securityCode: tls ? tls.code : null,
+          pairingOpenForMs: pairing.remainingMs(),
         });
       }
 
       const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
       if (mutating && !sameOrigin(req)) return sendJson(res, 403, { error: "bad origin" });
+
+      if (path === "/api/devices" || path.startsWith("/api/devices/")) {
+        // Paired-device management: software on this machine only.
+        if (auth.via !== "loopback") return sendJson(res, 403, { error: "local only" });
+        if (path === "/api/devices" && req.method === "GET") {
+          return sendJson(res, 200, { devices: sessions.list() });
+        }
+        if (path === "/api/devices" && req.method === "DELETE") {
+          const revoked = sessions.revokeAll().length;
+          hub.disconnectAll();
+          inputHub.disconnectAll();
+          return sendJson(res, 200, { ok: true, revoked });
+        }
+        const id = path.slice("/api/devices/".length);
+        if (req.method === "DELETE" && path.startsWith("/api/devices/")) {
+          const hash = DEVICE_ID_RE.test(id) ? sessions.revoke(id) : null;
+          if (!hash) return sendJson(res, 404, { error: "unknown device" });
+          hub.disconnect(hash);
+          inputHub.disconnect(hash);
+          return sendJson(res, 200, { ok: true, id });
+        }
+        return sendJson(res, 404, { error: "not found" });
+      }
 
       if (path === "/api/state" && req.method === "GET") {
         return sendJson(res, 200, await dockState());
@@ -401,24 +446,21 @@ export async function createApp({
     ? createSharedPortListener({ server, secureServer, plainHttp, firstByteTimeoutMs })
     : server;
 
+  const authorizeSocket = (req) =>
+    authorize({ req, sessions, lockout, remote: req.socket.remoteAddress || "", trustLoopback });
+  // Each socket remembers the session it was opened under, so revoking a
+  // device closes its sockets at once.
+  const sessionOf = (req) => authorizeSocket(req).hash ?? null;
   const hub = createSyncHub({
     servers,
-    isAuthorized: (req) =>
-      authorize({
-        req,
-        sessions,
-        lockout,
-        remote: req.socket.remoteAddress || "",
-        trustLoopback,
-      }).ok,
+    isAuthorized: (req) => authorizeSocket(req).ok,
+    sessionOf,
     getState: dockState,
   });
 
-  const inputHub = createInputHub({ servers, input: provider.input, isAuthorized: (req) =>
-    authorize({ req, sessions, lockout, remote: req.socket.remoteAddress || "", trustLoopback }).ok,
-  });
+  const inputHub = createInputHub({ servers, input: provider.input, isAuthorized: (req) => authorizeSocket(req).ok, sessionOf });
   server.on("close", () => { provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
-  return { server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, sessions, lockout, identity };
+  return { server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, pairing, sessions, lockout, identity };
 }
 
 /**
@@ -470,7 +512,7 @@ export async function start({
 
 /**
  * The startup banner. The Windows tray parses `open:\s*(\S+)` and
- * `PIN:\s*(\d{4})` from it, so the default form must not change. With
+ * `PIN:\s*(\d{4,8})` from it, so the default form must not change. With
  * `hidePin` (WINDOCK_HIDE_PIN=1, set by the macOS LaunchAgent) the PIN stays
  * out of stdout and therefore out of any log file. With TLS on, one
  * `secure:` line is appended after the unchanged lines.

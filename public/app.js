@@ -111,7 +111,7 @@ async function api(path, options = {}) {
   if (res.status === 401 && path !== "/api/auth") { showPair("Enter the current PIN to reconnect."); throw new Error("unauthorized"); }
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({}))).error;
-    const messages = { "wrong pin": "That PIN doesn’t match. Try the PIN shown on your computer.", "invalid pin": "Enter all four digits.", locked: "Too many attempts. Wait a moment and try again.", "internal error": "Your computer couldn't complete that action. Try again.", "unknown app": "That app isn't installed on this computer anymore.", "launch failed": "The computer couldn't open that app. It may have been moved or removed.", "controls unavailable": "Controls aren't available on this computer." };
+    const messages = { "wrong pin": "That PIN doesn’t match. Try the PIN shown on your computer.", "invalid pin": "Enter all six digits.", "pairing closed": "Pairing is closed. On your computer, show the PIN again (Windows: tray → Show connection info · Mac: npm run info), then enter the new PIN within 10 minutes.", locked: "Too many attempts. Wait a moment and try again.", "internal error": "Your computer couldn't complete that action. Try again.", "unknown app": "That app isn't installed on this computer anymore.", "launch failed": "The computer couldn't open that app. It may have been moved or removed.", "controls unavailable": "Controls aren't available on this computer." };
     throw new Error(messages[detail] || detail || "The request couldn’t be completed.");
   }
   return res.json();
@@ -575,12 +575,19 @@ for (const dialog of document.querySelectorAll("dialog")) {
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
   });
 }
+/** A neutral name the computer lists this device under (npm run devices). */
+function deviceName(ua = navigator.userAgent) {
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "iPad";
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/Android/.test(ua)) return "Android phone";
+  return "Browser";
+}
 $("pair-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
   button.disabled = true;
   try {
-    await api("/api/auth", { method: "POST", body: JSON.stringify({ pin: $("pin").value }) });
+    await api("/api/auth", { method: "POST", body: JSON.stringify({ pin: $("pin").value, deviceName: deviceName() }) });
     showApp(); await refresh(); connect();
   } catch (error) { showPair(error.message); } finally { button.disabled = false; }
 });

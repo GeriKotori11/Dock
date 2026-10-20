@@ -2,6 +2,7 @@
 // Run with node scripts/now-playing-smoke-host.mjs; no native PC actions.
 import { createServer } from "node:http";
 import { createApp } from "../server.js";
+import { createPairing } from "../src/auth.js";
 
 let media = { title: "First track", artist: "First artist", playing: true };
 let delayMs = 0, fail = false, requests = 0, active = 0, maxActive = 0;
@@ -25,7 +26,7 @@ const provider = {
   },
 };
 const app = await createApp({
-  provider, pin: "8642", trustLoopback: false, allowDestructive: false,
+  provider, pairing: createPairing({ pin: "864200", nextPin: () => "864200", windowMs: 24 * 60 * 60 * 1000 }), trustLoopback: false, allowDestructive: false,
   configStore: { load: async () => ({ tiles: [] }) },
 });
 const fixture = createServer(async (req, res) => {
@@ -43,5 +44,5 @@ const fixture = createServer(async (req, res) => {
   res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify({ media, requests, active, maxActive }));
 });
-app.server.listen(18623, "127.0.0.1", () => console.log("Media fixture app: http://127.0.0.1:18623 (PIN 8642)"));
+app.server.listen(18623, "127.0.0.1", () => console.log("Media fixture app: http://127.0.0.1:18623 (PIN 864200)"));
 fixture.listen(18624, "127.0.0.1", () => console.log("Media fixture control: http://127.0.0.1:18624/state"));

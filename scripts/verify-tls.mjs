@@ -27,7 +27,7 @@ import {
 import { formatInfo } from "./windock-info.mjs";
 
 const t = createChecker("tls");
-const PIN = "4321";
+const PIN = "432100";
 const DAY = 24 * 60 * 60 * 1000;
 const colonForm = (hex) => hex.toUpperCase().match(/../g).join(":");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -227,10 +227,12 @@ const secureAuth = await call("https", port, "/api/auth", { method: "POST", body
 t.equal(secureAuth.status, 200, "pairing over https with an https Origin succeeds");
 const secureCookie = String(secureAuth.headers["set-cookie"]);
 t.ok(/;\s*Secure/.test(secureCookie), "the https session cookie is Secure");
-const plainAuth = await call("http", port, "/api/auth", { method: "POST", body: { pin: PIN }, headers: { origin: `http://127.0.0.1:${port}` } });
+// Each code pairs once, so the second device uses the rotated code.
+t.ok(app.state.pin !== PIN && /^\d{6}$/.test(app.state.pin), "pairing rotated the code");
+const plainAuth = await call("http", port, "/api/auth", { method: "POST", body: { pin: app.state.pin }, headers: { origin: `http://127.0.0.1:${port}` } });
 t.equal(plainAuth.status, 200, "pairing over plain http still works");
 t.ok(!/Secure/.test(String(plainAuth.headers["set-cookie"])), "the plain http cookie is not Secure");
-const crossScheme = await call("https", port, "/api/auth", { method: "POST", body: { pin: PIN }, headers: { origin: `http://127.0.0.1:${port}` } });
+const crossScheme = await call("https", port, "/api/auth", { method: "POST", body: { pin: app.state.pin }, headers: { origin: `http://127.0.0.1:${port}` } });
 t.equal(crossScheme.status, 403, "over https, an http Origin is a different origin (req.socket.encrypted is set)");
 const plainCookie = String(plainAuth.headers["set-cookie"]).split(";")[0];
 const tlsCookie = secureCookie.split(";")[0];

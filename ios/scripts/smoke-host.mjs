@@ -1,6 +1,7 @@
 // Real WinDock protocol + shared UI, with no native provider or user configuration.
 import { createApp } from '../../server.js';
 import { createConfigStore } from '../../src/config.js';
+import { createPairing } from '../../src/auth.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
@@ -31,7 +32,7 @@ const provider = {
 const configStore = createConfigStore({ path: resolve(dir, 'config.json') });
 await configStore.save({ tiles: apps.map(app => ({ ...app, kind: 'app', label: app.name })) });
 await writeFile(resolve(dir, 'events.json'), '[]');
-const app = await createApp({ provider, configStore, pin: '8642', trustLoopback: false, allowDestructive: false });
+const app = await createApp({ provider, configStore, pairing: createPairing({ pin: '864200', nextPin: () => '864200', windowMs: 24 * 60 * 60 * 1000 }), trustLoopback: false, allowDestructive: false });
 const foreignHits = [];
 const servers = [
   [app.server, 18622],
@@ -46,4 +47,4 @@ const servers = [
   }), 18626],
 ];
 for (const [server, port] of servers) await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
-console.log('iOS simulator fixture ready on 18622; PIN 8642 (test provider only)');
+console.log('iOS simulator fixture ready on 18622; PIN 864200 (test provider only)');

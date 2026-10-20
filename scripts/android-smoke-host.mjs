@@ -1,6 +1,7 @@
 // Isolated emulator fixture. No Windows provider and no user configuration.
 import { createApp } from '../server.js';
 import { createConfigStore } from '../src/config.js';
+import { createPairing } from '../src/auth.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const dir = resolve(import.meta.dirname, '../artifacts/android-smoke');
@@ -28,5 +29,5 @@ const provider = {
 const configStore = createConfigStore({ path: resolve(dir, 'config.json') });
 await configStore.save({ tiles: apps.map(app => ({ ...app, kind: 'app', label: app.name })) });
 await writeFile(resolve(dir, 'events.json'), '[]');
-const app = await createApp({ provider, configStore, pin: '8642', trustLoopback: false, allowDestructive: false });
+const app = await createApp({ provider, configStore, pairing: createPairing({ pin: '864200', nextPin: () => '864200', windowMs: 24 * 60 * 60 * 1000 }), trustLoopback: false, allowDestructive: false });
 app.server.listen(18622, '127.0.0.1', () => console.log('Android emulator fixture ready on 18622'));

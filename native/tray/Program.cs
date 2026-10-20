@@ -43,6 +43,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private ToolStripMenuItem _stopRecording = null!;
     private bool _checkingCapture;
     private bool _recording;
+    private bool _showingInfo;
     private readonly HttpClient _updateHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(12), MaxResponseContentBufferSize = 64 * 1024 };
     private readonly CancellationTokenSource _shutdown = new();
@@ -53,7 +54,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private Uri? _balloonRelease;
 
     [GeneratedRegex(@"open:\s*(\S+)")] private static partial Regex EndpointLine();
-    [GeneratedRegex(@"PIN:\s*(\d{4})")] private static partial Regex PinLine();
+    [GeneratedRegex(@"PIN:\s*(\d{4,8})")] private static partial Regex PinLine();
 
     public TrayApp(bool smoke)
     {
@@ -67,7 +68,7 @@ internal sealed partial class TrayApp : ApplicationContext
             Text = "WinDock",
             ContextMenuStrip = new ContextMenuStrip(),
         };
-        _icon.ContextMenuStrip.Items.Add("Show connection info", null, (_, _) => ShowInfo());
+        _icon.ContextMenuStrip.Items.Add("Show connection info", null, async (_, _) => await ShowInfo());
         _icon.ContextMenuStrip.Items.Add("Copy URL", null, (_, _) => CopyUrl());
         _stopRecording = new ToolStripMenuItem("Stop recording", null, async (_, _) => await StopRecording());
         _stopRecording.Enabled = false;
@@ -83,7 +84,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.ContextMenuStrip.Items.Add(_checkUpdates);
         _icon.ContextMenuStrip.Items.Add(_downloadUpdate);
         _icon.ContextMenuStrip.Items.Add("Quit WinDock", null, async (_, _) => { if (await StopRecording()) ExitThread(); });
-        _icon.DoubleClick += (_, _) => ShowInfo();
+        _icon.DoubleClick += async (_, _) => await ShowInfo();
         _icon.BalloonTipClicked += (_, _) => { if (_balloonRelease is { } page) OpenRelease(page); };
         _updateTimer.Tick += async (_, _) => { _updateTimer.Stop(); await CheckUpdates(false); };
         _captureTimer.Tick += async (_, _) => await CheckCapture();
@@ -178,9 +179,62 @@ internal sealed partial class TrayApp : ApplicationContext
         }
     }
 
-    private void ShowInfo() => MessageBox.Show(
-        $"WinDock {UpdateChecker.InstalledVersion}\n\nOpen this address on your phone:\n\n{_endpoint}\n\nPairing PIN: {_pin}\n\nBoth devices must be on the same network.",
-        "WinDock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    private sealed record PairingInfo(string Endpoint, string Pin, string? SecureEndpoint, string? SecurityCode, long OpenForMs);
+
+    // Asking the server also reopens its pairing window, and returns the current
+    // PIN: the startup banner's PIN is spent after one pairing.
+    private async Task ShowInfo()
+    {
+        if (_showingInfo || _stopping) return;
+        _showingInfo = true;
+        try
+        {
+            var info = await FetchPairing();
+            if (_stopping) return;
+            string text;
+            if (info is not null)
+            {
+                _pin = info.Pin;
+                var minutes = Math.Max(1, (int)Math.Ceiling(info.OpenForMs / 60000.0));
+                var secure = info.SecureEndpoint is { Length: > 0 } && info.SecurityCode is { Length: > 0 }
+                    ? $"\n\nSecure address: {info.SecureEndpoint}\nSecurity code: {info.SecurityCode}"
+                    : "";
+                text = $"WinDock {UpdateChecker.InstalledVersion}\n\nOpen this address on your phone:\n\n{info.Endpoint}\n\nPairing PIN: {info.Pin}\nPairing is open for the next {minutes} minute{(minutes == 1 ? "" : "s")}.{secure}\n\nBoth devices must be on the same network.";
+            }
+            else
+            {
+                text = $"WinDock {UpdateChecker.InstalledVersion}\n\nOpen this address on your phone:\n\n{_endpoint}\n\nPairing PIN: {_pin}\n\n(Couldn't reach the WinDock server for the current PIN; this is the PIN from startup and may have changed.)\n\nBoth devices must be on the same network.";
+            }
+            MessageBox.Show(text, "WinDock", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        finally { _showingInfo = false; }
+    }
+
+    private Uri? PairingEndpoint() => Uri.TryCreate(_endpoint, UriKind.Absolute, out var endpoint)
+        && endpoint.Scheme == "http" ? new Uri($"http://127.0.0.1:{endpoint.Port}/api/pairing") : null;
+
+    private async Task<PairingInfo?> FetchPairing()
+    {
+        if (PairingEndpoint() is not { } endpoint) return null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            var json = await _captureHttp.GetStringAsync(endpoint, timeout.Token);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            static string? Text(JsonElement root, string name) =>
+                root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            var pin = Text(root, "pin");
+            if (pin is null) return null;
+            var openFor = root.TryGetProperty("pairingOpenForMs", out var ms) && ms.ValueKind == JsonValueKind.Number ? ms.GetInt64() : 0;
+            return new PairingInfo(Text(root, "endpoint") ?? _endpoint, pin, Text(root, "secureEndpoint"), Text(root, "securityCode"), openFor);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException or JsonException or FormatException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
 
     private void ShowBalloon(string title, string text, Uri? release = null)
     {

@@ -21,6 +21,12 @@ import {
   LOCK_MS,
   COOKIE_NAME,
   MAX_SESSIONS,
+  PIN_LENGTH,
+  PAIRING_WINDOW_MS,
+  GLOBAL_FAIL_BUDGET,
+  LAST_SEEN_INTERVAL_MS,
+  createPairing,
+  sanitizeDeviceName,
 } from "../src/auth.js";
 import { loadHostIdentity } from "../src/identity.js";
 import { defaultDataDir, defaultConfigPath } from "../src/config.js";
@@ -29,14 +35,15 @@ const t = createChecker("auth");
 
 // ---- PIN generation and shape ----
 const pins = Array.from({ length: 400 }, () => newPin());
-t.ok(pins.every((p) => /^\d{4}$/.test(p)), "every generated pin is exactly four digits");
+t.equal(PIN_LENGTH, 6, "pairing codes are six digits");
+t.ok(pins.every((p) => /^\d{6}$/.test(p)), "every generated pin is exactly six digits");
 t.ok(new Set(pins).size > 50, `generated pins vary (${new Set(pins).size} distinct of 400)`);
 // Uniformity smoke test: a modulo-biased generator would starve some digits.
 const digits = new Set(pins.join("").split(""));
 t.equal(digits.size, 10, "all ten digits appear across generated pins");
 
-for (const good of ["0000", "1234", "9999"]) t.ok(isValidPinShape(good), `${good} is a valid shape`);
-for (const bad of ["", "12", "12345", "12a4", " 123", "1 23", null, 1234, "١٢٣٤"]) {
+for (const good of ["000000", "123456", "999999"]) t.ok(isValidPinShape(good), `${good} is a valid shape`);
+for (const bad of ["", "12", "1234", "12345", "1234567", "12a456", " 12345", "123 45", null, 123456, "١٢٣٤٥٦"]) {
   t.ok(!isValidPinShape(bad), `invalid shape rejected: ${JSON.stringify(bad)}`);
 }
 
@@ -47,6 +54,65 @@ t.ok(!safeEqual("1234", "123"), "different lengths compare unequal");
 t.ok(!safeEqual("", "1234"), "empty input compares unequal");
 t.ok(!safeEqual(null, "1234"), "null input compares unequal");
 t.ok(!safeEqual(undefined, undefined) === false, "undefined pair does not throw");
+
+// ---- pairing window, single-use codes and the global failure budget ----
+{
+  let pclock = 50_000_000;
+  const codes = ["111111", "222222", "333333", "444444"];
+  const pairing = createPairing({ pin: "000001", nextPin: () => codes.shift(), now: () => pclock });
+  t.equal(PAIRING_WINDOW_MS, 10 * 60 * 1000, "the pairing window is ten minutes");
+  t.equal(GLOBAL_FAIL_BUDGET, 10, "the global failure budget is ten");
+  t.ok(pairing.isOpen(), "pairing is open when the host starts");
+  t.equal(pairing.remainingMs(), PAIRING_WINDOW_MS, "the first window is a full ten minutes");
+  t.ok(pairing.matches("000001") && !pairing.matches("000002"), "the current code matches; another does not");
+  pclock += PAIRING_WINDOW_MS - 1;
+  t.ok(pairing.isOpen(), "pairing is still open just before the window ends");
+  pclock += 1;
+  t.ok(!pairing.isOpen(), "pairing closes when the window ends");
+  t.equal(pairing.remainingMs(), 0, "a closed window has no time left");
+  t.equal(pairing.reopen(), PAIRING_WINDOW_MS, "reopen grants a full window");
+  t.ok(pairing.isOpen(), "reopen opens pairing again");
+  pclock += 5 * 60 * 1000;
+  pairing.reopen();
+  t.equal(pairing.remainingMs(), PAIRING_WINDOW_MS, "reopening an open window extends it to a full ten minutes");
+  t.equal(pairing.pin, "000001", "the code does not change on reopen");
+  pairing.recordSuccess();
+  t.equal(pairing.pin, "111111", "a successful pairing rotates the code");
+  t.ok(!pairing.matches("000001"), "a used code no longer matches");
+  t.ok(pairing.isOpen(), "a successful pairing leaves the window open");
+  for (let i = 1; i < GLOBAL_FAIL_BUDGET; i += 1) {
+    t.ok(!pairing.recordFailure().exhausted, `failure ${i} of ${GLOBAL_FAIL_BUDGET} does not spend the budget`);
+  }
+  t.equal(pairing.failures, GLOBAL_FAIL_BUDGET - 1, "failures are counted across the window");
+  t.equal(pairing.pin, "111111", "the code survives failures below the budget");
+  t.ok(pairing.recordFailure().exhausted, `failure ${GLOBAL_FAIL_BUDGET} spends the budget`);
+  t.equal(pairing.pin, "222222", "spending the budget rotates the code");
+  t.ok(!pairing.isOpen(), "spending the budget closes the window");
+  pclock += PAIRING_WINDOW_MS * 3;
+  t.ok(!pairing.isOpen(), "a spent budget keeps pairing closed; time alone does not reopen it");
+  pairing.reopen();
+  t.ok(pairing.isOpen() && pairing.failures === 0, "a local reopen opens pairing and resets the budget");
+  t.ok(!pairing.recordFailure().exhausted, "after a reopen one failure does not spend the budget");
+  const defaults = createPairing();
+  t.ok(/^\d{6}$/.test(defaults.pin), "a default pairing starts with a random six-digit code");
+  const before = defaults.pin;
+  let rotatedDiffers = false;
+  for (let i = 0; i < 5 && !rotatedDiffers; i += 1) {
+    defaults.recordSuccess();
+    rotatedDiffers = defaults.pin !== before && /^\d{6}$/.test(defaults.pin);
+  }
+  t.ok(rotatedDiffers, "default rotation makes a new random six-digit code");
+}
+
+// ---- device names ----
+t.equal(sanitizeDeviceName("iPhone"), "iPhone", "a plain device name is kept");
+t.equal(sanitizeDeviceName("  Ann's\u0000 Pixel\n\t "), "Ann's Pixel", "control characters are stripped and the name trimmed");
+t.equal(sanitizeDeviceName("evil\u202Eman\u2028x"), "evilmanx", "bidi overrides and line separators are stripped");
+t.equal(sanitizeDeviceName("x".repeat(100)), "x".repeat(60), "names are capped at 60 characters");
+t.equal([...sanitizeDeviceName("😀".repeat(70))].length, 60, "the cap counts characters, not UTF-16 units");
+for (const bad of [undefined, null, "", "   ", "\u0001\u0002", 42, { name: "x" }, ["iPhone"]]) {
+  t.equal(sanitizeDeviceName(bad), "Phone", `device name ${JSON.stringify(bad)} defaults to Phone`);
+}
 
 // ---- loopback ----
 for (const addr of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "127.0.1.5"]) {
@@ -123,6 +189,57 @@ t.ok(revocable.verify(rtok), "token verifies before revocation");
 revocable.revokeAll();
 t.ok(!revocable.verify(rtok), "regenerating the pin revokes every session");
 
+// ---- paired devices ----
+{
+  let dclock = 7_000_000;
+  const store = createSessionStore({ now: () => dclock });
+  const a = store.issue({ name: "iPhone" });
+  dclock += 10;
+  const b = store.issue({ name: "Android\u0007 phone" });
+  dclock += 10;
+  const c = store.issue();
+  const list = store.list();
+  t.deepEqual(list.map((d) => d.name), ["Phone", "Android phone", "iPhone"], "devices are listed newest first with sanitized names");
+  t.ok(list.every((d) => /^[0-9a-f]{16}$/.test(d.id)), "every device has a 16-hex public id");
+  t.equal(new Set(list.map((d) => d.id)).size, 3, "device ids are distinct");
+  t.deepEqual(Object.keys(list[0]).sort(), ["id", "issuedAt", "lastSeenAt", "name"], "a device exposes only id, name, issuedAt and lastSeenAt");
+  t.ok(list.every((d) => d.id !== hashToken(a).slice(0, 16) && d.id !== hashToken(b).slice(0, 16) && d.id !== hashToken(c).slice(0, 16)),
+    "device ids are not derived from token hashes");
+  t.ok(!JSON.stringify(list).includes(hashToken(a)), "the device list never carries a session hash");
+  t.equal(list[2].lastSeenAt, list[2].issuedAt, "a new device was last seen when it paired");
+  const same = createSessionStore({ now: () => dclock });
+  same.issue({ name: "first" });
+  same.issue({ name: "second" });
+  t.deepEqual(same.list().map((d) => d.name), ["second", "first"], "devices paired in the same millisecond list in reverse issue order");
+
+  // lastSeenAt is refreshed by verify at most once an hour.
+  const iphone = () => store.list().find((d) => d.name === "iPhone");
+  const pairedAt = iphone().issuedAt;
+  dclock += LAST_SEEN_INTERVAL_MS - 100;
+  t.ok(store.verify(a), "the device's token verifies");
+  t.equal(iphone().lastSeenAt, pairedAt, "lastSeenAt is not rewritten within the hour");
+  dclock += 100;
+  store.verify(a);
+  t.equal(iphone().lastSeenAt, dclock, "lastSeenAt moves once an hour has passed");
+  const seen = dclock;
+  dclock += 60_000;
+  store.verify(a);
+  t.equal(iphone().lastSeenAt, seen, "a second verify within the hour leaves lastSeenAt alone");
+
+  // Revocation.
+  const target = store.list().find((d) => d.name === "Android phone");
+  t.equal(store.revoke(target.id), hashToken(b), "revoke returns the revoked session's hash");
+  t.ok(!store.verify(b), "a revoked device's token stops verifying");
+  t.ok(store.verify(a) && store.verify(c), "other devices stay paired");
+  t.equal(store.revoke(target.id), null, "revoking an unknown id returns null");
+  t.equal(store.revoke("0000000000000000"), null, "a made-up id revokes nothing");
+  t.equal(store.list().length, 2, "the revoked device leaves the list");
+  const all = store.revokeAll();
+  t.equal(all.length, 2, "revokeAll returns every revoked hash");
+  t.ok(!store.verify(a) && !store.verify(c), "revokeAll unpairs every device");
+  t.deepEqual(store.list(), [], "no devices remain after revokeAll");
+}
+
 // ---- cookies ----
 const jar = parseCookies(`${COOKIE_NAME}=abc123; other=zzz`);
 t.equal(jar[COOKIE_NAME], "abc123", "session cookie is parsed");
@@ -150,6 +267,15 @@ t.equal(tokenFromRequest({ headers: { cookie: `${COOKIE_NAME}=xyz` } }), "xyz", 
 t.equal(tokenFromRequest({ headers: {} }), "", "absent cookie yields an empty token");
 
 // ---- the authorize decision ----
+{
+  const s = createSessionStore();
+  const tok = s.issue();
+  const grant = authorize({ req: { headers: { cookie: `${COOKIE_NAME}=${tok}`, host: "192.168.1.20:8620" }, socket: {} },
+    sessions: s, lockout: createLockout(), remote: "192.168.1.5" });
+  t.equal(grant.hash, hashToken(tok), "a session grant names its session hash");
+  const local = authorize({ req: { headers: { host: "127.0.0.1:8620" }, socket: {} }, sessions: s, lockout: createLockout(), remote: "127.0.0.1" });
+  t.equal(local.hash, undefined, "a loopback grant has no session hash");
+}
 const asess = createSessionStore();
 const alock = createLockout();
 const live = asess.issue();
@@ -234,6 +360,55 @@ try {
   t.equal(mixed.size, 1, "only the well-formed live entry is loaded");
   t.ok(mixed.verify(goodTok), "the valid entry beside malformed ones still verifies");
   await mixed.flush();
+
+  // Files written before device management migrate without losing sessions.
+  const legacyPath = join(temp, "legacy.json");
+  const legacyTokens = ["legacy-one", "legacy-two", "legacy-three"];
+  await writeFile(legacyPath, JSON.stringify({ version: 1, sessions: legacyTokens.map((tok, i) => ({
+    hash: hashToken(tok), issuedAt: pclock - 3000 + i, expiresAt: pclock + 50_000,
+  })) }));
+  const legacy = createSessionStore({ now: () => pclock, path: legacyPath });
+  t.equal(legacy.size, 3, "every pre-upgrade session is loaded");
+  t.ok(legacyTokens.every((tok) => legacy.verify(tok)), "every pre-upgrade token still verifies");
+  const migrated = legacy.list();
+  t.ok(migrated.every((d) => /^[0-9a-f]{16}$/.test(d.id)), "pre-upgrade sessions are given ids");
+  t.ok(migrated.every((d) => d.name === "Phone"), "pre-upgrade sessions are named Phone");
+  t.ok(migrated.every((d) => d.lastSeenAt === d.issuedAt), "pre-upgrade sessions were last seen when issued");
+  await legacy.flush();
+  const migratedFile = JSON.parse(await readFile(legacyPath, "utf8"));
+  t.equal(migratedFile.version, 1, "the migrated file keeps version 1 (older hosts can still read it)");
+  t.equal(migratedFile.sessions.length, 3, "the migrated file keeps every session");
+  t.ok(migratedFile.sessions.every((e) => /^[0-9a-f]{16}$/.test(e.id) && e.name === "Phone" && e.lastSeenAt === e.issuedAt),
+    "the migration is written back");
+  const reloadedLegacy = createSessionStore({ now: () => pclock, path: legacyPath });
+  t.deepEqual(reloadedLegacy.list().map((d) => d.id), migrated.map((d) => d.id), "migrated ids are stable across restarts");
+  t.ok(legacyTokens.every((tok) => reloadedLegacy.verify(tok)), "migrated tokens survive another restart");
+
+  // Device fields persist; a revoke persists; lastSeenAt persists when it moves.
+  const devPath = join(temp, "devices.json");
+  let dpclock = pclock;
+  const devStore = createSessionStore({ now: () => dpclock, path: devPath });
+  const devA = devStore.issue({ name: "iPad" });
+  const devB = devStore.issue({ name: "Browser" });
+  await devStore.flush();
+  const devFile = JSON.parse(await readFile(devPath, "utf8"));
+  t.deepEqual(devFile.sessions.map((e) => e.name), ["iPad", "Browser"], "device names are persisted");
+  t.ok(!JSON.stringify(devFile).includes(devA), "the device file never contains a raw token");
+  dpclock += LAST_SEEN_INTERVAL_MS;
+  devStore.verify(devA);
+  await devStore.flush();
+  t.equal(JSON.parse(await readFile(devPath, "utf8")).sessions[0].lastSeenAt, dpclock, "a moved lastSeenAt is persisted");
+  const writesBefore = (await stat(devPath)).mtimeMs;
+  await new Promise((r) => setTimeout(r, 20));
+  for (let i = 0; i < 20; i += 1) devStore.verify(devA);
+  await devStore.flush();
+  t.equal((await stat(devPath)).mtimeMs, writesBefore, "verifies within the hour do not rewrite the session file");
+  const ipad = devStore.list().find((d) => d.name === "iPad");
+  devStore.revoke(ipad.id);
+  await devStore.flush();
+  const afterRevoke = createSessionStore({ now: () => dpclock, path: devPath });
+  t.ok(!afterRevoke.verify(devA) && afterRevoke.verify(devB), "a revoked device stays revoked after a restart; others stay paired");
+  t.deepEqual(afterRevoke.list().map((d) => d.name), ["Browser"], "the restarted store lists only the remaining device");
 
   // Corrupt and wrongly shaped files start empty and never throw.
   for (const [label, body] of [

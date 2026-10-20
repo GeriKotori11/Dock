@@ -71,7 +71,8 @@ Reinstalling replaces the old login item; it does not create a second one.
 | `npm run mac:install` | Install or reinstall the login item and start the host |
 | `npm run mac:status` | Show whether the login item is loaded and the host is healthy |
 | `npm run mac:uninstall` | Stop the host and remove the login item |
-| `npm run info` | Show the address and PIN of the running host |
+| `npm run info` | Show the address and PIN of the running host, and open pairing for 10 minutes |
+| `npm run devices` | List paired phones; `-- revoke <id>` or `-- revoke-all` to unpair them |
 
 ## Pair your phone
 
@@ -82,16 +83,38 @@ npm run info
 ```
 WinDock is running on Anns-MacBook-Air.local
   Address: http://192.168.1.20:8620
-  PIN:     0427
+  PIN:     042718
+  Pairing: open for 10 more minutes
 Enter this address and PIN in the WinDock app on your phone.
 ```
 
 Open WinDock on your phone, pick your Mac (Android can find it automatically) or
-type the address, then enter the PIN.
+type the address, then enter the 6-digit PIN within 10 minutes.
 
 `npm run info` works only on the Mac itself. The login item never writes the PIN
-to its log file, so this command is how you see it. The PIN changes each time
-the host restarts, but phones that are already paired stay paired.
+to its log file, so this command is how you see it. Pairing is open for 10
+minutes after the host starts and for 10 minutes after each `npm run info`;
+outside that window the phone says pairing is closed, and running
+`npm run info` again reopens it. Each PIN pairs one phone: after a phone pairs,
+run `npm run info` again for the next PIN. The PIN also changes when the host
+restarts, but phones that are already paired stay paired.
+
+## See and remove paired phones
+
+```sh
+npm run devices
+```
+
+```
+2 paired devices (newest first)
+  iPhone         3f2a9c01  paired 2026-10-20 14:03  last seen 2026-10-20 15:10
+  Android phone  9b17e2d4  paired 2026-10-18 09:41  last seen 2026-10-20 08:02
+Revoke one with: npm run devices -- revoke <id>
+```
+
+`npm run devices -- revoke 3f2a9c01` unpairs one phone (the short id is
+enough); `npm run devices -- revoke-all` unpairs every phone. A revoked phone is
+disconnected immediately and has to pair again with a new PIN.
 
 ## Allow incoming connections
 
@@ -161,8 +184,12 @@ Run `npm run mac:install` again so it points at the current Node binary.
 
 ## Security notes
 
-- Anyone on the network who learns the 4-digit PIN can pair. Use WinDock only
-  on networks you trust, and never forward port 8620 to the internet.
+- Anyone on the network who learns the current 6-digit PIN while pairing is
+  open can pair. Each PIN works once, pairing closes 10 minutes after it was
+  last opened, and after 10 wrong PINs the PIN changes and pairing closes until
+  you run `npm run info`. Use WinDock only on networks you trust, never forward
+  port 8620 to the internet, and check `npm run devices` for phones you don't
+  recognise.
 - Software on the Mac itself is trusted without pairing, but only when it
   connects to `127.0.0.1`, `localhost` or `[::1]`. Websites open in a browser on
   the Mac cannot use this trust.

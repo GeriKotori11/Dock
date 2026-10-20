@@ -8,12 +8,15 @@ import { WebSocket } from "ws";
 import { createApp, readyBanner } from "../server.js";
 import { createWindowsProvider } from "../src/platform/windows.js";
 import { createConfigStore } from "../src/config.js";
-import { createSessionStore } from "../src/auth.js";
+import { createSessionStore, createLockout, hashToken, LOCK_MS, PAIRING_WINDOW_MS, LAST_SEEN_INTERVAL_MS } from "../src/auth.js";
+import { writeFile } from "node:fs/promises";
+import { formatInfo, NOT_RUNNING } from "./windock-info.mjs";
+import { run as runDevices, formatDevices, resolveDevice } from "./windock-devices.mjs";
 import { loadHostIdentity } from "../src/identity.js";
 import { featuresOf, CONTROL_VERBS } from "../src/platform/contract.js";
 
 const t = createChecker("api");
-const PIN = "4321";
+const PIN = "432100";
 
 const INSTALLED = JSON.stringify([
   { name: "Firefox", target: "C:\\Apps\\firefox.exe", args: "", icon: "", source: "startmenu" },
@@ -85,9 +88,10 @@ t.ok(typeof health.json.hostName === "string" && health.json.hostName.length > 0
 t.equal(health.json.api, 1, "health advertises API version 1");
 t.ok(Buffer.byteLength(health.text) <= 4096, `the health body fits the 4096-byte probe limit (${Buffer.byteLength(health.text)} bytes)`);
 t.ok(!health.text.includes(PIN), "health never includes the PIN");
-t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "platform", "tls"],
+t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "pairingOpen", "platform", "tls"],
   "health exposes only its documented fields");
 t.equal(health.json.tls, null, "health reports tls: null without TLS");
+t.equal(health.json.pairingOpen, true, "health reports pairing open after the host starts");
 
 // ---- static ----
 const index = await call("/");
@@ -101,8 +105,11 @@ t.equal((await call("/does-not-exist.js")).status, 404, "a missing asset returns
 t.equal((await call("/../server.js")).status, 404, "traversal above public is refused");
 
 // ---- pairing ----
-t.equal((await call("/api/auth", { method: "POST", body: { pin: "0000" } })).status, 401, "a wrong pin is refused");
+t.equal((await call("/api/auth", { method: "POST", body: { pin: "000000" } })).status, 401, "a wrong pin is refused");
 t.equal((await call("/api/auth", { method: "POST", body: { pin: "12" } })).status, 400, "a malformed pin is refused");
+const fourDigits = await call("/api/auth", { method: "POST", body: { pin: "4321" } });
+t.equal(fourDigits.status, 400, "a four-digit pin is malformed now that codes have six digits");
+t.equal(fourDigits.json.error, "invalid pin", "a four-digit pin is reported as invalid pin");
 t.equal(
   (await call("/api/auth", { method: "POST", body: { pin: PIN }, origin: "http://evil.test" })).status,
   403,
@@ -254,7 +261,7 @@ cookie = saved;
 // ---- /api/pairing is never readable by a paired session ----
 const sessionPairing = await call("/api/pairing");
 t.equal(sessionPairing.status, 403, "a paired session cannot read /api/pairing when loopback is not trusted");
-t.ok(!sessionPairing.text.includes(PIN), "the refused /api/pairing response does not carry the PIN");
+t.ok(!sessionPairing.text.includes(app.state.pin), "the refused /api/pairing response does not carry the PIN");
 
 // ---- loopback trust is a real feature, limited to loopback Host literals ----
 const trusting = await createApp({ provider, configStore, pin: PIN, trustLoopback: true });
@@ -324,11 +331,12 @@ t.equal(await upgradeOutcome(`127.0.0.1:${tport}`), "open", "positive control: a
 // /api/pairing: local software only.
 const localPairing = await hostCall(`127.0.0.1:${tport}`, "/api/pairing");
 t.equal(localPairing.status, 200, "loopback with a loopback Host reads /api/pairing");
-t.deepEqual(Object.keys(localPairing.json).sort(), ["endpoint", "hostId", "hostName", "pin", "secureEndpoint", "securityCode"],
+t.deepEqual(Object.keys(localPairing.json).sort(), ["endpoint", "hostId", "hostName", "pairingOpenForMs", "pin", "secureEndpoint", "securityCode"],
   "/api/pairing exposes only its documented fields");
 t.ok(localPairing.json.secureEndpoint === null && localPairing.json.securityCode === null,
   "/api/pairing reports no secure endpoint or code without TLS");
 t.equal(localPairing.json.pin, PIN, "/api/pairing reports the PIN");
+t.equal(localPairing.json.pairingOpenForMs, PAIRING_WINDOW_MS, "/api/pairing reopens pairing for a full ten minutes");
 t.equal(localPairing.json.endpoint, null, "/api/pairing endpoint defaults to null");
 t.ok(typeof localPairing.json.hostName === "string" && localPairing.json.hostName.length > 0, "/api/pairing names the host");
 t.equal(localPairing.json.hostId, null, "/api/pairing hostId is null without an identity");
@@ -347,7 +355,13 @@ t.equal((await hostCall(EVIL, "/api/state", { headers: { cookie: evilCookie } })
   "a valid session is honoured when the Host is not loopback");
 const sessionOnly = await hostCall(EVIL, "/api/pairing", { headers: { cookie: evilCookie } });
 t.equal(sessionOnly.status, 403, "a valid session behind a non-loopback Host cannot read /api/pairing");
-t.ok(!sessionOnly.text.includes(PIN), "the session refusal carries no PIN");
+t.ok(!sessionOnly.text.includes(trusting.state.pin), "the session refusal carries no PIN");
+for (const [method, path] of [["GET", "/api/devices"], ["DELETE", "/api/devices"], ["DELETE", "/api/devices/0123456789abcdef"]]) {
+  const res = await hostCall(EVIL, path, { method, headers: { cookie: evilCookie } });
+  t.equal(res.status, 403, `a phone session cannot ${method} ${path}`);
+}
+t.equal((await hostCall(EVIL, "/api/devices")).status, 401, "a rebinding Host without a session cannot list devices");
+t.equal(trusting.sessions.size, 1, "refused device calls revoke nothing");
 t.equal(await upgradeOutcome(EVIL, "/", { cookie: evilCookie }), "open", "a valid session opens the sync socket under a non-loopback Host");
 await trusting.hub.close();
 trusting.server.closeAllConnections?.();
@@ -366,12 +380,16 @@ await new Promise((r) => advertised.server.close(r));
 const banner = readyBanner({ providerName: "Windows", endpoint: "http://192.168.1.20:8620", pin: "0427" });
 t.equal(banner, "WinDock host ready\n  provider: Windows\n  open:     http://192.168.1.20:8620\n  PIN:      0427\n",
   "the default banner is unchanged");
-t.equal((banner.match(/PIN:\s*(\d{4})/) || [])[1], "0427", "the tray's PIN pattern still matches");
+t.equal((banner.match(/PIN:\s*(\d{4,8})/) || [])[1], "0427", "the tray's PIN pattern still matches");
+const sixBanner = readyBanner({ providerName: "Windows", endpoint: "http://192.168.1.20:8620", pin: "042718" });
+t.equal(sixBanner, "WinDock host ready\n  provider: Windows\n  open:     http://192.168.1.20:8620\n  PIN:      042718\n",
+  "a six-digit code keeps the banner format");
+t.equal((sixBanner.match(/PIN:\s*(\d{4,8})/) || [])[1], "042718", "the tray's widened PIN pattern reads all six digits");
 t.equal((banner.match(/open:\s*(\S+)/) || [])[1], "http://192.168.1.20:8620", "the tray's endpoint pattern still matches");
 const hidden = readyBanner({ providerName: "macOS", endpoint: "http://192.168.1.20:8620", pin: "0427", hidePin: true });
 t.ok(!hidden.includes("0427"), "WINDOCK_HIDE_PIN keeps the PIN out of the banner");
 t.ok(hidden.includes('  PIN:      (run "npm run info" to show it)\n'), "the hidden banner points to npm run info");
-t.ok(!/PIN:\s*\d{4}/.test(hidden), "the hidden banner has no PIN for a parser to find");
+t.ok(!/PIN:\s*\d{4,8}/.test(hidden), "the hidden banner has no PIN for a parser to find");
 
 // ---- identity in /health and sessions that survive a host restart ----
 async function stop(a) {
@@ -404,7 +422,7 @@ await first.sessions.flush();
 await stop(first);
 
 const second = await createApp({
-  provider, configStore, pin: "9876", trustLoopback: false,
+  provider, configStore, pin: "987600", trustLoopback: false,
   identity: await loadHostIdentity({ path: join(dir, "host.json") }),
   sessions: createSessionStore({ path: sessionsPath }),
 });
@@ -538,6 +556,298 @@ t.equal(unknown.json.tiles[0].available, true, "tiles are available while the ca
 t.equal(slow.calls.list, 1, "state kicks off the first scan");
 await new Promise((r) => setTimeout(r, 450));
 await slowHost.a.hub.close(); slowHost.a.server.closeAllConnections?.(); await new Promise((r) => slowHost.a.server.close(r));
+
+// ---- pairing window, rotation, global budget and paired devices ----
+{
+  let clock = 1_000_000_000;
+  const now = () => clock;
+  const codes = ["111111", "222222", "333333", "444444", "555555", "666666", "777777"];
+  const inputSessions = [];
+  const devProvider = fakeProvider({
+    input: {
+      // Never ready, so the input hub's 8 s startup lease outlives the test.
+      open() { const session = { closed: false, ready: new Promise(() => {}), send() {}, close() { session.closed = true; } }; inputSessions.push(session); return session; },
+      dispose() {},
+    },
+  });
+  const pairing = await createApp({
+    provider: devProvider,
+    configStore: createConfigStore({ path: join(dir, "pairing.json") }),
+    pin: "246810",
+    nextPin: () => codes.shift(),
+    now,
+    lockout: createLockout({ now }),
+    sessions: createSessionStore({ now }),
+    trustLoopback: true,
+  });
+  // Dual-stack, so requests can come from two loopback addresses (127.0.0.1
+  // and ::1) and exercise the global budget across clients.
+  await new Promise((r) => pairing.server.listen(0, "::", r));
+  const pport = pairing.server.address().port;
+  const LAN = `192.168.100.3:${pport}`;
+  /** A request with an explicit Host; a LAN Host keeps loopback trust off (a "phone"). */
+  const req = (path, { method = "GET", body, host = LAN, address = "127.0.0.1", headers = {} } = {}) =>
+    new Promise((resolve, reject) => {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      const r = request({
+        host: address, port: pport, path, method, agent: false,
+        headers: { host, ...(payload ? { "content-type": "application/json" } : {}), ...headers },
+      }, (res) => {
+        const data = [];
+        res.on("data", (c) => data.push(c));
+        res.on("error", reject);
+        res.on("end", () => {
+          const text = Buffer.concat(data).toString();
+          let json = null;
+          try { json = JSON.parse(text); } catch { /* not JSON */ }
+          resolve({ status: res.statusCode, json, text, cookie: String(res.headers["set-cookie"] || "").split(";")[0] });
+        });
+      });
+      r.on("error", reject);
+      if (payload) r.write(payload);
+      r.end();
+    });
+  const LOCAL = `127.0.0.1:${pport}`;
+  const pair = (pin, extra = {}, address = "127.0.0.1") => req("/api/auth", { method: "POST", body: { pin, ...extra }, address });
+  const healthOpen = async () => (await req("/health")).json.pairingOpen;
+  const reopen = () => req("/api/pairing", { host: LOCAL });
+
+  // Window: open at start, closed after ten minutes, without counting failures.
+  t.equal(await healthOpen(), true, "health: pairing is open right after start");
+  clock += PAIRING_WINDOW_MS;
+  t.equal(await healthOpen(), false, "health: pairing closes ten minutes after start");
+  const closedRight = await pair("246810");
+  t.equal(closedRight.status, 403, "a closed window refuses even the right code");
+  t.deepEqual(closedRight.json, { error: "pairing closed" }, "the refusal says pairing closed");
+  t.ok(!closedRight.cookie, "a closed window issues no session");
+  for (let i = 0; i < 8; i += 1) await pair("999999");
+  const stillClosed = await pair("999999");
+  t.equal(stillClosed.status, 403, "repeated attempts on a closed window stay 403, never a 429 lockout");
+  t.equal(pairing.pairing.failures, 0, "attempts on a closed window count no global failures");
+  t.equal((await pair("12")).status, 403, "a closed window answers before checking the PIN's shape");
+  t.equal(pairing.pairing.pin, "246810", "a closed window does not rotate the code");
+
+  // Reopen via a local GET /api/pairing.
+  const reopened = await reopen();
+  t.equal(reopened.status, 200, "a local GET /api/pairing succeeds");
+  t.equal(reopened.json.pairingOpenForMs, PAIRING_WINDOW_MS, "the local GET reopens pairing for ten minutes");
+  t.equal(reopened.json.pin, "246810", "the local GET reports the current code");
+  t.equal(await healthOpen(), true, "health: pairing is open again after the local GET");
+  t.equal((await req("/api/pairing")).status, 401, "a phone without a session cannot reopen pairing");
+  clock += 5 * 60 * 1000;
+  t.equal((await reopen()).json.pairingOpenForMs, PAIRING_WINDOW_MS, "each local GET extends the window to a full ten minutes");
+
+  // Rotation after success; device names.
+  const first = await pair("246810", { deviceName: "iPhone" });
+  t.equal(first.status, 200, "the current code pairs while the window is open");
+  t.ok(first.cookie.startsWith("windock_session="), "pairing issues a session cookie");
+  t.equal(pairing.pairing.pin, "111111", "a successful pairing rotates the code");
+  const reused = await pair("246810");
+  t.equal(reused.status, 401, "the used code then fails");
+  t.equal(reused.json.error, "wrong pin", "the used code is simply a wrong pin");
+  clock += 10;
+  const second = await pair("111111", { deviceName: "  Pixel\u0000\u001b[31m 8\n" });
+  t.equal(second.status, 200, "the rotated code pairs the next device");
+  clock += 10;
+  const third = await pair("222222", { deviceName: "x".repeat(200) });
+  clock += 10;
+  const fourth = await pair("333333", { deviceName: 12345 });
+  t.ok(third.status === 200 && fourth.status === 200, "every rotated code pairs exactly one more device");
+
+  // Phone sessions are refused the local-only routes.
+  for (const [method, path] of [["GET", "/api/pairing"], ["GET", "/api/devices"], ["DELETE", "/api/devices"]]) {
+    const res = await req(path, { method, headers: { cookie: first.cookie } });
+    t.equal(res.status, 403, `a phone session gets 403 for ${method} ${path}`);
+    t.deepEqual(res.json, { error: "local only" }, `the ${method} ${path} refusal says local only`);
+  }
+  t.equal(pairing.pairing.pin, "444444", "a refused phone GET /api/pairing does not reveal or rotate the code");
+
+  // Device list: newest first, sanitized names, no secrets.
+  const listed = await req("/api/devices", { host: LOCAL });
+  t.equal(listed.status, 200, "a local GET /api/devices succeeds");
+  const devices = listed.json.devices;
+  t.deepEqual(devices.map((d) => d.name), ["Phone", "x".repeat(60), "Pixel[31m 8", "iPhone"],
+    "devices are listed newest first with sanitized names (control chars stripped, 60-char cap, non-string to Phone)");
+  t.ok(devices.every((d) => /^[0-9a-f]{16}$/.test(d.id) && Number.isFinite(d.issuedAt) && Number.isFinite(d.lastSeenAt)),
+    "each device has an id, issuedAt and lastSeenAt");
+  t.deepEqual(Object.keys(listed.json), ["devices"], "GET /api/devices returns only a devices array");
+  for (const c of [first, second, third, fourth]) {
+    t.ok(!listed.text.includes(c.cookie.split("=")[1]) && !listed.text.includes(hashToken(decodeURIComponent(c.cookie.split("=")[1]))),
+      "the device list carries no token or token hash");
+  }
+  const iphone = devices.find((d) => d.name === "iPhone");
+  const pixel = devices.find((d) => d.name === "Pixel[31m 8");
+  t.equal(iphone.lastSeenAt, iphone.issuedAt, "a new device was last seen when it paired");
+
+  // lastSeenAt is refreshed at most once an hour.
+  clock += LAST_SEEN_INTERVAL_MS / 2;
+  t.equal((await req("/api/state", { headers: { cookie: first.cookie } })).status, 200, "the iPhone session reads state");
+  const seenHalf = (await req("/api/devices", { host: LOCAL })).json.devices.find((d) => d.id === iphone.id);
+  t.equal(seenHalf.lastSeenAt, iphone.issuedAt, "lastSeenAt is not rewritten within the hour");
+  clock += LAST_SEEN_INTERVAL_MS / 2;
+  await req("/api/state", { headers: { cookie: first.cookie } });
+  const seenHour = (await req("/api/devices", { host: LOCAL })).json.devices.find((d) => d.id === iphone.id);
+  t.equal(seenHour.lastSeenAt, clock, "lastSeenAt moves after an hour of use");
+
+  // Revoking one device closes its sockets at once and leaves the others.
+  const openSocket = (path, cookieHeader) => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${pport}${path}`, { headers: { host: LAN, cookie: cookieHeader } });
+    const timer = setTimeout(() => { ws.terminate(); reject(new Error("socket timeout")); }, 2500);
+    ws.once("open", () => { clearTimeout(timer); resolve(ws); });
+    ws.once("unexpected-response", (_q, res) => { clearTimeout(timer); res.resume(); reject(new Error(`HTTP ${res.statusCode}`)); });
+    ws.once("error", (e) => { clearTimeout(timer); reject(e); });
+  });
+  const closedWith = (ws) => new Promise((resolve) => {
+    if (ws.readyState === ws.CLOSED) return resolve({ code: "already" });
+    const timer = setTimeout(() => resolve({ code: "timeout" }), 1500);
+    ws.once("close", (code, reason) => { clearTimeout(timer); resolve({ code, reason: reason.toString() }); });
+  });
+  const iphoneSync = await openSocket("/", first.cookie);
+  const iphoneInput = await openSocket("/input", first.cookie);
+  const pixelSync = await openSocket("/", second.cookie);
+  const localSync = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${pport}/`, { headers: { host: LOCAL } });
+    ws.once("open", () => resolve(ws));
+    ws.once("error", reject);
+  });
+  const iphoneSyncClosed = closedWith(iphoneSync);
+  const iphoneInputClosed = closedWith(iphoneInput);
+  const revokeStarted = realNow();
+  const revoked = await req(`/api/devices/${iphone.id}`, { method: "DELETE", host: LOCAL });
+  t.equal(revoked.status, 200, "a local DELETE /api/devices/<id> succeeds");
+  t.deepEqual(revoked.json, { ok: true, id: iphone.id }, "the revoke reply names the device");
+  const syncEnd = await iphoneSyncClosed;
+  const inputEnd = await iphoneInputClosed;
+  t.equal(syncEnd.code, 1008, "the revoked device's sync socket is closed (policy violation)");
+  t.equal(syncEnd.reason, "session revoked", "the sync socket close says session revoked");
+  t.equal(inputEnd.code, 1008, "the revoked device's input socket is closed (policy violation)");
+  t.equal(inputEnd.reason, "session revoked", "the input socket close says session revoked");
+  t.ok(realNow() - revokeStarted < 400, `revocation closes the sockets at once (${realNow() - revokeStarted} ms, not a lease timeout)`);
+  t.ok(inputSessions[0]?.closed, "revocation releases the native input session");
+  t.equal((await req("/api/state", { headers: { cookie: first.cookie } })).status, 401, "the revoked cookie then gets 401");
+  t.equal((await req("/api/state", { headers: { cookie: second.cookie } })).status, 200, "another device stays paired");
+  t.equal(pixelSync.readyState, pixelSync.OPEN, "another device's socket stays open");
+  t.equal(localSync.readyState, localSync.OPEN, "a loopback-trusted socket is untouched by revocation");
+  await t.rejects(() => openSocket("/", first.cookie), "the revoked cookie cannot open a new socket");
+  t.equal((await req(`/api/devices/${iphone.id}`, { method: "DELETE", host: LOCAL })).status, 404, "revoking the same device again is 404");
+  const unknownDevice = await req("/api/devices/0123456789abcdef", { method: "DELETE", host: LOCAL });
+  t.equal(unknownDevice.status, 404, "revoking an unknown id is 404");
+  t.deepEqual(unknownDevice.json, { error: "unknown device" }, "the 404 says unknown device");
+  t.equal((await req("/api/devices/..%2f..", { method: "DELETE", host: LOCAL })).status, 404, "a malformed id is 404");
+  t.equal((await req("/api/devices", { method: "DELETE", host: LOCAL, headers: { origin: "http://evil.example" } })).status, 403,
+    "a cross-origin revoke-all is refused");
+  t.equal(pairing.sessions.size, 3, "refused revokes leave the other sessions");
+
+  // The npm run devices helper against this host.
+  const listedText = await runDevices([], pport);
+  t.equal(listedText.code, 0, "npm run devices lists devices");
+  t.ok(listedText.out.startsWith("3 paired devices (newest first)\n"), "npm run devices counts the devices");
+  t.ok(listedText.out.includes(`Pixel[31m 8`) && listedText.out.includes(pixel.id.slice(0, 8)), "npm run devices shows names and short ids");
+  t.ok(!listedText.out.includes(pixel.id), "npm run devices shows the short id, not the full id");
+  const byPrefix = await runDevices(["revoke", pixel.id.slice(0, 8)], pport);
+  t.equal(byPrefix.code, 0, "npm run devices -- revoke <short id> succeeds");
+  t.ok(byPrefix.out.startsWith("Revoked Pixel[31m 8"), "the revoke result names the device");
+  t.equal((await req("/api/state", { headers: { cookie: second.cookie } })).status, 401, "the device revoked by the helper gets 401");
+  t.equal((await runDevices(["revoke", "ffff"], pport)).code, 1, "revoking an unmatched id fails");
+  t.equal((await runDevices(["revoke", "ab"], pport)).code, 1, "a too-short id is refused");
+  t.equal((await runDevices(["frobnicate"], pport)).code, 1, "an unknown command prints usage");
+
+  // Revoke all.
+  const thirdSync = await openSocket("/", third.cookie);
+  const fourthSync = await openSocket("/", fourth.cookie);
+  const allClosed = Promise.all([closedWith(thirdSync), closedWith(fourthSync)]);
+  const all = await runDevices(["revoke-all"], pport);
+  t.equal(all.code, 0, "npm run devices -- revoke-all succeeds");
+  t.equal(all.out, "Revoked 2 paired devices. They must pair again with a new PIN.\n", "revoke-all reports the count");
+  t.deepEqual((await allClosed).map((e) => e.code), [1008, 1008], "revoke-all closes every session socket");
+  for (const c of [third, fourth]) t.equal((await req("/api/state", { headers: { cookie: c.cookie } })).status, 401, "a cookie revoked by revoke-all gets 401");
+  t.equal(localSync.readyState, localSync.OPEN, "revoke-all leaves loopback-trusted sockets open");
+  t.equal((await runDevices([], pport)).out, "No paired devices.\n", "npm run devices reports no devices after revoke-all");
+  const viaApi = await req("/api/devices", { method: "DELETE", host: LOCAL });
+  t.deepEqual(viaApi.json, { ok: true, revoked: 0 }, "DELETE /api/devices reports how many were revoked");
+  for (const ws of [pixelSync, localSync, iphoneSync, iphoneInput, thirdSync, fourthSync]) ws.terminate();
+
+  // Global budget: ten wrong codes across two addresses rotate and close.
+  await reopen();
+  const beforeBudget = pairing.pairing.pin;
+  const statuses = [];
+  for (let i = 0; i < 5; i += 1) statuses.push((await pair("000000", {}, "127.0.0.1")).status);
+  t.equal((await pair(beforeBudget, {}, "127.0.0.1")).status, 429, "five failures lock one address out (per-IP lockout still applies)");
+  for (let i = 0; i < 4; i += 1) statuses.push((await pair("000000", {}, "::1")).status);
+  t.ok(statuses.every((code) => code === 401), "nine wrong codes from two addresses are each refused with 401");
+  t.equal(pairing.pairing.pin, beforeBudget, "nine global failures leave the code alone");
+  t.equal(await healthOpen(), true, "nine global failures leave pairing open");
+  t.equal((await pair("000000", {}, "::1")).status, 401, "the tenth wrong code is still a 401");
+  t.ok(pairing.pairing.pin !== beforeBudget, "the tenth global failure rotates the code");
+  t.equal(await healthOpen(), false, "the tenth global failure closes pairing");
+  clock += LOCK_MS + 1; // let both per-IP lockouts expire
+  t.equal((await pair(beforeBudget, {}, "::1")).status, 403, "the old code is refused: pairing closed");
+  const closedNew = await pair(pairing.pairing.pin, {}, "127.0.0.1");
+  t.equal(closedNew.status, 403, "even the new code is refused until a local reopen");
+  t.equal(closedNew.json.error, "pairing closed", "the budget refusal says pairing closed");
+  clock += PAIRING_WINDOW_MS * 2;
+  t.equal(await healthOpen(), false, "time alone does not reopen a window closed by the budget");
+  const afterBudget = await reopen();
+  t.equal(afterBudget.json.pairingOpenForMs, PAIRING_WINDOW_MS, "a local GET /api/pairing reopens after the budget is spent");
+  t.equal(pairing.pairing.failures, 0, "reopening resets the global failure count");
+  t.equal((await pair("000000", {}, "::1")).status, 401, "after the reopen a wrong code is an ordinary failure");
+  t.equal(await healthOpen(), true, "one failure after the reopen leaves pairing open");
+  const fresh = await pair(afterBudget.json.pin, { deviceName: "iPad" }, "127.0.0.1");
+  t.equal(fresh.status, 200, "the code shown by the reopen pairs a device");
+  t.ok(Buffer.byteLength((await req("/health")).text) <= 4096, "health with pairingOpen still fits 4096 bytes");
+
+  await pairing.hub.close();
+  await pairing.inputHub.close();
+  pairing.server.closeAllConnections?.();
+  await new Promise((r) => pairing.server.close(r));
+
+  // The helper's offline message, and its pure helpers.
+  const offline = await runDevices([], pport);
+  t.equal(offline.code, 1, "npm run devices fails when the host is not running");
+  t.equal(offline.err, `${NOT_RUNNING}\n`, "npm run devices says WinDock isn't running");
+  t.equal(formatDevices([]), "No paired devices.\n", "an empty device list says so");
+  const two = [{ id: "aaaa1111bbbb2222", name: "A" }, { id: "aaaa1111cccc3333", name: "B" }];
+  t.equal(resolveDevice(two, "aaaa1111").reason, "ambiguous", "an ambiguous prefix is refused");
+  t.equal(resolveDevice(two, "AAAA1111CCCC").device?.name, "B", "a unique prefix resolves, case-insensitively");
+  t.equal(resolveDevice(two, "aaaa1111bbbb2222").device?.name, "A", "a full id resolves");
+}
+
+// ---- npm run info shows the reopened window ----
+t.equal(formatInfo({ hostName: "M", endpoint: "http://192.168.1.20:8620", pin: "042718", pairingOpenForMs: PAIRING_WINDOW_MS }),
+  "WinDock is running on M\n  Address: http://192.168.1.20:8620\n  PIN:     042718\n  Pairing: open for 10 more minutes\nEnter this address and PIN in the WinDock app on your phone.\n",
+  "npm run info shows the six-digit PIN and the pairing window");
+t.ok(formatInfo({ hostName: "M", endpoint: "x", pin: "1", pairingOpenForMs: 30_000 }).includes("  Pairing: open for 1 more minute\n"),
+  "a partial minute rounds up, singular");
+
+// ---- a pre-upgrade sessions.json keeps its phones paired ----
+{
+  const legacyPath = join(dir, "legacy-sessions.json");
+  const legacyToken = "pre-upgrade-token-value";
+  await writeFile(legacyPath, JSON.stringify({ version: 1, sessions: [
+    { hash: hashToken(legacyToken), issuedAt: Date.now() - 1000, expiresAt: Date.now() + 1_000_000 },
+  ] }));
+  const upgraded = await createApp({ provider, configStore, pin: PIN, trustLoopback: true, sessions: createSessionStore({ path: legacyPath }) });
+  await new Promise((r) => upgraded.server.listen(0, "127.0.0.1", r));
+  const uport = upgraded.server.address().port;
+  const uget = (path, headers) => new Promise((resolve, reject) => {
+    const r = request({ host: "127.0.0.1", port: uport, path, agent: false, headers }, (res) => {
+      const data = [];
+      res.on("data", (c) => data.push(c));
+      res.on("end", () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(data).toString() || "null") }));
+    });
+    r.on("error", reject);
+    r.end();
+  });
+  t.equal((await uget("/api/state", { host: `192.168.100.3:${uport}`, cookie: `windock_session=${legacyToken}` })).status, 200,
+    "a phone paired before the upgrade stays paired");
+  const upgradedList = (await uget("/api/devices", { host: `127.0.0.1:${uport}` })).json.devices;
+  t.equal(upgradedList.length, 1, "the pre-upgrade phone is listed");
+  t.equal(upgradedList[0].name, "Phone", "the pre-upgrade phone is named Phone");
+  await upgraded.sessions.flush();
+  await upgraded.hub.close();
+  upgraded.server.closeAllConnections?.();
+  await new Promise((r) => upgraded.server.close(r));
+}
 
 await app.hub.close();
 // fetch keeps connections alive; close() alone would wait for them forever.

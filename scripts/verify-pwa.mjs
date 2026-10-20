@@ -128,6 +128,31 @@ for (const text of [
 ]) t.ok(appJs.includes(text), `app.js carries the copy: ${text}`);
 for (const old of ["Windows app", '" on your PC"', "this PC", "Your PC is disconnected"]) t.ok(!appJs.includes(old), `app.js no longer says "${old}"`);
 t.ok(html.includes("Enter the PIN shown by WinDock on your computer."), "the pair hint is platform neutral");
+
+// ---- six-digit pairing ----
+const pinInput = (html.match(/<input id="pin"[^>]*>/) || [""])[0];
+t.ok(pinInput.includes('pattern="[0-9]{6}"'), "the PIN input accepts exactly six digits");
+t.ok(pinInput.includes('maxlength="6"'), "the PIN input allows six characters");
+t.ok(pinInput.includes('placeholder="······"'), "the PIN placeholder shows six dots");
+t.ok(!pinInput.includes("{4}") && !pinInput.includes('maxlength="4"'), "the four-digit PIN input is gone");
+t.ok(appJs.includes('"invalid pin": "Enter all six digits."'), "an invalid pin asks for all six digits");
+t.ok(!appJs.includes("Enter all four digits."), "the four-digit message is gone");
+t.ok(appJs.includes('"pairing closed": "Pairing is closed. On your computer, show the PIN again (Windows: tray → Show connection info · Mac: npm run info), then enter the new PIN within 10 minutes."'),
+  "a closed pairing window explains how to reopen it");
+t.ok(appJs.includes('JSON.stringify({ pin: $("pin").value, deviceName: deviceName() })'), "pairing sends a device name with the PIN");
+const nameSource = appJs.match(/function deviceName\(ua = navigator\.userAgent\) \{[\s\S]*?\n\}/);
+t.ok(nameSource, "app.js defines deviceName from the user agent");
+if (nameSource) {
+  const derive = (ua, touch = 0) => new Function("navigator", `${nameSource[0]}; return deviceName(${JSON.stringify(ua)});`)({ maxTouchPoints: touch });
+  for (const [ua, touch, want] of [
+    ["Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36", 5, "Android phone"],
+    ["Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", 5, "iPhone"],
+    ["Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", 5, "iPad"],
+    ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15", 5, "iPad"],
+    ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15", 0, "Browser"],
+    ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36", 0, "Browser"],
+  ]) t.equal(derive(ua, touch), want, `user agent → ${want}${touch ? " (touch)" : ""}`);
+}
 for (const text of ["Your computer.<br><em>Within reach.</em>", "<h2>Pair this phone</h2>", "Connect to your computer <span", "This phone · screen</button>"]) {
   t.ok(html.includes(text), `the shell carries the copy: ${text}`);
 }

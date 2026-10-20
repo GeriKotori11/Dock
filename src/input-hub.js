@@ -6,16 +6,27 @@ import { validateInput } from "./input.js";
  * Only one paired phone can own mouse buttons. Dock sync remains read-only.
  * `servers` attaches the same upgrade handler to several servers (plain HTTP
  * and HTTPS on one port); `server` alone is the single-server form.
+ * `sessionOf(req)` names the session hash a socket is opened under (null for
+ * loopback trust) so disconnect()/disconnectAll() can end a revoked session.
  */
-export function createInputHub({ server, servers = [server], isAuthorized, input, leaseMs = 2000 }) {
+export function createInputHub({ server, servers = [server], isAuthorized, input, sessionOf = () => null, leaseMs = 2000 }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   let owner = null;
+  /** ws -> { hash, end }, for sockets opened under a session. */
+  const sessionsBySocket = new Map();
   const onUpgrade = (req, socket, head) => {
     if (req.url?.split("?")[0] !== "/input") return;
     if (!originAllowed(req) || !isAuthorized(req)) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    const hash = sessionOf(req);
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      if (hash) {
+        sessionsBySocket.set(ws, { hash, end: () => ws.close(1008, "session revoked") });
+        ws.once("close", () => sessionsBySocket.delete(ws));
+      }
+      wss.emit("connection", ws, req);
+    });
   };
   for (const target of servers) target.on("upgrade", onUpgrade);
   wss.on("connection", (ws, req) => {
@@ -34,6 +45,8 @@ export function createInputHub({ server, servers = [server], isAuthorized, input
       Promise.resolve(worker?.close()).catch(() => {}).finally(() => { if (owner === ws) owner = null; });
     };
     const fail = (error) => { reply({ type: "error", error }); cleanup(); ws.close(1008); };
+    const tracked = sessionsBySocket.get(ws);
+    if (tracked) tracked.end = () => { cleanup(); ws.close(1008, "session revoked"); };
     const timer = setInterval(() => {
       if (Date.now() - lastSeen > (started ? leaseMs : 8000) || !isAuthorized(req)) { cleanup(); ws.terminate(); }
     }, Math.min(500, leaseMs));
@@ -61,5 +74,15 @@ export function createInputHub({ server, servers = [server], isAuthorized, input
       worker.ready.then(() => { if (!closed) { started = true; lastSeen = Date.now(); reply({ type: "ready" }); if (pendingFocus) reply(pendingFocus); } }).catch(() => fail("Windows could not start the touchpad. Update the PC app and try again."));
     } catch { fail("Windows could not start the touchpad."); }
   });
-  return { wss, async close() { for (const ws of wss.clients) ws.terminate(); await new Promise((resolve) => wss.close(resolve)); } };
+  const disconnectWhere = (match) => {
+    let closed = 0;
+    for (const [ws, { hash, end }] of sessionsBySocket) {
+      if (!match(hash)) continue;
+      sessionsBySocket.delete(ws);
+      try { end(); } catch { ws.terminate(); }
+      closed += 1;
+    }
+    return closed;
+  };
+  return { wss, disconnect: (hash) => disconnectWhere((h) => h === hash), disconnectAll: () => disconnectWhere(() => true), async close() { for (const ws of wss.clients) ws.terminate(); await new Promise((resolve) => wss.close(resolve)); } };
 }
