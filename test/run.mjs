@@ -36,6 +36,7 @@ const EXPECTED = {
   "verify-input.mjs": "input verification passed",
   "verify-macos.mjs": "macos verification passed",
   "verify-macos-agent.mjs": "macos-agent verification passed",
+  "verify-tls.mjs": "tls verification passed",
 };
 
 // Guard against an oracle being added to scripts/ but never wired in here.

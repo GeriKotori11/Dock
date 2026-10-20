@@ -35,17 +35,20 @@ export function originAllowed(req) {
 }
 
 /**
- * Attach a sync hub to an HTTP server.
+ * Attach a sync hub to an HTTP server, or to several (`servers`) when the host
+ * answers plain HTTP and HTTPS on one port; every server gets the same
+ * upgrade handler.
  * @param {object} opts
- * @param {import('node:http').Server} opts.server
+ * @param {import('node:http').Server} [opts.server]
+ * @param {import('node:http').Server[]} [opts.servers]
  * @param {(req:import('node:http').IncomingMessage)=>boolean} opts.isAuthorized
  * @param {()=>Promise<object>} opts.getState
  */
-export function createSyncHub({ server, isAuthorized, getState, heartbeatMs = HEARTBEAT_MS }) {
+export function createSyncHub({ server, servers = [server], isAuthorized, getState, heartbeatMs = HEARTBEAT_MS }) {
   const wss = new WebSocketServer({ noServer: true });
   const alive = new WeakMap();
 
-  server.on("upgrade", (req, socket, head) => {
+  const onUpgrade = (req, socket, head) => {
     if (req.url?.split("?")[0] === "/input") return; // Separate bounded input channel.
     if (!originAllowed(req) || !isAuthorized(req)) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
@@ -53,7 +56,8 @@ export function createSyncHub({ server, isAuthorized, getState, heartbeatMs = HE
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-  });
+  };
+  for (const target of servers) target.on("upgrade", onUpgrade);
 
   wss.on("connection", async (ws) => {
     alive.set(ws, true);

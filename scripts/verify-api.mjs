@@ -85,8 +85,9 @@ t.ok(typeof health.json.hostName === "string" && health.json.hostName.length > 0
 t.equal(health.json.api, 1, "health advertises API version 1");
 t.ok(Buffer.byteLength(health.text) <= 4096, `the health body fits the 4096-byte probe limit (${Buffer.byteLength(health.text)} bytes)`);
 t.ok(!health.text.includes(PIN), "health never includes the PIN");
-t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "platform"],
+t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "platform", "tls"],
   "health exposes only its documented fields");
+t.equal(health.json.tls, null, "health reports tls: null without TLS");
 
 // ---- static ----
 const index = await call("/");
@@ -323,8 +324,10 @@ t.equal(await upgradeOutcome(`127.0.0.1:${tport}`), "open", "positive control: a
 // /api/pairing: local software only.
 const localPairing = await hostCall(`127.0.0.1:${tport}`, "/api/pairing");
 t.equal(localPairing.status, 200, "loopback with a loopback Host reads /api/pairing");
-t.deepEqual(Object.keys(localPairing.json).sort(), ["endpoint", "hostId", "hostName", "pin"],
+t.deepEqual(Object.keys(localPairing.json).sort(), ["endpoint", "hostId", "hostName", "pin", "secureEndpoint", "securityCode"],
   "/api/pairing exposes only its documented fields");
+t.ok(localPairing.json.secureEndpoint === null && localPairing.json.securityCode === null,
+  "/api/pairing reports no secure endpoint or code without TLS");
 t.equal(localPairing.json.pin, PIN, "/api/pairing reports the PIN");
 t.equal(localPairing.json.endpoint, null, "/api/pairing endpoint defaults to null");
 t.ok(typeof localPairing.json.hostName === "string" && localPairing.json.hostName.length > 0, "/api/pairing names the host");

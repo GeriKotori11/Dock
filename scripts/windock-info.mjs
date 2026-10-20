@@ -18,12 +18,18 @@ export function infoPort(env = process.env) {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_PORT;
 }
 
-/** The info block shown by `npm run info` and `npm run mac:install`. */
-export function formatInfo({ hostName, endpoint, pin }) {
+/**
+ * The info block shown by `npm run info` and `npm run mac:install`. A host with
+ * TLS also reports its https address and the security code a phone shows
+ * after pairing, so the two can be compared.
+ */
+export function formatInfo({ hostName, endpoint, pin, secureEndpoint = null, securityCode = null }) {
   return [
     `WinDock is running on ${hostName || "this computer"}`,
     `  Address: ${endpoint || "(unknown)"}`,
+    ...(secureEndpoint ? [`  Secure:  ${secureEndpoint}`] : []),
     `  PIN:     ${pin}`,
+    ...(securityCode ? [`  Code:    ${securityCode}`] : []),
     "Enter this address and PIN in the WinDock app on your phone.",
     "",
   ].join("\n");

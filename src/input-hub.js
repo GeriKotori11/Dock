@@ -2,17 +2,22 @@ import { WebSocketServer } from "ws";
 import { originAllowed } from "./sync.js";
 import { validateInput } from "./input.js";
 
-/** Only one paired phone can own mouse buttons. Dock sync remains read-only. */
-export function createInputHub({ server, isAuthorized, input, leaseMs = 2000 }) {
+/**
+ * Only one paired phone can own mouse buttons. Dock sync remains read-only.
+ * `servers` attaches the same upgrade handler to several servers (plain HTTP
+ * and HTTPS on one port); `server` alone is the single-server form.
+ */
+export function createInputHub({ server, servers = [server], isAuthorized, input, leaseMs = 2000 }) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   let owner = null;
-  server.on("upgrade", (req, socket, head) => {
+  const onUpgrade = (req, socket, head) => {
     if (req.url?.split("?")[0] !== "/input") return;
     if (!originAllowed(req) || !isAuthorized(req)) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-  });
+  };
+  for (const target of servers) target.on("upgrade", onUpgrade);
   wss.on("connection", (ws, req) => {
     ws.on("error", () => {});
     const reply = (value) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(value)); };

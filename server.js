@@ -7,6 +7,7 @@
  */
 
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { hostname } from "node:os";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
@@ -19,6 +20,7 @@ import { createInputHub } from "./src/input-hub.js";
 import { validateSignature } from "./src/input.js";
 import { createIconCache, FALLBACK_ICON } from "./src/icons.js";
 import { startDiscovery, primaryAddress, DISCOVERY_PORT } from "./src/discovery.js";
+import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_MS } from "./src/tls.js";
 import {
   newPin,
   isValidPinShape,
@@ -129,10 +131,16 @@ export async function createApp({
   trustLoopback = true,
   identity = null,
   endpoint = null,
+  secureEndpoint = null,
+  tls = null,
+  plainHttp = true,
+  firstByteTimeoutMs = FIRST_BYTE_TIMEOUT_MS,
 } = {}) {
-  // `endpoint` is the LAN URL the host advertises; start() fills it in once
-  // the listening port is known.
-  const state = { pin, endpoint };
+  // `endpoint` is the LAN URL the host advertises and `secureEndpoint` its
+  // https form; start() fills them in once the listening port is known.
+  // `tls` ({ key, cert, fingerprint, code }) adds HTTPS on the same port.
+  if (!plainHttp && !tls) throw new TypeError("plainHttp: false needs tls");
+  const state = { pin, endpoint, secureEndpoint };
   const appIcon = createIconCache(provider);
   const features = featuresOf(provider);
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
@@ -183,7 +191,7 @@ export async function createApp({
     };
   }
 
-  const server = createServer(async (req, res) => {
+  const handler = async (req, res) => {
     const remote = req.socket.remoteAddress || "";
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const path = url.pathname;
@@ -199,6 +207,10 @@ export async function createApp({
           hostId: identity?.hostId ?? null,
           hostName: String(hostname()).slice(0, 255),
           api: API_VERSION,
+          // A hint only, and over plain HTTP an unauthenticated one: a phone
+          // must compare its pin with the certificate the TLS handshake
+          // actually presented, never with this field.
+          tls: tls ? { fingerprint: tls.fingerprint, code: tls.code } : null,
         });
         return;
       }
@@ -255,6 +267,8 @@ export async function createApp({
           pin: state.pin,
           hostName: String(hostname()).slice(0, 255),
           hostId: identity?.hostId ?? null,
+          secureEndpoint: tls ? state.secureEndpoint ?? null : null,
+          securityCode: tls ? tls.code : null,
         });
       }
 
@@ -375,10 +389,20 @@ export async function createApp({
       const status = err?.status || 500;
       sendJson(res, status, { error: status === 500 ? "internal error" : err.message });
     }
-  });
+  };
+
+  // `server` stays a plain http.Server so callers (and every existing test)
+  // can listen on it directly. With TLS, `listener` owns the port and hands
+  // each connection to `server` or `secureServer` by its first byte.
+  const server = createServer(handler);
+  const secureServer = tls ? createHttpsServer({ key: tls.key, cert: tls.cert }, handler) : null;
+  const servers = secureServer ? [server, secureServer] : [server];
+  const listener = secureServer
+    ? createSharedPortListener({ server, secureServer, plainHttp, firstByteTimeoutMs })
+    : server;
 
   const hub = createSyncHub({
-    server,
+    servers,
     isAuthorized: (req) =>
       authorize({
         req,
@@ -390,53 +414,85 @@ export async function createApp({
     getState: dockState,
   });
 
-  const inputHub = createInputHub({ server, input: provider.input, isAuthorized: (req) =>
+  const inputHub = createInputHub({ servers, input: provider.input, isAuthorized: (req) =>
     authorize({ req, sessions, lockout, remote: req.socket.remoteAddress || "", trustLoopback }).ok,
   });
   server.on("close", () => { provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
-  return { server, hub, inputHub, provider, configStore, dockState, state, sessions, lockout, identity };
+  return { server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, sessions, lockout, identity };
 }
 
-export async function start({ port = Number(process.env.PORT) || DEFAULT_PORT, host = process.env.WINDOCK_HOST || "" } = {}) {
+/**
+ * Transport switches from the environment. TLS is on unless WINDOCK_TLS=0;
+ * plain HTTP stays on (for phone apps that predate TLS) unless
+ * WINDOCK_PLAIN_HTTP=0, which is only valid with TLS on.
+ */
+export function transportOptions(env = process.env) {
+  const tls = env.WINDOCK_TLS !== "0";
+  const plainHttp = env.WINDOCK_PLAIN_HTTP !== "0";
+  if (!tls && !plainHttp) throw new Error("WINDOCK_PLAIN_HTTP=0 needs TLS; remove WINDOCK_TLS=0");
+  return { tls, plainHttp };
+}
+
+export async function start({
+  port = Number(process.env.PORT) || DEFAULT_PORT,
+  host = process.env.WINDOCK_HOST || "",
+  env = process.env,
+  discoveryPort = DISCOVERY_PORT,
+} = {}) {
   const address = primaryAddress(undefined, host);
+  const transport = transportOptions(env);
   // Sessions load synchronously when the store is built, so they are in place
   // before the server listens; host restarts keep paired devices paired.
-  const dataDir = defaultDataDir();
+  const dataDir = defaultDataDir({ env });
   const sessions = createSessionStore({ path: join(dataDir, "sessions.json") });
   const identity = await loadHostIdentity({ path: join(dataDir, "host.json") });
-  const app = await createApp({ sessions, identity });
+  const tls = transport.tls
+    ? await loadOrCreateTlsIdentity({ dir: dataDir, commonName: `WinDock ${identity.hostId}` })
+    : null;
+  const app = await createApp({ sessions, identity, tls, plainHttp: transport.plainHttp });
   await new Promise((resolve, reject) => {
-    app.server.once("error", reject);
-    app.server.listen(port, () => { app.server.off("error", reject); resolve(); });
+    app.listener.once("error", reject);
+    app.listener.listen(port, () => { app.listener.off("error", reject); resolve(); });
   });
 
-  port = app.server.address().port;
-  const endpoint = address ? `http://${address}:${port}` : `http://localhost:${port}`;
+  port = app.listener.address().port;
+  const base = address || "localhost";
+  const secureEndpoint = tls ? `https://${base}:${port}` : null;
+  // Discovery and `open:` keep the http URL: phone apps that predate TLS
+  // parse it and could not verify an https certificate. Only with plain HTTP
+  // switched off is the https URL advertised instead.
+  const endpoint = transport.plainHttp ? `http://${base}:${port}` : secureEndpoint;
   app.state.endpoint = endpoint;
-  const discovery = startDiscovery({ endpoint, port: DISCOVERY_PORT });
-  return { ...app, endpoint, discovery, port };
+  app.state.secureEndpoint = secureEndpoint;
+  const discovery = startDiscovery({ endpoint, port: discoveryPort });
+  return { ...app, endpoint, secureEndpoint, discovery, port };
 }
 
 /**
  * The startup banner. The Windows tray parses `open:\s*(\S+)` and
  * `PIN:\s*(\d{4})` from it, so the default form must not change. With
  * `hidePin` (WINDOCK_HIDE_PIN=1, set by the macOS LaunchAgent) the PIN stays
- * out of stdout and therefore out of any log file.
+ * out of stdout and therefore out of any log file. With TLS on, one
+ * `secure:` line is appended after the unchanged lines.
  */
-export function readyBanner({ providerName, endpoint, pin, hidePin = false }) {
+export function readyBanner({ providerName, endpoint, pin, hidePin = false, secureEndpoint = null, securityCode = null }) {
   const pinText = hidePin ? '(run "npm run info" to show it)' : pin;
-  return `WinDock host ready\n  provider: ${providerName}\n  open:     ${endpoint}\n  PIN:      ${pinText}\n`;
+  const lines = `WinDock host ready\n  provider: ${providerName}\n  open:     ${endpoint}\n  PIN:      ${pinText}\n`;
+  // The security code is not secret: it is how a person checks a phone's pin.
+  return secureEndpoint ? `${lines}  secure:   ${secureEndpoint}  code ${securityCode}\n` : lines;
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename);
 if (isMain) {
   start()
-    .then(({ endpoint, state, provider }) => {
+    .then(({ endpoint, secureEndpoint, tls, state, provider }) => {
       process.stdout.write(readyBanner({
         providerName: provider.displayName,
         endpoint,
         pin: state.pin,
         hidePin: process.env.WINDOCK_HIDE_PIN === "1",
+        secureEndpoint,
+        securityCode: tls?.code ?? null,
       }));
     })
     .catch((err) => {
