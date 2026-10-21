@@ -1,5 +1,7 @@
 # WinDock Roadmap
 
+> **Historical (upstream WinDock, pre-fork).** Current plan and status: [docs/V1-PLAN.md](docs/V1-PLAN.md).
+
 Updated 2026-09-18 after continuing the original Linux experiment on Windows.
 
 **Status: 17 of 18 gates met. G14 (physical Android phone → Windows PC) remains pending.**

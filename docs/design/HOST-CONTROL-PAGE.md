@@ -1147,6 +1147,18 @@ computer name, `{phone}` = label or phone name.
 | qrChanged.then / now | When you paired / In the scanned code |
 | qrChanged.pair / notNow | Pair again with the new code / Not now |
 
+### Additions made during implementation
+
+Copy changed during implementation that is not in the table above, quoted
+exactly as implemented. It needs designer sign-off.
+
+| Where | Used for | Text as implemented |
+| --- | --- | --- |
+| Windows installer, `[Messages] FinishedLabel` ([WinDock.iss](../../native/installer/WinDock.iss)) | Last page of the installer. Replaces upstream's "…Choose Show connection info to pair your phone…" | `Find WinDock in your Windows system tray. Click its icon and choose Pair a new phone, then make the dock your own.` |
+
+The heading above it, `FinishedHeadingLabel=WinDock is ready.`, is unchanged
+from upstream.
+
 ---
 
 ## 15. Decisions and open questions for the lead

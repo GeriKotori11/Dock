@@ -1,6 +1,38 @@
 # Version history
 
-## Unreleased
+## Unreleased (personal fork)
+
+Details and verification for each milestone are in [docs/V1-PLAN.md](docs/V1-PLAN.md).
+
+- **macOS host.** A new macOS provider lists installed apps with icons and can
+  launch, focus and quit them. `npm run info` shows the address and PIN, and
+  `npm run mac:install` runs the host at login as a LaunchAgent.
+- **Shared host fixes.** Paired phones survive host restarts. `/health` reports a
+  stable host ID and name. Each host advertises the features it has, and the dock
+  hides the rest. Tiles for apps that were removed are dimmed.
+- **Screen stays on.** Both phone apps keep the screen on while WinDock is open.
+  The Android screen-off/rest option was removed; idle dimming stays.
+- **HTTPS and stronger pairing.** The host serves HTTPS with a self-signed
+  certificate on the same port. Phones confirm a security code once, then pin
+  the certificate. PINs are now 6 digits, single-use, and only work in a
+  10-minute pairing window. `npm run devices` lists and removes paired phones.
+- **Phone apps rebuilt.** Android and iPhone have native Computers, pairing,
+  can't-reach, security-changed and switch screens. They find computers with
+  Bonjour (`_windock._tcp`) and, on Android, UDP. A computer whose address
+  changes is found again without a new PIN.
+- **Forget means forget.** Forgetting a computer on the phone also removes the
+  phone from that computer.
+- **Host control page and QR pairing.** The computer has a control page
+  (`/host`) with status, a pairing QR code, paired phones and settings.
+  The new macOS menu-bar app shows it, and so does a new WebView2 window in
+  the Windows tray. Phones pair by scanning the code.
+- **iPhone on a real device.** The iPhone app has its own bundle ID, with
+  signing set in a git-ignored local file. It has run on a real iPhone against
+  a Mac host.
+- **Not yet verified:** anything on Windows since the fork (tray window, Bonjour
+  responder, installer changes).
+
+## Unreleased (upstream, before the fork)
 
 - Add the first native iPhone companion source: remembered PC address, PIN pairing
   through the shared landscape dock, and reconnect/change-PC controls.

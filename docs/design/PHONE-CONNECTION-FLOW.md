@@ -1008,6 +1008,27 @@ address"), `mode_wifi` / `mode_usb`, `choose_pc`, `usb_instructions`, `usb_not_f
 hint "Find the address WinDock shows…". USB copy says "Windows computer"
 because USB mode is Windows-only.
 
+### Additions made during implementation
+
+The phone apps use these strings, which are not in the table above. They are
+quoted exactly as implemented (Android `%1$s` and Swift `\(name)` are the
+computer's display name, `{name}` above). They need designer sign-off.
+
+| Where | Used for | Text as implemented |
+| --- | --- | --- |
+| Android `forget_message_unreachable` ([strings.xml](../../android/app/src/main/res/values/strings.xml)) | Appended to the Forget dialog when the computer can't be reached, so this phone can't be removed there | `%1$s isn’t reachable right now, so it will still list this phone until you remove it there.` |
+| Android `forget_message_removed` ([strings.xml](../../android/app/src/main/res/values/strings.xml)) | Appended to the Forget dialog when the computer answers, so this phone is removed there too | `This phone will also be removed from %1$s.` |
+| Android `pin_failed` ([strings.xml](../../android/app/src/main/res/values/strings.xml)) | PIN step and QR confirmation, when the request fails for a reason other than a wrong PIN | `Couldn’t reach %1$s. Check that WinDock is running, then try again.` |
+| Android `changed_none` ([strings.xml](../../android/app/src/main/res/values/strings.xml)) | Security-changed screen, in place of a code when one side has none | `No security code` |
+| iOS ([PairingViewController.swift](../../ios/Sources/PairingViewController.swift), PIN step `.failed`) | Same case as Android `pin_failed`; the wording differs | `Couldn't reach \(name). Check that WinDock is still running on it, then try again.` |
+| iOS ([ComputersViewController.swift](../../ios/Sources/ComputersViewController.swift)), alert title | After Forget, when the computer didn't answer | `Forgotten on this phone` |
+| iOS ([ComputersViewController.swift](../../ios/Sources/ComputersViewController.swift)), alert message | Same alert; button is `OK` | `\(name) didn't answer, so it may still list this phone. You can remove it there later.` |
+| iOS ([PairingViewController.swift](../../ios/Sources/PairingViewController.swift) and [QRPairingViewController.swift](../../ios/Sources/QRPairingViewController.swift)), `closed.body` for other hosts (Linux) | Pairing closed on a host that is neither Windows nor macOS | ``Run `npm run info` on \(name). That opens pairing for 10 minutes, and this screen continues by itself.`` |
+
+Notes for sign-off: Android and iOS word the PIN-step failure differently, and
+Android's Forget note (`forget_message_unreachable`) differs from the iOS alert
+that covers the same case.
+
 ---
 
 ## 14. Decisions and open questions for the lead

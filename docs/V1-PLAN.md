@@ -332,3 +332,16 @@ Open items carried forward:
 - macOS host + real Android phone (Galaxy A40): the update kept the existing pairing and opened straight into the dock.
 - macOS host + real iPhone: the user signed it with their Personal Team, installed it from Xcode, and reports it "worked ok". The detailed checklist results were not recorded.
 - Still never run: the Windows host with any phone.
+
+### 2026-10-21: docs and cleanup
+- The README is rewritten as this fork's guide. New guides: `docs/INSTALL-WINDOWS.md` (marked untested) and `docs/INSTALL-PHONES.md`. The macOS guide is tightened, and the iOS and Android READMEs are updated.
+- The upstream ROADMAP, GATES and WINDOWS_READINESS files are marked historical. The changelog has a section for this fork.
+- Copy written during implementation is added to the design copy decks.
+- Bonjour re-advertises when the address changes.
+- Android switches to a single-column layout above font scale 1.3.
+- On Android, "forget" after a security change stays phone-side, by design.
+
+Open follow-ups:
+- The Windows tray "Check for updates" still points at upstream releases (`native/tray/UpdateChecker.cs`). Disable it or repoint it before using Windows.
+- Phone copy for Windows hosts that predate the control page still mentions the removed "Show connection info" tray item.
+- The Windows host has not been run on Windows.

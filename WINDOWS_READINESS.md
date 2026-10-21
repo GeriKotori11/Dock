@@ -1,5 +1,7 @@
 # Windows readiness review — 2026-09-17
 
+> **Historical (upstream WinDock, pre-fork).** Current plan and status: [docs/V1-PLAN.md](docs/V1-PLAN.md).
+
 Reviewed baseline: `e6ab859` on `main`, cloned from
 `https://github.com/aliihsaad/WinDock.git`.
 

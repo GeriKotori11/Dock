@@ -1,5 +1,7 @@
 # Gates: WinDock v1 foundation
 
+> **Historical (upstream WinDock, pre-fork).** Current plan and status: [docs/V1-PLAN.md](docs/V1-PLAN.md).
+
 OWNS: src/**, public/**, scripts/**, test/**, native/**, server.js, package.json
 
 Scope: A Windows-hosted remote app dock. A Node host serves a PWA and syncs over
