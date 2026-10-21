@@ -40,7 +40,7 @@ button:active:not(:disabled) { transform: scale(.96); }
 .dock-page { display: grid; flex: 0 0 100%; width: 100%; min-width: 0; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows), minmax(0, 1fr)); align-items: center; justify-items: center; gap: 7px 14px; padding: 10px 13px; scroll-snap-align: start; scroll-snap-stop: always; }
 .tile { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 100%; max-height: 160px; min-height: 0; min-width: 0; padding: 7px; border: 1px solid transparent; border-radius: 20px; background: transparent; color: var(--text); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 /* --glyph is the icon's rendered size; the close button beside a tile uses it to find the icon corner. */
-.tile, .tile-slot { --glyph: var(--icon-size); }
+.tile, .tile-slot, .slot-empty { --glyph: var(--icon-size); }
 .tile__glyph { position: relative; display: grid; place-items: center; height: var(--glyph); width: var(--glyph); flex-shrink: 0; }
 .tile__glyph > .icon { width: 42%; height: 42%; }
 .tile--control .tile__glyph { border-radius: 23%; color: var(--accent); background: linear-gradient(145deg, #3c5750, #223732); border: 1px solid #76988745; box-shadow: 0 6px 14px #0002; }
@@ -55,6 +55,10 @@ button:active:not(:disabled) { transform: scale(.96); }
 .tile.is-unavailable .tile__glyph { filter: grayscale(1); opacity: .38; }
 .tile.is-unavailable .tile__dot { display: none; }
 .tile__edit { display: none; }
+/* An empty slot keeps its grid cell; while arranging it shows a faint outline the size of an icon and takes drops. */
+.slot-empty { display: grid; place-items: center; width: 100%; height: 100%; min-width: 0; min-height: 0; pointer-events: none; }
+.slot-empty.is-editing { pointer-events: auto; }
+.slot-empty.is-editing::before { content: ""; width: var(--glyph); height: var(--glyph); box-sizing: border-box; border: 1.5px dashed var(--glass-border); border-radius: 23%; }
 .tile.is-editing { cursor: grab; touch-action: none; animation: wobble .38s ease-in-out infinite alternate; }
 .tile.is-editing:nth-child(even) { animation-delay: -.25s; }
 .tile.is-editing::after { content: "−"; position: absolute; left: calc(50% - var(--icon-size) / 2 - 5px); top: max(2px, calc(50% - var(--icon-size) / 2 - 17px)); display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: #cbd7d0; border: 1px solid #ffffff3b; color: #203128; font-size: 17px; }
@@ -179,7 +183,7 @@ h2 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -.6px; }
   .dock-heading > p { font-size: 9px; }
   .dock-page { gap: 3px 10px; padding: 5px 8px; }
   .tile { gap: 5px; padding: 4px; }
-  .tile, .tile-slot { --glyph: min(var(--icon-size), calc((100dvh - 204px) / var(--rows) - 24px)); }
+  .tile, .tile-slot, .slot-empty { --glyph: min(var(--icon-size), calc((100dvh - 204px) / var(--rows) - 24px)); }
   .tile__label { font-size: 10px; }
   .tile__dot { bottom: 0; width: 3px; height: 3px; }
   .page-dots { min-height: 24px; }
@@ -211,7 +215,7 @@ h2 { margin: 0; font-size: 25px; font-weight: 500; letter-spacing: -.6px; }
   .dock-heading .eyebrow { display: none; }
   .dock-heading h1 { font-size: 15px; }
   .dock-heading > p { font-size: 8px; }
-  .tile, .tile-slot { --glyph: min(var(--icon-size), calc((100dvh - 176px) / var(--rows) - 25px)); }
+  .tile, .tile-slot, .slot-empty { --glyph: min(var(--icon-size), calc((100dvh - 176px) / var(--rows) - 25px)); }
   .foot { min-height: 60px; }
   .page-dots, .page-dot { min-height: 20px; height: 20px; }
 }
@@ -248,7 +252,7 @@ body.is-immersive .app { max-width: none; padding: env(safe-area-inset-top) max(
 body.is-immersive .bar, body.is-immersive .dock-heading, body.is-immersive .foot { display: none; }
 body.is-immersive .workspace { position: relative; height: 100%; padding: 12px 0 22px; }
 body.is-immersive .dock-page { padding: 12px max(14px, calc((100vw - 1150px) / 2)); column-gap: clamp(12px, 4vw, 60px); row-gap: 8px; }
-body.is-immersive .tile, body.is-immersive .tile-slot, body.is-immersive .drag-ghost {
+body.is-immersive .tile, body.is-immersive .tile-slot, body.is-immersive .slot-empty, body.is-immersive .drag-ghost {
   --display-icon: min(var(--icon-size), calc((100dvh - 64px) * var(--icon-scale)), calc((100vw - 96px) / var(--columns) - 36px));
   --glyph: var(--display-icon);
 }

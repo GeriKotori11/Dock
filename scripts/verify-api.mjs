@@ -157,6 +157,33 @@ t.equal(ffTile.running, true, "a pinned app with a live process is marked runnin
 t.equal(ffTile.available, true, "a pinned app in the catalog is available");
 t.equal(after.json.tiles.find((x) => x.kind === "control").available, true, "control tiles are available on Windows");
 
+// ---- empty slots (spacers) round-trip through save, state and the snapshot ----
+const FIREFOX_TILE = { kind: "app", id: "c:/apps/firefox.exe", target: "C:\\Apps\\firefox.exe", label: "Firefox" };
+const MUTE_TILE = { kind: "control", verb: "mute-toggle", label: "Mute" };
+const gapped = await call("/api/tiles", { method: "PUT", body: { tiles: [
+  { kind: "spacer", label: "junk", id: "x", running: true },
+  FIREFOX_TILE, { kind: "spacer" }, { kind: "spacer" }, MUTE_TILE, { kind: "spacer" }, { kind: "spacer" },
+] } });
+const GAPPED_KINDS = ["spacer", "app", "spacer", "spacer", "control"];
+t.equal(gapped.status, 200, "PUT /api/tiles accepts empty slots");
+t.deepEqual(gapped.json.tiles.map((x) => x.kind), GAPPED_KINDS, "gaps keep their places and trailing ones are trimmed on save");
+t.deepEqual(gapped.json.tiles[0], { kind: "spacer" }, "an empty slot persists as its kind only (no label, id or live state)");
+const gappedState = await call("/api/state");
+t.deepEqual(gappedState.json.tiles.map((x) => x.kind), GAPPED_KINDS, "GET /api/state carries the gaps in order");
+t.deepEqual(gappedState.json.tiles[2], { kind: "spacer" }, "state sends an empty slot with no running or availability flags");
+t.equal(gappedState.json.tiles[1].running, true, "a real tile beside a gap keeps its live running state");
+const gappedSnapshot = await new Promise((resolve, reject) => {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { cookie, origin: base } });
+  const timer = setTimeout(() => { ws.terminate(); reject(new Error("no snapshot")); }, 3000);
+  ws.on("message", (d) => { clearTimeout(timer); ws.close(); resolve(JSON.parse(String(d))); });
+  ws.on("error", (e) => { clearTimeout(timer); reject(e); });
+});
+t.deepEqual(gappedSnapshot.tiles.map((x) => x.kind), GAPPED_KINDS, "the WebSocket snapshot carries the gaps in order");
+t.deepEqual(gappedSnapshot.tiles[3], { kind: "spacer" }, "the snapshot's empty slot carries nothing else");
+const onlyGaps = await call("/api/tiles", { method: "PUT", body: { tiles: [{ kind: "spacer" }, { kind: "spacer" }] } });
+t.deepEqual(onlyGaps.json.tiles, [], "a dock of only empty slots saves as an empty dock");
+t.equal((await call("/api/tiles", { method: "PUT", body: { tiles: [FIREFOX_TILE, MUTE_TILE] } })).json.tiles.length, 2, "the plain dock is restored");
+
 // ---- actions ----
 const launch = await call("/api/apps/launch", { method: "POST", body: { id: "c:/windows/notepad.exe" } });
 t.equal(launch.status, 200, "POST /api/apps/launch succeeds for a known app");

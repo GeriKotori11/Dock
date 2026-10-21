@@ -1,8 +1,10 @@
 /**
  * Pure dock-list operations.
  *
- * The dock is an ordered list, and every edit is a pure transformation of that
- * list: add, remove, move. Keeping these free of the DOM means the editing
+ * The dock is an ordered list of slots, and every edit is a pure transformation
+ * of that list: add, remove, move. A slot holds a real tile or an empty
+ * `{ kind: "spacer" }`, so an icon can sit on page 3 while page 2 has gaps.
+ * Trailing spacers are always trimmed. Keeping these free of the DOM means the editing
  * behaviour is provable headlessly instead of only by tapping a phone.
  *
  * Every function returns a NEW array and never mutates its input, so a failed
@@ -14,8 +16,12 @@
  * A valued control is keyed by verb AND value, so "Volume 25%" and
  * "Volume 75%" are two distinct tiles rather than one colliding pair.
  */
-export function tileKey(tile) {
+export function tileKey(tile, index) {
   if (!tile || typeof tile !== "object") return "";
+  // An empty slot has no identity of its own: its key is its position (for
+  // rendering only, never persisted), so `list.map(tileKey)` stays unique and
+  // a bare `tileKey(spacer)` never matches a real tile's key.
+  if (tile.kind === "spacer") return `spacer:${Number.isInteger(index) ? index : ""}`;
   if (tile.kind === "spotify") return `spotify:${tile.uri}`;
   if (tile.kind !== "control") return `app:${tile.id}`;
   return tile.value === undefined || tile.value === null
@@ -30,9 +36,10 @@ export function tileKey(tile) {
  */
 export function toWireTiles(tiles) {
   if (!Array.isArray(tiles)) return [];
-  return tiles
+  return trimSpacers(tiles
     .map((tile) => {
       if (!tile || typeof tile !== "object") return null;
+      if (tile.kind === "spacer") return { kind: "spacer" };
       if (tile.kind === "control") {
         const out = { kind: "control", verb: tile.verb, label: tile.label };
         if (tile.value !== undefined && tile.value !== null) out.value = tile.value;
@@ -56,14 +63,72 @@ export function toWireTiles(tiles) {
       }
       return null;
     })
-    .filter(Boolean);
+    .filter(Boolean));
+}
+
+/** Most real tiles a dock holds; spacers fill the remaining slots up to MAX_SLOTS. */
+export const MAX_REAL_TILES = 64;
+export const MAX_SLOTS = 128;
+
+export function isSpacer(tile) {
+  return Boolean(tile) && tile.kind === "spacer";
+}
+
+/** The real tiles, gaps skipped. */
+export function realTiles(tiles) {
+  return (Array.isArray(tiles) ? tiles : []).filter((tile) => tile && typeof tile === "object" && !isSpacer(tile));
+}
+
+/** Drop trailing empty slots (a dock of only spacers becomes empty). */
+export function trimSpacers(tiles) {
+  const list = Array.isArray(tiles) ? [...tiles] : [];
+  while (list.length && isSpacer(list[list.length - 1])) list.pop();
+  return list;
+}
+
+/** Index of the last real tile, or -1 for an empty dock. */
+export function lastRealIndex(tiles) {
+  const list = Array.isArray(tiles) ? tiles : [];
+  for (let i = list.length - 1; i >= 0; i--) if (list[i] && !isSpacer(list[i])) return i;
+  return -1;
+}
+
+/** A new tile goes into the first empty slot, else on the end; never past MAX_REAL_TILES. */
+function insertTile(list, tile) {
+  if (realTiles(list).length >= MAX_REAL_TILES) return list;
+  const gap = list.findIndex(isSpacer);
+  if (gap === -1) return [...list, tile];
+  const next = [...list];
+  next[gap] = tile;
+  return next;
+}
+
+/**
+ * Move a tile into slot `index`, which must be empty (a spacer, or past the
+ * end, in which case the list is padded with spacers). Its old slot becomes
+ * a spacer. Returns the list unchanged for an occupied target, an absent
+ * key, or an index outside the MAX_SLOTS range.
+ */
+export function placeTile(tiles, key, index) {
+  const list = toWireTiles(tiles);
+  const from = list.findIndex((t) => tileKey(t) === key);
+  if (from === -1 || !Number.isInteger(index) || index < 0 || index >= MAX_SLOTS || index === from) return list;
+  if (index < list.length && !isSpacer(list[index])) return list;
+  const next = [...list];
+  while (next.length <= index) next.push({ kind: "spacer" });
+  next[index] = next[from];
+  next[from] = { kind: "spacer" };
+  return trimSpacers(next);
 }
 
 export function hasTile(tiles, key) {
-  return (Array.isArray(tiles) ? tiles : []).some((t) => tileKey(t) === key);
+  return (Array.isArray(tiles) ? tiles : []).some((t) => !isSpacer(t) && tileKey(t) === key);
 }
 
-/** Append an app tile. Adding one that is already pinned is a no-op. */
+/**
+ * Add an app tile into the first empty slot, else on the end. Adding one that
+ * is already pinned, or to a dock already holding MAX_REAL_TILES, is a no-op.
+ */
 export function addAppTile(tiles, app) {
   const list = toWireTiles(tiles);
   if (!app || typeof app !== "object" || !app.id || !app.target) return list;
@@ -76,11 +141,12 @@ export function addAppTile(tiles, app) {
     icon: app.icon || "",
   };
   if (hasTile(list, tileKey(tile))) return list;
-  return [...list, tile];
+  return insertTile(list, tile);
 }
 
 /**
- * Append a control tile. Adding one that is already pinned is a no-op.
+ * Add a control tile (first empty slot, else the end). Adding one that is
+ * already pinned, or to a full dock, is a no-op.
  * `value` is required for verbs that take one (volume-set, brightness-set) and
  * is stored on the tile so tapping it sends a complete control request.
  */
@@ -93,11 +159,11 @@ export function addControlTile(tiles, verb, label, value = null) {
     tile.value = value;
   }
   if (hasTile(list, tileKey(tile))) return list;
-  return [...list, tile];
+  return insertTile(list, tile);
 }
 
 /**
- * Append a Spotify playlist or album tile `{ kind: "spotify", uri, label, image? }`.
+ * Add a Spotify playlist or album tile (first empty slot, else the end) `{ kind: "spotify", uri, label, image? }`.
  * Only playlist and album URIs qualify; adding one already pinned is a no-op.
  */
 export function addSpotifyTile(tiles, tile) {
@@ -106,16 +172,20 @@ export function addSpotifyTile(tiles, tile) {
   const next = { kind: "spotify", uri: tile.uri, label: tile.label || "Spotify" };
   if (tile.image) next.image = tile.image;
   if (hasTile(list, tileKey(next))) return list;
-  return [...list, next];
-}
-
-/** Remove the tile with this key. Removing an absent key is a no-op. */
-export function removeTile(tiles, key) {
-  return toWireTiles(tiles).filter((t) => tileKey(t) !== key);
+  return insertTile(list, next);
 }
 
 /**
- * Move a tile by `delta` positions, clamped to the list bounds.
+ * Remove the tile with this key, leaving an empty slot so the icons after it
+ * keep their places (trailing gaps are trimmed). Removing an absent key is a no-op.
+ */
+export function removeTile(tiles, key) {
+  return toWireTiles(toWireTiles(tiles).map((t) => (tileKey(t) === key ? { kind: "spacer" } : t)));
+}
+
+/**
+ * Move a tile by `delta` slots, clamped to the list bounds; the slots between
+ * shift by one. A move of one swaps it with its neighbouring slot, spacer or tile.
  * Returns the list unchanged when the tile is absent or already at the edge.
  */
 export function moveTile(tiles, key, delta) {
@@ -127,7 +197,7 @@ export function moveTile(tiles, key, delta) {
   const next = [...list];
   const [moved] = next.splice(from, 1);
   next.splice(to, 0, moved);
-  return next;
+  return trimSpacers(next);
 }
 
 /**

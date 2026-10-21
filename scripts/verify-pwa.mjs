@@ -445,7 +445,7 @@ t.ok(appJs.includes("document.documentElement.dataset.platform = state.platform"
 t.ok(/\.tile__close-badge \{[^}]*width: 24px; height: 24px[^}]*background: var\(--badge\)/.test(css), "the close badge is 24 px on the badge token");
 t.ok(/\.tile__close-pill \{[^}]*height: 30px[^}]*background: var\(--danger\); color: var\(--on-danger\); font-size: 12px; font-weight: 650/.test(css), "the armed pill is 30 px, danger on on-danger, 12/650");
 for (const token of ["--ease-out: cubic-bezier(0.23, 1, 0.32, 1)", "--badge: rgba(12, 20, 24, .78)", "--text-3: #8c9c9c"]) t.ok(css.includes(token), `style.css defines ${token}`);
-t.ok(appJs.includes('const onClose = Boolean(event.target.closest(".tile__close"));') && appJs.includes("if (state.tiles.length && !editing && !onClose) gesture.holdTimer"), "pressing the close button never starts the Arrange timer");
+t.ok(appJs.includes('const onClose = Boolean(event.target.closest(".tile__close"));') && appJs.includes("if (realTiles(state.tiles).length && !editing && !onClose) gesture.holdTimer"), "pressing the close button never starts the Arrange timer");
 t.ok(appJs.includes("if (gesture.onClose && Math.hypot(dx, dy) > 10) suppressCloseUntil"), "more than 10 px of movement on the close button is a swipe, not a tap");
 
 // Close outcomes and copy (5.1, 13).
@@ -1015,13 +1015,33 @@ t.ok(appJs.includes("syncPinnedPlay(before);"), "the pinned tile glyph follows o
   t.ok(html.includes('<div id="sp-panel" class="sp-host"></div>') && html.includes('<div id="media-spotify" class="sp-foot-host"></div>'), "the Media sheet hosts the tab panel and the footer");
   t.ok(html.includes('<dialog id="sp-menu" class="options sp-menu"'), "the long-press menu is a <dialog> (Android Back closes it)");
   const sw = read("sw.js");
-  t.ok(sw.includes('"/spotify.js"') && /windock-v20-/.test(sw), "spotify.js is precached and the cache version bumped");
+  t.ok(sw.includes('"/spotify.js"') && Number(/windock-v(\d+)-/.exec(sw)?.[1]) >= 20, "spotify.js is precached and the cache version bumped");
   t.ok(readFileSync(join(import.meta.dirname, "build-website-demo.mjs"), "utf8").includes("'spotify.js'"), "the website demo copies spotify.js");
   t.ok(css.includes(".sp-tab::before { content: \"\"; position: absolute; inset: -4px 0; }"), "tabs have a 44 px hit height");
   t.ok(/\.media-sheet\.is-search \{ margin-top:/.test(css), "the sheet pins to the top while searching");
   t.ok(appJs.includes("const spSearch = createSearch(") && appJs.includes('api("/api/spotify/search?q=" + encodeURIComponent(query)'), "app.js searches through createSearch");
   t.ok(appJs.includes('api("/api/spotify/account", { method: "DELETE" })') && appJs.includes('title: "Disconnect Spotify?"'), "Disconnect Spotify asks, then calls DELETE /api/spotify/account");
   t.ok(appJs.includes('"/api/spotify/like?trackId=" + encodeURIComponent(track.id)'), "the heart reads GET /api/spotify/like");
+}
+
+// ---- empty slots: arrange the dock with gaps (an icon on page 3 while page 2 is partly empty) ----
+{
+  const SP = { kind: "spacer" };
+  const gapped = renderTiles({ tiles: [SP, { kind: "app", id: "c:/a.exe", label: "Alpha", running: true }, SP, { kind: "control", verb: "lock", label: "Lock" }, SP] });
+  t.equal((gapped.match(/<button/g) || []).length, 2, "the plain tile list skips gaps");
+  t.ok(!gapped.includes("slot-empty"), "the plain tile list draws no placeholder for a gap");
+  t.ok(renderTiles({ tiles: [SP, SP] }).includes("No tiles pinned"), "a dock of only gaps shows the empty state");
+  t.equal(renderTile(SP), '<div class="slot-empty" aria-hidden="true"></div>', "a stray spacer renders as an inert, hidden placeholder");
+  t.ok(/\.slot-empty \{[^}]*pointer-events: none/.test(css), "outside Arrange an empty slot is not a hit target");
+  t.ok(/\.slot-empty\.is-editing::before \{[^}]*width: var\(--glyph\); height: var\(--glyph\)[^}]*border: 1\.5px dashed var\(--glass-border\)[^}]*border-radius: 23%/.test(css),
+    "in Arrange an empty slot is an icon-sized dashed rounded outline on a theme token");
+  t.ok(css.includes(".tile, .tile-slot, .slot-empty { --glyph: var(--icon-size); }") && css.includes("body.is-immersive .slot-empty,"), "an empty slot follows the icon size in every layout");
+  t.ok(appJs.includes("pageCount(state.tiles, layout, editing)"), "the pager adds the extra Arrange page (paint and page dots)");
+  t.ok(appJs.includes('closest("[data-tile-key], [data-empty-slot]")') && appJs.includes("dropOnSlot(state.tiles, gesture.key, Number(target.dataset.emptySlot))"), "dragging over an empty slot drops the icon exactly there");
+  t.ok(appJs.includes("pageCount(state.tiles, layout, true) - 1, currentPage + direction") && appJs.includes("dropOnSlot(state.tiles, gesture.key, page * capacity"), "edge paging reaches the extra page and drops into empty slots");
+  t.ok(appJs.includes('if (tile.kind === "spacer") return tile;'), "gaps carry no running, close or availability state into the view");
+  t.equal((appJs.match(/realTiles\(state\.tiles\)\.length >= MAX_TILES/g) || []).length, 3, "the dock-full rule counts real tiles only (apps, controls, Spotify)");
+  t.ok(Number(/windock-v(\d+)-/.exec(read("sw.js"))?.[1]) >= 21, "the service worker cache version is bumped for the gaps release");
 }
 
 t.done("pwa verification passed");

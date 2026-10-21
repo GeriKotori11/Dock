@@ -380,6 +380,8 @@ export async function createApp({
       features,
       ...(typeof session?.locked === "boolean" ? { session: { locked: session.locked } } : {}),
       tiles: config.tiles.map((tile) => {
+        // An empty slot keeps its place on the dock and carries nothing else.
+        if (tile.kind === "spacer") return tile;
         if (tile.kind === "app") return { ...tile, running: runningIds.has(tile.id), available: catalog ? catalog.ids.has(tile.id) : true };
         // A Spotify tile plays through the account; its image key is the
         // host's own (stable per URI), whatever the phone saved.

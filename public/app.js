@@ -1,7 +1,7 @@
 import { renderControlPicker, renderAppIcon, renderControls, renderMiniPlayer, renderMediaSheet, renderVolumeRow, escapeHtml } from "./dock.js";
 import { icon, controlIcon } from "./icons.js";
-import { addAppTile, addControlTile, addSpotifyTile, hasTile, removeTile, moveTile, toWireTiles, availableControls, tileKey } from "./tiles.js";
-import { normalizeLayout, renderPages, pageCount, moveToTile } from "./launcher.js";
+import { addAppTile, addControlTile, addSpotifyTile, hasTile, removeTile, moveTile, toWireTiles, availableControls, tileKey, realTiles } from "./tiles.js";
+import { normalizeLayout, renderPages, pageCount, moveToTile, dropOnSlot } from "./launcher.js";
 import { createInputPad } from "./input-pad.js";
 import { createMediaPoller, normalizeMedia, fromNowPlaying, mediaPosition, formatTime, spokenTime } from "./now-playing.js";
 import {
@@ -360,6 +360,7 @@ function dockView() {
   const offline = offlineVisible;
   const name = computerName();
   return { ...state, tiles: state.tiles.map((tile) => {
+    if (tile.kind === "spacer") return tile;
     if (tile.kind === "app") {
       const view = { ...tile, running: running.has(tile.id) && !offline, available: !unavailableIds.has(tile.id) };
       const target = view.running && closeTarget(view, { features: state.features, running: state.running, editing, offline, enabled: layout.closeButtons });
@@ -389,7 +390,7 @@ function restoreFocus(root, focus) {
 function paint() {
   applyFeatures();
   const view = dockView();
-  const pages = pageCount(state.tiles, layout);
+  const pages = pageCount(state.tiles, layout, editing);
   currentPage = Math.min(currentPage, pages - 1);
   const html = renderPages(view, layout, editing);
   // Identical snapshots leave the DOM alone, so an armed or fading close
@@ -422,7 +423,7 @@ function paint() {
 }
 function pageTo(page, smooth = true) {
   if (page !== currentPage) arming.disarm("page");
-  currentPage = Math.max(0, Math.min(pageCount(state.tiles, layout) - 1, page));
+  currentPage = Math.max(0, Math.min(pageCount(state.tiles, layout, editing) - 1, page));
   $("dock").scrollTo({ left: currentPage * $("dock").clientWidth, behavior: smooth ? "smooth" : "instant" });
   if (smooth) showPageHint();
 }
@@ -1317,7 +1318,7 @@ async function spAddToDock(item) {
   const tile = spotifyTile(item);
   if (!tile) return;
   if (hasTile(state.tiles, tileKey(tile))) return notify(SP_COPY.alreadyOnDock, "neutral");
-  if (state.tiles.length >= MAX_TILES) return notify("Your dock is full. Remove a tile before adding another.", true);
+  if (realTiles(state.tiles).length >= MAX_TILES) return notify("Your dock is full. Remove a tile before adding another.", true);
   if (!online) return notify(offlineMessage(), true);
   try { await commitTiles(addSpotifyTile(state.tiles, tile)); notify(item.name + " added to your dock"); }
   catch (error) { report(error); }
@@ -1449,7 +1450,7 @@ $("picker-list").addEventListener("click", async (event) => {
   if (!button || button.disabled || saving) return;
   const app = installedApps.find((item) => item.id === button.dataset.id);
   if (!app) return;
-  if (state.tiles.length >= 64) return notify("Your dock is full. Remove a tile before adding another.", true);
+  if (realTiles(state.tiles).length >= MAX_TILES) return notify("Your dock is full. Remove a tile before adding another.", true);
   button.disabled = true;
   try {
     await commitTiles(addAppTile(state.tiles, app));
@@ -1460,7 +1461,7 @@ $("picker-list").addEventListener("click", async (event) => {
 $("control-list").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-verb]");
   if (!button || button.disabled || saving) return;
-  if (state.tiles.length >= 64) return notify("Your dock is full. Remove a tile before adding another.", true);
+  if (realTiles(state.tiles).length >= MAX_TILES) return notify("Your dock is full. Remove a tile before adding another.", true);
   const value = button.dataset.value === undefined ? null : Number(button.dataset.value);
   const item = availableControls(pickerVerbs(), state.tiles).flatMap((group) => group.items).find((item) => item.verb === button.dataset.verb && (item.value ?? null) === value);
   button.disabled = true;
@@ -1486,7 +1487,7 @@ $("dock").addEventListener("pointerdown", (event) => {
   const onClose = Boolean(event.target.closest(".tile__close"));
   const tile = onClose ? null : event.target.closest("[data-tile-key]");
   gesture = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, key: tile?.dataset.tileKey, previous: state.tiles, page: currentPage, dragging: false, held: false, wasEditing: editing, onClose };
-  if (state.tiles.length && !editing && !onClose) gesture.holdTimer = setTimeout(() => {
+  if (realTiles(state.tiles).length && !editing && !onClose) gesture.holdTimer = setTimeout(() => {
     if (!gesture) return;
     gesture.held = true; suppressClickUntil = Date.now() + 600;
     enterEditing(); navigator.vibrate?.(18);
@@ -1516,8 +1517,12 @@ document.addEventListener("pointermove", (event) => {
     document.body.append(dragGhost);
   }
   dragGhost.style.left = event.clientX + "px"; dragGhost.style.top = event.clientY + "px";
-  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-tile-key]");
-  if (target && target.dataset.tileKey !== gesture.key) {
+  // An empty slot takes the tile exactly there; an occupied one shifts the slots between.
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-tile-key], [data-empty-slot]");
+  if (target?.dataset.emptySlot !== undefined) {
+    const next = dropOnSlot(state.tiles, gesture.key, Number(target.dataset.emptySlot));
+    if (next !== state.tiles) { state = { ...state, tiles: next }; paint(); }
+  } else if (target && target.dataset.tileKey !== gesture.key) {
     state = { ...state, tiles: moveToTile(state.tiles, gesture.key, target.dataset.tileKey) };
     paint();
   }
@@ -1528,11 +1533,12 @@ document.addEventListener("pointermove", (event) => {
   else if (!edgeTimer) edgeTimer = setTimeout(() => {
     edgeTimer = null;
     if (!gesture?.dragging) return;
-    const page = Math.max(0, Math.min(pageCount(state.tiles, layout) - 1, currentPage + direction));
+    const page = Math.max(0, Math.min(pageCount(state.tiles, layout, true) - 1, currentPage + direction));
     if (page === currentPage) return;
+    // The tile lands on the near edge of the new page: into the slot itself
+    // when it is empty (the extra page's included), shifting when it is not.
     const capacity = layout.columns * layout.rows;
-    const targetIndex = Math.min(state.tiles.length - 1, page * capacity + (direction < 0 ? capacity - 1 : 0));
-    state = { ...state, tiles: moveToTile(state.tiles, gesture.key, tileKey(state.tiles[targetIndex])) };
+    state = { ...state, tiles: dropOnSlot(state.tiles, gesture.key, page * capacity + (direction < 0 ? capacity - 1 : 0)) };
     currentPage = page; paint();
   }, 550);
 }, { passive: false });

@@ -2,8 +2,8 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createChecker } from "./lib/assert.mjs";
-import { normalizeLayout, renderPages, pageCount, moveToTile } from "../public/launcher.js";
-import { tileKey } from "../public/tiles.js";
+import { normalizeLayout, renderPages, pageCount, moveToTile, dropOnSlot } from "../public/launcher.js";
+import { tileKey, removeTile, moveTile, addAppTile, MAX_SLOTS } from "../public/tiles.js";
 import { createIconCache } from "../src/icons.js";
 import { createApp } from "../server.js";
 import { createConfigStore } from "../src/config.js";
@@ -30,8 +30,11 @@ const tiles = Array.from({ length: 17 }, (_, i) => ({ kind: "app", id: `c:/apps/
 t.equal(pageCount(tiles, layout), 3, "overflow creates a partially populated third page");
 t.equal(pageCount([], layout), 1, "empty dock keeps one page");
 const markup = renderPages({ tiles }, layout, true);
-t.equal((markup.match(/class="dock-page[" ]/g) || []).length, 3, "all pages render");
-t.equal((markup.match(/dock-page--single-row/g) || []).length, 1, "only the page with one row of tiles is centred");
+const resting = renderPages({ tiles }, layout);
+t.equal((resting.match(/class="dock-page[" ]/g) || []).length, 3, "all pages render");
+t.equal((markup.match(/class="dock-page[" ]/g) || []).length, 4, "Arrange adds one extra empty page");
+t.equal((resting.match(/dock-page--single-row/g) || []).length, 1, "only the page with one row of tiles is centred");
+t.equal((markup.match(/dock-page--single-row/g) || []).length, 0, "Arrange shows every slot, so no page collapses to one row");
 for (const [count, single] of [[1, true], [layout.columns, true], [layout.columns + 1, false], [layout.columns * 2, false]]) {
   const page = renderPages({ tiles: tiles.slice(0, count) }, layout);
   t.equal(page.includes("dock-page--single-row"), single, `${count} tile(s) ${single ? "centre" : "keep"} the page layout`);
@@ -65,6 +68,92 @@ for (const perPage of [4, 6, 8]) {
 const arranging = renderPages({ tiles: withClose }, layout, true);
 t.ok(!arranging.includes("tile__close") && !arranging.includes("tile-slot"), "Arrange renders no close buttons or slots");
 t.deepEqual(moveToTile(withClose, tileKey(withClose[0]), tileKey(withClose[3])).map(tileKey), moveToTile(tiles.slice(0, 8), tileKey(tiles[0]), tileKey(tiles[3])).map(tileKey), "reordering is unaffected by close state");
+
+// ---- empty slots: pages with gaps (an icon on page 3 while page 2 is partly empty) ----
+const SP = { kind: "spacer" };
+const ten = tiles.slice(0, 10);
+const pageOf = (html, n) => html.split('<div class="dock-page').slice(1)[n] || "";
+const count = (html, re) => (html.match(re) || []).length;
+// Drag icon 9 (page 2) to the first slot of page 3: page 2 keeps one icon and seven gaps.
+const gapped = dropOnSlot(ten, tileKey(ten[9]), 16);
+t.deepEqual(gapped.map(tileKey).slice(8, 17), [tileKey(ten[8]), ...Array.from({ length: 7 }, (_, i) => `spacer:${9 + i}`), tileKey(ten[9])],
+  "a drop on an empty slot past the end lands exactly there, padded with gaps, leaving a gap behind");
+t.equal(pageCount(gapped, layout), 3, "page count runs to the page of the last icon");
+t.equal(pageCount(gapped, layout, true), 4, "Arrange adds one extra empty page");
+t.equal(pageCount(ten, layout, true), 3, "Arrange adds an extra page to a dock with no gaps too");
+t.equal(pageCount([SP, SP], layout), 1, "a dock of only gaps is one (empty) page");
+t.equal(pageCount([SP, SP], layout, true), 1, "an empty dock gets no extra Arrange page");
+const middleEmpty = [...ten.slice(0, 8), ...Array(8).fill(SP), ten[8]];
+t.equal(pageCount(middleEmpty, layout), 3, "an empty page between icons is kept");
+const resting2 = renderPages({ tiles: middleEmpty }, layout);
+t.equal(count(resting2, /class="dock-page[" ]/g), 3, "the empty middle page renders as a page");
+t.equal(count(pageOf(resting2, 1), /data-tile-key=/g), 0, "the empty middle page holds no icons");
+t.equal(count(pageOf(resting2, 2), /data-tile-key=/g), 1, "the icon after it stays on page 3");
+const nearFull = [...Array(MAX_SLOTS - 8).fill(SP), ten[0]];
+t.equal(pageCount(nearFull, layout, true), pageCount(nearFull, layout), "no extra Arrange page past the slot limit");
+
+const restingGap = renderPages({ tiles: gapped }, layout);
+const arrangeGap = renderPages({ tiles: gapped }, layout, true);
+t.equal(count(restingGap, /class="dock-page[" ]/g), 3, "outside Arrange the gapped dock has three pages");
+t.equal(count(arrangeGap, /class="dock-page[" ]/g), 4, "in Arrange it has four (the extra empty page)");
+t.equal(count(pageOf(restingGap, 1), /class="slot-empty"/g), 0, "outside Arrange trailing gaps on a page render nothing");
+t.ok(!pageOf(restingGap, 1).includes("dock-page--single-row"), "outside Arrange page 2 (one icon, then gaps) keeps the true grid rows, as in Arrange");
+t.ok(!pageOf(restingGap, 2).includes("dock-page--single-row"), "page 3 (gaps, then one icon) keeps the true grid rows, so the icon stays in row 1 where it was put");
+t.ok(!renderPages({ tiles: [ten[0], SP, ten[1]] }, layout).includes("dock-page--single-row"), "a single-row page with a gap in the middle is not centred");
+t.ok(renderPages({ tiles: ten.slice(0, 3) }, layout).includes("dock-page--single-row"), "an auto-filled single-row page (no gaps) is still centred");
+t.equal(count(pageOf(restingGap, 2), /class="slot-empty"/g), 0, "the icon on page 3 sits in its first slot");
+t.equal(count(pageOf(arrangeGap, 1), /class="slot-empty is-editing"/g), 7, "in Arrange page 2 shows its seven empty slots");
+t.equal(count(pageOf(arrangeGap, 2), /class="slot-empty is-editing"/g), 7, "in Arrange page 3 shows the empty slots after the icon");
+t.equal(count(pageOf(arrangeGap, 3), /class="slot-empty is-editing"/g), 8, "the extra page is all empty slots");
+t.ok(pageOf(arrangeGap, 3).includes('data-empty-slot="24"') && pageOf(arrangeGap, 3).includes('data-empty-slot="31"'), "each empty slot names its index as a drop target");
+const leadGap = renderPages({ tiles: [SP, SP, ten[0]] }, layout);
+t.equal(count(leadGap, /<div class="slot-empty" aria-hidden="true"><\/div>/g), 2, "outside Arrange a gap before an icon is an invisible placeholder that keeps the grid position");
+const slotsMarkup = [restingGap, arrangeGap, leadGap].join("").match(/<div class="slot-empty[^>]*><\/div>/g) || [];
+t.ok(slotsMarkup.length > 0 && slotsMarkup.every((m) => m.includes('aria-hidden="true"') && !/tabindex|<button|data-tile-key|data-action/.test(m)),
+  "empty slots are aria-hidden, never focusable, never buttons and never tiles");
+t.equal(count(arrangeGap, /data-tile-key=/g), 10, "every icon still renders exactly once around the gaps");
+t.equal(count(renderPages({ tiles: [SP, SP] }, layout), /No tiles pinned/g), 1, "a dock of only gaps shows the empty state");
+t.equal(count(renderPages({ tiles: [SP, SP] }, layout, true), /No tiles pinned/g), 1, "and still does while arranging");
+
+// Drops on an occupied slot keep the shift behaviour; on an empty one, exact placement.
+t.deepEqual(dropOnSlot(gapped, tileKey(ten[0]), 3).map(tileKey), moveToTile(gapped, tileKey(ten[0]), tileKey(ten[3])).map(tileKey), "a drop on an occupied slot shifts as before");
+const intoGap = dropOnSlot(gapped, tileKey(ten[0]), 12);
+t.equal(tileKey(intoGap[12]), tileKey(ten[0]), "a drop on a gap in the middle lands exactly there");
+t.equal(intoGap[0].kind, "spacer", "its old slot becomes a gap");
+t.deepEqual(intoGap.slice(1, 8).map(tileKey), ten.slice(1, 8).map(tileKey), "no other icon moves");
+t.deepEqual(dropOnSlot(gapped, tileKey(ten[0]), MAX_SLOTS).map(tileKey), gapped.map(tileKey), "a drop past the slot limit is ignored");
+t.deepEqual(dropOnSlot(gapped, "app:missing", 20).map(tileKey), gapped.map(tileKey), "a stale drag key places nothing");
+
+// Tile options on a gapped dock.
+const removedGap = removeTile(gapped, tileKey(ten[2]));
+t.equal(removedGap[2].kind, "spacer", "Remove leaves a gap in place");
+t.equal(tileKey(removedGap[16]), tileKey(ten[9]), "the icons after a removed one keep their slots (and pages)");
+t.equal(removeTile(gapped, tileKey(ten[9])).length, 9, "removing the icon on page 3 trims the trailing gaps (page 3 drops away)");
+t.equal(pageCount(removeTile(gapped, tileKey(ten[9])), layout), 2, "so the dock is two pages again");
+t.deepEqual(moveTile(gapped, tileKey(ten[9]), -1).map(tileKey).slice(14, 17), ["spacer:14", tileKey(ten[9])], "Move earlier swaps the page-3 icon with the gap before it (the gap left at the end is trimmed)");
+t.deepEqual(moveTile(gapped, tileKey(ten[8]), 1).map(tileKey).slice(8, 10), ["spacer:8", tileKey(ten[8])], "Move later swaps an icon with the gap after it");
+
+// Adding fills the first gap.
+const added = addAppTile(gapped, { id: "c:/new.exe", target: "C:\\new.exe", name: "New" });
+t.equal(tileKey(added[9]), "app:c:/new.exe", "a new app fills the first gap (page 2)");
+t.equal(added.length, gapped.length, "no slot is appended while a gap exists");
+
+// Density (4/6/8): the slot sequence is kept and the pages re-flow.
+for (const perPage of [4, 6, 8]) {
+  const grid = normalizeLayout({ perPage });
+  const html = renderPages({ tiles: gapped }, grid);
+  t.equal(pageCount(gapped, grid), Math.ceil(17 / perPage), `${perPage} per page: pages re-flow over the same 17 slots`);
+  t.deepEqual([...html.matchAll(/data-tile-key="([^"]+)"/g)].map((m) => m[1]), ten.map(tileKey), `${perPage} per page: icon order is unchanged`);
+  const page = Math.floor(16 / perPage);
+  t.ok(pageOf(html, page).includes(`data-tile-key="${tileKey(ten[9])}"`), `${perPage} per page: the moved icon is on the page its slot falls in`);
+}
+
+// Gaps are invisible to running dots, close buttons and labels.
+const liveGapped = gapped.map((tile) => (tile.kind === "app" ? { ...tile, running: true, close: { count: 1, state: "rest" } } : tile));
+const liveHtml = renderPages({ tiles: liveGapped }, layout);
+t.equal(count(liveHtml, /class="tile__close"/g), 10, "one close button per running icon, none for gaps");
+t.equal(count(liveHtml, /class="tile__dot"/g), 10, "one running dot per running icon, none for gaps");
+t.equal(count(liveHtml, /<button class="tile /g), 10, "keyboard focus visits the 10 icons only");
 
 let active = 0, peak = 0, calls = 0;
 const iconCache = createIconCache({ appIcon: async () => { active++; calls++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 5)); active--; return Buffer.from("icon"); } });

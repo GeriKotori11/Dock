@@ -74,6 +74,8 @@ function renderCloseButton(tile, key) {
  * `.tile-slot` with its close button beside it.
  */
 export function renderTile(tile, { editing = false, first = false, last = false, launcher = false } = {}) {
+  // An empty slot (the pager draws its Arrange outline): nothing to tap or read.
+  if (tile?.kind === "spacer") return '<div class="slot-empty" aria-hidden="true"></div>';
   const unavailable = tile.available === false;
   const running = tile.kind === "app" && tile.running === true && !unavailable;
   // A pinned Spotify playlist or album (DOCK-CONTROLS 12): tap plays it, no close button.
@@ -139,7 +141,8 @@ export function renderTile(tile, { editing = false, first = false, last = false,
 }
 
 export function renderTiles(state, { editing = false } = {}) {
-  const tiles = Array.isArray(state?.tiles) ? state.tiles : [];
+  // Empty slots are skipped; a dock of only empty slots is an empty dock.
+  const tiles = (Array.isArray(state?.tiles) ? state.tiles : []).filter((tile) => tile?.kind !== "spacer");
   if (tiles.length === 0) {
     return `<div class="empty"><span class="empty__icon">${icon("grid")}</span><h3>A little space for your favorites.</h3><p>No tiles pinned yet. Add your everyday apps<br>and controls to make this dock yours.</p><button type="button" class="button button--primary" data-open-picker>${icon("plus")} Add your first app</button></div>`;
   }
