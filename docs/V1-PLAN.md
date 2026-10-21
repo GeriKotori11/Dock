@@ -275,3 +275,55 @@ Open items carried forward:
 - Copy written by the workers but missing from the copy deck needs designer sign-off.
 - Android single-column layout at large font scales.
 - iOS README is out of date.
+
+### 2026-10-21: milestone 5 (desktop host interface and QR pairing), built
+
+**Design**
+- Designer spec and mockups in `docs/design/HOST-CONTROL-PAGE.md`.
+- User decisions:
+  - one shared page shown inside native shells;
+  - QR pairing included;
+  - pairing opens automatically on first run;
+  - rename is a label stored on the host;
+  - the PIN rotates only on "Stop pairing";
+  - all other recommendations accepted.
+
+**Host**
+- `/host` control page with a compact and a wide layout. It covers:
+  - status;
+  - pairing, with a QR code and countdown;
+  - paired phones, with rename and remove;
+  - settings;
+  - problem states.
+- New local-only routes under `/api/host/*`, with live updates over server-sent events.
+- Dependency-free QR encoder (Nayuki port, MIT). macOS CoreImage decoded every output, including screenshots of the live page.
+- Security fix: a cross-site guard on all local-only routes. Before this, any website open on the host could reopen pairing and reset the failure budget.
+
+**Native shells**
+- New macOS menu-bar app, `macos/`, built with `npm run mac:app`:
+  - owns the host process, or attaches to one already running;
+  - registers as a login item through SMAppService;
+  - checks the firewall;
+  - 27 tests.
+- Windows tray:
+  - WebView2 flyout and window;
+  - new tray menu;
+  - log rotation;
+  - offline page.
+  
+  Compile-checked only.
+
+**Phones: QR pairing**
+- Both apps:
+  - strict `windock://pair` parser;
+  - confirmation screen before any network traffic;
+  - pairing only once the TLS leaf matches the scanned fingerprint;
+  - outcomes for "code already used", "pairing closed", and a security change.
+- iPhone: VisionKit in-app scanner.
+- Android: uses the system camera.
+- Tests: Android unit tests pass, and the emulator was checked against a real host. iOS: 83 tests pass on iOS 27.0 and 26.5, plus a simulator check.
+
+**Not yet verified on real hardware**
+- Scanning the QR with a real phone camera.
+- The Mac app as the user's everyday host.
+- Anything on Windows.
