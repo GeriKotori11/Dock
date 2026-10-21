@@ -1,0 +1,68 @@
+# XcodeGen spec for the WinDock macOS menu-bar app (source of truth; the
+# generated WinDockMenu.xcodeproj and macos/build are gitignored).
+#
+#   cd macos && xcodegen generate && open WinDockMenu.xcodeproj
+#   ./build.sh            # or: npm run mac:app
+#
+# App Sandbox is OFF on purpose: the app spawns `node server.js` from this
+# checkout (an arbitrary Node binary and a repository folder chosen by the user),
+# which a sandboxed app cannot execute or read. Hardened Runtime is off too while
+# the app is signed ad hoc for local use only (no notarization yet).
+name: WinDockMenu
+options:
+  minimumXcodeGenVersion: 2.42.0
+  deploymentTarget:
+    macOS: '13.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    MARKETING_VERSION: '0.2.2'
+    CURRENT_PROJECT_VERSION: '1'
+    MACOSX_DEPLOYMENT_TARGET: '13.0'
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: '-'
+    DEVELOPMENT_TEAM: ''
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_APP_SANDBOX: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  WinDockMenu:
+    type: application
+    platform: macOS
+    sources: [Sources, Resources]
+    settings:
+      base:
+        PRODUCT_NAME: WinDock
+        PRODUCT_MODULE_NAME: WinDockMenu
+        PRODUCT_BUNDLE_IDENTIFIER: dev.gerikotori.windock.menu
+        INFOPLIST_FILE: Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        # The checkout this app was built from: Info.plist key WDRepoPath. The
+        # app runs server.js from here unless the `repoPath` default overrides it.
+        WINDOCK_REPO_PATH: $(SRCROOT)/..
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+  WinDockMenuTests:
+    type: bundle.unit-test
+    platform: macOS
+    # Pure logic only: the Core sources are compiled into the test bundle, so the
+    # tests never launch the app (which would spawn a host).
+    sources: [Tests, Sources/Core]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.gerikotori.windock.menu.tests
+        # XCTest itself needs macOS 14; the app still targets 13.
+        MACOSX_DEPLOYMENT_TARGET: '14.0'
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ''
+        BUNDLE_LOADER: ''
+schemes:
+  WinDockMenu:
+    build:
+      targets:
+        WinDockMenu: all
+        WinDockMenuTests: [test]
+    test:
+      targets: [WinDockMenuTests]

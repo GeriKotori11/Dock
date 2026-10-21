@@ -1,8 +1,9 @@
 # Run WinDock on a Mac
 
-The WinDock host runs on macOS from a checkout of this repository. There is no
-packaged Mac app yet: you run it with Node.js, either in a terminal or as a login
-item that starts with your Mac.
+The WinDock host runs on macOS from a checkout of this repository, with Node.js.
+You build the WinDock menu-bar app from the same checkout (recommended), or run
+the host in a terminal, or as a LaunchAgent that starts with your Mac. There is
+no signed, downloadable Mac app yet.
 
 ## What works on a Mac (V1)
 
@@ -23,6 +24,8 @@ The phone hides the features a Mac host does not have.
 - macOS with **Node.js 20 or newer** (`node --version`). Install it from
   [nodejs.org](https://nodejs.org), Homebrew (`brew install node`) or nvm.
 - The Mac and the phone on the **same Wi-Fi network**.
+- For the menu-bar app: Xcode 15 or newer and XcodeGen (`brew install xcodegen`),
+  macOS 13 or newer.
 
 ## Install
 
@@ -34,7 +37,71 @@ npm ci
 
 Then choose how to run the host.
 
-### Option A: run it in a terminal
+### Option A: the WinDock menu-bar app (recommended)
+
+```sh
+npm run mac:app
+```
+
+This builds `macos/build/WinDock.app` from this checkout (it runs
+`macos/build.sh`: XcodeGen, then a Release build signed ad hoc, so no Apple
+developer account is needed). Move `WinDock.app` to `/Applications`, or run it
+from `macos/build`. Keep the checkout where it is: the app runs `server.js` from
+the folder it was built in.
+
+**First launch.** Open `WinDock.app`. It has no Dock icon: look for the
+four-square icon in the menu bar. Click it to open WinDock (pairing, paired
+phones, settings); right-click it for Open WinDock, Pair a new phone… and Quit
+WinDock. The app starts the host itself (`node server.js`, with the PIN kept out
+of the log) and stops it when you quit.
+
+- If macOS says the app **can't be opened** or is from an unidentified
+  developer, Control-click `WinDock.app`, choose **Open**, then **Open** again (or
+  allow it in **System Settings → Privacy & Security**). This is because the
+  app is signed ad hoc, not notarized.
+- If macOS asks whether **WinDock may access files in your Documents folder**,
+  click **Allow**: the app runs the checkout from there. macOS asks again after
+  each rebuild. To avoid that, keep the checkout outside `Documents`, `Desktop`
+  and `Downloads` (for example `~/WinDock`) and rebuild.
+- If macOS asks whether **node** may accept incoming connections, click
+  **Allow** (see "Allow incoming connections" below).
+- If Node.js isn't found, WinDock says so and offers **Get Node.js**. The app
+  looks in `/opt/homebrew/bin`, `/usr/local/bin`, then your login shell's
+  `PATH`.
+
+**Start at login.** In WinDock, under This computer, turn on **Start at login**.
+This adds WinDock to **System Settings → General → Login Items**; if macOS asks
+you to approve it there, WinDock shows **Open Login Items**.
+
+**Logs.** The host's output goes to `~/Library/Logs/WinDock/host.log` (rotated
+at 1 MB, three files kept). ⋯ → Open logs folder shows it.
+
+**The app and the LaunchAgent (Option C).** Use one or the other. If a WinDock
+host is already running on the port when the app starts (started with
+`npm start` or by `npm run mac:install`), the app attaches to it instead of
+starting a second one: the page works, but the app can't restart or stop that
+host, and Quit only quits the app. To let the app own the host, remove the
+LaunchAgent and restart the app:
+
+```sh
+npm run mac:uninstall
+```
+
+Settings for testing (all optional; quit and reopen the app after changing):
+
+```sh
+defaults write dev.gerikotori.windock.menu port -int 8621        # another port
+defaults write dev.gerikotori.windock.menu nodePath /path/to/node
+defaults write dev.gerikotori.windock.menu repoPath /path/to/WinDock
+defaults write dev.gerikotori.windock.menu hostEnvironment -dict WINDOCK_CONFIG /tmp/wd/config.json
+defaults delete dev.gerikotori.windock.menu                      # back to the defaults
+```
+
+`hostEnvironment` passes `WINDOCK_*` variables to a host the app starts, for
+example a temporary data folder. The app is not sandboxed, because it runs
+Node and reads this checkout.
+
+### Option B: run it in a terminal
 
 ```sh
 npm start
@@ -43,13 +110,14 @@ npm start
 The host prints its address and PIN. It stops when you close the terminal or
 press Ctrl+C.
 
-### Option B: start it automatically at login
+### Option C: start it automatically at login (LaunchAgent)
 
 ```sh
 npm run mac:install
 ```
 
-This installs a per-user LaunchAgent (`dev.windock.host`), starts the host now,
+Prefer the menu-bar app (Option A) unless you want the host without a menu-bar
+icon. This installs a per-user LaunchAgent (`dev.windock.host`), starts the host now,
 and prints the address and PIN once the host answers. From then on the host
 starts every time you log in, and launchd restarts it if it crashes.
 
@@ -77,8 +145,8 @@ Reinstalling replaces the old login item; it does not create a second one.
 ## Pair your phone
 
 The easiest way: open **<http://127.0.0.1:8620/host>** in a browser on the Mac
-(Safari, Chrome or any other). Until the WinDock menu-bar app exists, this page
-is WinDock's control panel: it shows whether the host is running, a QR code and
+(Safari, Chrome or any other), or click the WinDock icon in the menu bar if you
+use the app (Option A). This page is WinDock's control panel: it shows whether the host is running, a QR code and
 PIN for pairing, your paired phones (rename or remove them there), and whether
 phones can find the Mac. Opening it with no phones paired opens pairing
 straight away; otherwise click **Pair a new phone**. Pairing stays open for 10
@@ -154,12 +222,16 @@ so you may be asked again after switching Node versions.
 | --- | --- |
 | Pinned dock, paired devices, host ID | `~/Library/Application Support/WinDock/` (`config.json`, `sessions.json`, `host.json`) |
 | Login item | `~/Library/LaunchAgents/dev.windock.host.plist` |
-| Host log (login item only) | `~/Library/Logs/WinDock/host.log` |
+| Host log (menu-bar app or LaunchAgent) | `~/Library/Logs/WinDock/host.log` |
+| Menu-bar app settings | `defaults read dev.gerikotori.windock.menu` |
 
 Paired devices are stored as hashes of their session tokens, never the tokens
 themselves.
 
 ## Uninstall
+
+Menu-bar app: turn off **Start at login** in WinDock, quit it, and delete
+`WinDock.app`. LaunchAgent:
 
 ```sh
 npm run mac:uninstall

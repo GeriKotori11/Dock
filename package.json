@@ -12,6 +12,7 @@
     "mac:install": "node scripts/macos-agent.mjs install",
     "mac:uninstall": "node scripts/macos-agent.mjs uninstall",
     "mac:status": "node scripts/macos-agent.mjs status",
+    "mac:app": "sh macos/build.sh",
     "website": "node scripts/website-server.mjs",
     "build:website-demo": "node scripts/build-website-demo.mjs",
     "package:downloads": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-downloads.ps1",
