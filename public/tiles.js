@@ -16,6 +16,7 @@
  */
 export function tileKey(tile) {
   if (!tile || typeof tile !== "object") return "";
+  if (tile.kind === "spotify") return `spotify:${tile.uri}`;
   if (tile.kind !== "control") return `app:${tile.id}`;
   return tile.value === undefined || tile.value === null
     ? `control:${tile.verb}`
@@ -46,6 +47,12 @@ export function toWireTiles(tiles) {
           args: tile.args || "",
           icon: tile.icon || "",
         };
+      }
+      if (tile.kind === "spotify") {
+        // A pinned playlist or album (DOCK-CONTROLS 12): the cover is a host image key.
+        const out = { kind: "spotify", uri: tile.uri, label: tile.label };
+        if (tile.image) out.image = tile.image;
+        return out;
       }
       return null;
     })
@@ -87,6 +94,19 @@ export function addControlTile(tiles, verb, label, value = null) {
   }
   if (hasTile(list, tileKey(tile))) return list;
   return [...list, tile];
+}
+
+/**
+ * Append a Spotify playlist or album tile `{ kind: "spotify", uri, label, image? }`.
+ * Only playlist and album URIs qualify; adding one already pinned is a no-op.
+ */
+export function addSpotifyTile(tiles, tile) {
+  const list = toWireTiles(tiles);
+  if (!tile || typeof tile !== "object" || !/^spotify:(playlist|album):[A-Za-z0-9]{1,64}$/.test(String(tile.uri || ""))) return list;
+  const next = { kind: "spotify", uri: tile.uri, label: tile.label || "Spotify" };
+  if (tile.image) next.image = tile.image;
+  if (hasTile(list, tileKey(next))) return list;
+  return [...list, next];
 }
 
 /** Remove the tile with this key. Removing an absent key is a no-op. */

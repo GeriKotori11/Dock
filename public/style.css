@@ -710,3 +710,125 @@ body.is-immersive.has-mini.has-mini-seek > .toast { bottom: calc(106px + env(saf
   :root, :root[data-theme] { --glass-bg: #09121dc4; --glass-card: #ffffff04; --glass-border: #c9ddee1c; }
 }
 @media (orientation: portrait) { .media-sheet[open] { visibility: hidden; } }
+
+/* Spotify account (Phase B, DOCK-CONTROLS 12; frames 20–22). Spotify green only in the mark itself (5.4). */
+.sp-mark { display: block; width: 100%; height: 100%; }
+.sp-chip { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 7px; background: #121212; }
+.sp-chip > .sp-mark { width: 15px; height: 15px; }
+.media-source__chip.sp-chip > .sp-mark { width: 15px; height: 15px; }
+.media-sheet.has-tabs { width: min(92vw, 840px); }
+.media-sheet.has-tabs:not([data-sp-tab="now"]) { overflow: hidden; }
+.media-sheet > .sp-host { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; }
+.sp-host::-webkit-scrollbar { display: none; }
+.sp-host:empty, .sp-foot-host:empty { display: none; }
+.media-head.has-tabs { gap: 10px; }
+.media-head.has-tabs .media-link span { white-space: nowrap; }
+.sp-tabs { display: flex; flex-shrink: 0; gap: 4px; padding: 4px; border: 1px solid #ffffff15; border-radius: 12px; background: #ffffff06; }
+.sp-tab { position: relative; min-height: 36px; padding: 0 14px; border: 0; border-radius: 9px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+/* 36 px visual, 44 px hit height (9.1). */
+.sp-tab::before { content: ""; position: absolute; inset: -4px 0; }
+.sp-tab.is-active { background: #ffffff10; color: var(--accent); }
+.sp-tab:active:not(:disabled) { transform: none; }
+.sp-tabpanel { display: contents; }
+.media-title-row { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.media-title-row .media-title { flex: 1; min-width: 0; }
+.media-like { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; margin: -9px -10px -9px 0; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--muted); }
+.media-like .icon { width: 22px; height: 22px; transition: color .15s ease; }
+.media-like[aria-pressed="true"] { color: var(--accent); }
+/* Lists: two columns, rows 60 (search 56), art 44. */
+.sp-panel { padding: 2px 0 4px; }
+.sp-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; margin: 0; padding: 2px 14px 8px; list-style: none; }
+.sp-row { display: flex; align-items: center; gap: 13px; width: 100%; min-height: 60px; padding: 8px 10px; border: 0; border-radius: 13px; background: none; color: inherit; text-align: left; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.sp-row:active:not(:disabled) { transform: scale(.98); }
+.sp-row.is-playing, .sp-row.is-active { background: #ffffff0a; }
+.sp-row--compact { min-height: 56px; padding: 6px 10px; }
+.sp-art { position: relative; display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 8px; overflow: hidden; background: #ffffff0a; }
+.sp-art .media-glyph .icon { width: 18px; height: 18px; }
+.sp-art--round { border-radius: 50%; }
+.sp-art--liked { background: linear-gradient(135deg, #4a2fe0, #8fa6f2); color: #fff; }
+.sp-art--liked .icon { width: 20px; height: 20px; }
+.sp-row__text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
+.sp-row__title, .sp-row__sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sp-row__title { font-size: 13px; font-weight: 600; }
+.sp-row__sub { font-size: 12px; color: var(--muted); }
+.sp-row__tail { display: grid; place-items: center; width: 28px; color: var(--muted); }
+.sp-row__tail .icon { width: 18px; height: 18px; }
+.sp-row__playing { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sp-row__playing .icon { width: 16px; height: 16px; }
+.sp-row__check { display: grid; place-items: center; width: 28px; color: var(--accent); }
+.sp-row__check .icon { width: 20px; height: 20px; }
+.sp-dev { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px; background: #ffffff0a; color: var(--muted); }
+.sp-dev .icon { width: 22px; height: 22px; }
+.sp-row.is-active .sp-dev { background: #b4edcc14; color: var(--accent); }
+.sp-label { margin: 0; padding: 6px 24px 4px; font-size: 10px; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.sp-note { margin: 0 24px 14px; font-size: 12px; color: var(--muted); }
+.sp-note--premium { display: flex; align-items: center; gap: 7px; margin: 0 24px 4px; }
+.sp-note--premium .icon { width: 14px; height: 14px; }
+.sp-status { display: flex; align-items: center; gap: 9px; margin: 2px 24px 12px; font-size: 12px; color: var(--muted); }
+.sp-retry { min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: #ffffff0a; color: var(--accent); font-size: 12px; font-weight: 600; }
+.sp-more { display: block; height: 1px; }
+.sp-disconnect { display: block; min-height: 44px; margin: -8px 14px 8px; padding: 0 10px; border: 0; border-radius: 12px; background: none; color: var(--muted); font-size: 12px; font-weight: 600; }
+/* Search: the field stays at the top; results list right under it, above a landscape keyboard. */
+.sp-panel--search { padding-top: 4px; }
+.sp-search { flex: none; margin: 2px 22px 6px; }
+.sp-search input { -webkit-appearance: none; appearance: none; }
+.sp-search input::-webkit-search-cancel-button { filter: grayscale(1) brightness(1.6); }
+.sp-results .sp-label { padding-top: 4px; }
+/* While searching the sheet pins to the top and tightens, so the first results clear the keyboard. */
+.media-sheet.is-search { margin-top: max(4px, env(safe-area-inset-top, 0px)); margin-bottom: auto; }
+.media-sheet.is-search .sheet-grip { min-height: 12px; padding-top: 4px; }
+.media-sheet.is-search .media-head { min-height: 50px; padding-top: 0; padding-bottom: 2px; }
+.media-sheet.is-search .sp-search { margin: 0 22px 2px; }
+.media-sheet.is-search .sp-results > .sp-label:first-child { padding-top: 2px; }
+/* Footer on every tab: track · Play/Pause · device chip. */
+.sp-foot { display: flex; align-items: center; gap: 12px; margin: 4px 22px 16px; padding: 6px 10px 6px 14px; border-radius: 14px; background: #ffffff07; font-size: 12px; color: var(--muted); }
+.sp-foot__art { position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 6px; overflow: hidden; background: #ffffff0a; }
+.sp-foot__art .media-glyph .icon { width: 15px; height: 15px; }
+.sp-foot__text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.sp-foot__text strong { color: var(--text); font-weight: 600; }
+.sp-foot__play { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; padding: 0; border: 0; border-radius: 12px; background: none; color: #e6efec; }
+.sp-foot__play .icon { width: 21px; height: 21px; }
+.sp-foot__device { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 40%; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: #ffffff0a; color: var(--accent); font-size: 12px; font-weight: 600; }
+.sp-foot__device .icon { width: 15px; height: 15px; }
+.sp-foot__device span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Entry row in the Phase A sheet; finishing login on the computer (frame 20). */
+.sp-entry { display: flex; align-items: center; gap: 12px; margin: -6px 22px 16px; padding: 6px 6px 6px 12px; border-radius: 14px; background: #ffffff07; font-size: 12px; color: var(--muted); }
+.sp-entry__text { flex: 1; min-width: 0; }
+.sp-entry .media-link { flex-shrink: 0; }
+#media-content:has(.media-empty, .media-perm) ~ #media-spotify .sp-entry { margin-top: 0; }
+.sp-waiting__glyph { border: 1px solid #ffffff18; background: #121212; }
+.sp-waiting__glyph > .sp-mark { width: 56px; height: 56px; }
+.sp-waiting__status { display: flex; align-items: center; gap: 9px; margin-top: 14px !important; font-size: 12px !important; }
+.sp-after { margin-top: -6px; }
+/* Up next beside the player on wide screens only. */
+.sp-upnext { display: none; }
+@media (min-width: 1000px) {
+  .sp-upnext { display: block; flex: 0 0 240px; min-width: 0; margin-right: -8px; }
+  .sp-upnext .sp-label { padding: 0 0 6px; }
+  .sp-upnext__list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+  .sp-upnext__list li { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+  .sp-upnext__list .sp-art { width: 36px; height: 36px; border-radius: 6px; }
+}
+/* Pinned playlist or album tile: the cover, rounded like an app icon, with a small Spotify badge. */
+.tile--spotify .tile__glyph { --icon-pad: 0; }
+:root[data-platform="macos"] .tile--spotify .tile__glyph { --icon-pad: .098; }
+.sp-cover { border-radius: 23%; overflow: hidden; background: #1c2a2e; }
+.tile--spotify .sp-cover { position: absolute; inset: calc(var(--glyph) * var(--icon-pad)); width: auto; height: auto; box-shadow: 0 10px 22px #0004; }
+.sp-cover img { object-fit: cover; filter: none; }
+body.is-immersive .sp-cover img { filter: none; }
+.sp-badge { position: absolute; right: calc(var(--glyph) * var(--icon-pad, 0) - 4px); bottom: calc(var(--glyph) * var(--icon-pad, 0) - 4px); display: grid; place-items: center; width: max(20px, calc(var(--glyph) * .24)); height: max(20px, calc(var(--glyph) * .24)); border-radius: 28%; background: #121212; box-shadow: 0 0 0 1.5px #1b2a30, 0 2px 6px #0005; }
+.sp-badge > .sp-mark { width: 64%; height: 64%; }
+.tile.is-unavailable .sp-badge { opacity: .7; }
+.options__icon .sp-cover { display: grid; border-radius: 12px; }
+.sp-menu .options__actions button:last-child:nth-child(even) { grid-column: auto; }
+.sp-menu .options__actions .icon--fill { fill: currentColor; }
+/* 390-tall phones: the player, the volume row and the Spotify footer (or entry row) fit without scrolling. */
+@media (max-height: 400px) and (orientation: landscape) {
+  :is(.media-sheet.has-tabs[data-sp-tab="now"], .media-sheet[data-sp-tab="entry"]) .media-head { min-height: 52px; padding-top: 2px; padding-bottom: 2px; }
+  :is(.media-sheet.has-tabs[data-sp-tab="now"], .media-sheet[data-sp-tab="entry"]) .media-body { padding-top: 0; }
+  :is(.media-sheet.has-tabs[data-sp-tab="now"], .media-sheet[data-sp-tab="entry"]) .media-transport { padding-top: 2px; }
+  :is(.media-sheet.has-tabs[data-sp-tab="now"], .media-sheet[data-sp-tab="entry"]) .media-volume { padding-top: 4px; padding-bottom: 2px; }
+  .media-sheet .sp-foot { margin-top: 0; margin-bottom: 12px; }
+  .media-sheet .sp-entry { margin-bottom: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .sp-row:active:not(:disabled) { transform: none; } }

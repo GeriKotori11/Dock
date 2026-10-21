@@ -1,6 +1,6 @@
 import { renderControlPicker, renderAppIcon, renderControls, renderMiniPlayer, renderMediaSheet, renderVolumeRow, escapeHtml } from "./dock.js";
 import { icon, controlIcon } from "./icons.js";
-import { addAppTile, addControlTile, removeTile, moveTile, toWireTiles, availableControls, tileKey } from "./tiles.js";
+import { addAppTile, addControlTile, addSpotifyTile, hasTile, removeTile, moveTile, toWireTiles, availableControls, tileKey } from "./tiles.js";
 import { normalizeLayout, renderPages, pageCount, moveToTile } from "./launcher.js";
 import { createInputPad } from "./input-pad.js";
 import { createMediaPoller, normalizeMedia, fromNowPlaying, mediaPosition, formatTime, spokenTime } from "./now-playing.js";
@@ -11,6 +11,12 @@ import {
   miniVolumeMode, miniMuteMode, miniVolumeShown, miniVolumeChip, stepVolume, createVolumeStepper, createHoldRepeat, seekAria, seekFromPointer, seekKey, CHIP_HIDE_MS,
 } from "./dock-controls.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow } from "./native-bridge.js";
+import {
+  SP_COPY, PAGE_SIZE, LONG_PRESS_MS, WAIT_STOP_MS, MAX_TILES, spotifyAccount, spotifyInstalled, isSpotifySource, spotifyMode, spotifyTab, nextTab,
+  normalizePage, mergePage, normalizeDevices, normalizeQueue, normalizeSpotifyStatus, activeDevice, playBody, spotifyTile, isTileUri, spotifyError, createSearch, LIKED_CONTEXT,
+  spotifyBrand, spotifyCover, renderSpTabs, renderSpEntry, renderSpWaiting, renderSpLibrary, renderSpSearchPanel, renderSpResults, renderSpDevices, renderSpFooter,
+  renderSpUpNext, renderLikeButton, renderSpMenuActions,
+} from "./spotify.js";
 
 const $ = (id) => document.getElementById(id);
 const pluralize = (count, word, plural = word + "s") => count + " " + (count === 1 ? word : plural);
@@ -41,6 +47,14 @@ const miniStepper = createVolumeStepper({
     sendVolume(change, true);
   },
 });
+// Spotify account (Phase B, DOCK-CONTROLS 12): the tab, the login flow on the
+// computer and what the host's Web API proxy last told us. Rebuilt per connection.
+const sp = {
+  tab: "now", account: null, flow: null, disconnected: false, notConnected: false, status: null, liked: null, likeBusy: false,
+  library: null, likedTotal: null, likedFirst: null, devices: null, devicesLoading: false, devicesError: null,
+  queue: [], queueSupported: true, lastContext: null, menuItem: null,
+  search: { text: "", query: "", resultsQuery: "", results: null, loading: false, error: null },
+};
 // Volume up while muted unmutes and raises, as the computer's own volume keys do.
 let unmuteWithLevel = false;
 const POWER_VERBS = new Set(["lock", "sleep", "restart", "shutdown"]);
@@ -352,6 +366,8 @@ function dockView() {
       if (target) view.close = { count: target.count, state: closeStates.get(tileKey(tile)) || "rest", fresh: paintedOnce && !previousRunning.has(tile.id) };
       return view;
     }
+    // A pinned playlist plays only while this computer has a connected Spotify account.
+    if (tile.kind === "spotify") return { ...tile, available: spPlayable() };
     const view = { ...tile, available: feature("controls") && (!POWER_VERBS.has(tile.verb) || offersPower(power, tile.verb)) };
     if (tile.verb === "media-play-pause") view.playing = media?.active === true && media.playing === true;
     if (tile.verb === "sleep") view.arm = { armed: arming.isArmed(tileKey(tile)), text: "Sleep", icon: "moon", label: "Confirm: put " + name + " to sleep" };
@@ -402,6 +418,7 @@ function paint() {
   $("edit").innerHTML = icon(editing ? "check" : "edit") + "<span>" + (editing ? "Done" : "Edit") + "</span>";
   $("page-dots").innerHTML = Array.from({ length: pages }, (_, i) => '<button class="page-dot" type="button" data-page="' + i + '" aria-label="Go to page ' + (i + 1) + '"' + (i === currentPage ? ' aria-current="page"' : "") + '></button>').join("");
   syncPill();
+  syncSpotify();
 }
 function pageTo(page, smooth = true) {
   if (page !== currentPage) arming.disarm("page");
@@ -546,6 +563,12 @@ async function activate(button) {
   if (editing && button.dataset.tileKey) return openTileOptions(button.dataset.tileKey);
   if (button.getAttribute("aria-disabled") === "true") return;
   const { action, key } = button.dataset;
+  if (action === "spotify-play") {
+    const tile = state.tiles.find((item) => tileKey(item) === button.dataset.tileKey);
+    if (!tile) return;
+    if (button.classList.contains("is-unavailable")) return notify(SP_COPY.connectFirst(computerName()), "neutral");
+    return spPlay({ kind: tile.uri.startsWith("spotify:album:") ? "album" : "playlist", uri: tile.uri, name: tile.label }, { toast: true });
+  }
   if (action === "launch" && unavailableIds.has(key) || action === "control" && button.dataset.tileKey && (!feature("controls") || button.classList.contains("is-unavailable"))) {
     const label = state.tiles.find((tile) => tileKey(tile) === button.dataset.tileKey)?.label || "This app";
     return notify(label + " isn't available on " + (state.hostName || "this computer") + " anymore. Hold to arrange, then remove it.", true);
@@ -669,6 +692,8 @@ function applyMedia(next) {
   media = next;
   mediaReceivedAt = Date.now();
   if (permissionUi.asking && pendingPermission(mediaCaps(caps()), media)?.status !== "needed") resetPermissionUi();
+  // A new Spotify track: its liked state and the queue come from the account.
+  if ($("media").open && isSpotifySource(media) && (before?.title !== media.title || !isSpotifySource(before))) { spLoadStatus(); spLoadQueue(); }
   renderMedia(before);
   syncPinnedPlay(before);
 }
@@ -772,9 +797,42 @@ function showOnTarget() {
 }
 function renderSheet() {
   const media_ = mediaCaps(caps());
-  swapHtml($("media-content"), renderMediaSheet({ media, caps: media_, permission: sheetPermission(), online, computer: computerName(), kind: computerKind(state.platform), showOn: Boolean(showOnTarget()), sourcesOpen }));
-  $("media").dataset.playing = String(media?.active === true && media.playing === true);
-  if (!volume.dragging) swapHtml($("media-volume"), renderVolumeRow({ mode: volumeMode(caps()), online }));
+  const base = { media, caps: media_, permission: sheetPermission(), online, computer: computerName(), kind: computerKind(state.platform), showOn: Boolean(showOnTarget()), sourcesOpen };
+  // Phase B (DOCK-CONTROLS 12): the same sheet grows tabs once an account is
+  // connected; the Library, Search and Devices panels replace the player and
+  // the volume row, and a footer keeps the track and the device in view.
+  const mode = spMode();
+  const tab = mode === "tabs" ? sp.tab : "now";
+  let content, panel = "", foot = "", volumeShown = true;
+  if (mode === "waiting") {
+    content = renderMediaSheet({ ...base, brand: spotifyBrand(), body: "" });
+    panel = renderSpWaiting({ computer: computerName(), stopped: sp.flow.stopped, online });
+    volumeShown = false;
+  } else if (mode === "tabs") {
+    const tabs = renderSpTabs({ tab, online });
+    if (tab === "now") {
+      const spotifyNow = isSpotifySource(media);
+      const like = spotifyNow && sp.status?.track ? renderLikeButton({ liked: spTrackLiked(), online, busy: sp.likeBusy }) : "";
+      const aside = spotifyNow && spWide() ? renderSpUpNext(sp.queue) : "";
+      content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), like, aside });
+    } else {
+      content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), body: "" });
+      panel = spPanelHtml(tab);
+      volumeShown = false;
+    }
+    foot = spFooterHtml();
+  } else {
+    content = renderMediaSheet(base);
+    if (mode === "entry") foot = renderSpEntry({ disconnected: sp.disconnected, online });
+  }
+  const dialog = $("media");
+  dialog.classList.toggle("has-tabs", mode === "tabs");
+  dialog.dataset.spTab = mode === "tabs" ? tab : mode;
+  swapHtml($("media-content"), content);
+  dialog.dataset.playing = String(media?.active === true && media.playing === true);
+  if (!volume.dragging) swapHtml($("media-volume"), volumeShown ? renderVolumeRow({ mode: volumeMode(caps()), online }) : "");
+  swapSpPanel(panel, tab);
+  swapHtml($("media-spotify"), foot);
   tickProgress(true);
   paintVolume(false);
 }
@@ -906,6 +964,7 @@ function openMedia() {
   if (!$("media").open) $("media").showModal();
   mediaPoller.refresh().catch(() => {});
   refreshVolume();
+  spOnOpen();
 }
 function resetPermissionUi() {
   clearTimeout(permissionUi.timer);
@@ -962,13 +1021,387 @@ async function mediaCommand(action, value) {
   }
 }
 
+// ---- Spotify account (DOCK-CONTROLS 6.4, 12): tabs, login on the computer, playlist tiles ----
+const spAccount = () => spotifyAccount(state.features);
+const spPremium = () => spAccount()?.premium !== false;
+const spWide = () => window.innerWidth >= 1000;
+function spMode() {
+  return spotifyMode({ account: spAccount(), media, installed: spotifyInstalled(state.features), disconnected: sp.disconnected || sp.notConnected, waiting: Boolean(sp.flow) });
+}
+function spPlayable() { return Boolean(spAccount()?.connected) && !sp.disconnected && !sp.notConnected; }
+function renderSheetIfOpen() { if ($("media").open) renderSheet(); }
+function spIsPlaying() { return isSpotifySource(media) ? media.playing === true : sp.status?.playing === true; }
+// The context playing now ("Playing" row): the account's answer, else the last one this phone started.
+function spPlayingUri() { return spIsPlaying() ? sp.status?.contextUri || sp.lastContext : null; }
+function spResetData() {
+  sp.status = null; sp.liked = null; sp.library = null; sp.likedTotal = null; sp.likedFirst = null; sp.devices = null; sp.devicesError = null; sp.queue = [];
+  sp.lastContext = null; sp.search = { text: "", query: "", resultsQuery: "", results: null, loading: false, error: null };
+  spSearch.cancel();
+}
+// The snapshot is the source of truth for the account: react when it connects or goes away.
+function syncSpotify() {
+  const account = spAccount();
+  const was = sp.account;
+  sp.account = account;
+  const connected = Boolean(account?.connected), wasConnected = Boolean(was?.connected);
+  if (connected && !wasConnected) {
+    const landed = Boolean(sp.flow) || sp.disconnected || sp.notConnected;
+    clearTimeout(sp.flow?.timer);
+    sp.flow = null; sp.disconnected = false; sp.notConnected = false;
+    spResetData();
+    // Login finished on the computer: the sheet switches to the tabs on its own (frame 20 → 21).
+    if (landed) sp.tab = "library";
+    if ($("media").open) {
+      renderSheet();
+      spOnOpen();
+      if (landed) document.getElementById("sp-tab-library")?.focus({ preventScroll: true });
+    }
+  } else if (!connected && wasConnected) {
+    sp.tab = "now"; sp.notConnected = false;
+    spResetData();
+    renderSheetIfOpen();
+  } else if (!account && sp.flow) {
+    clearTimeout(sp.flow.timer); sp.flow = null;
+    renderSheetIfOpen();
+  } else if (account?.premium !== was?.premium) renderSheetIfOpen();
+}
+// Map a failed call to its copy; a revoked token turns the tabs back into "Connect again".
+function spHandleError(error, quiet = false) {
+  if (error?.message === "unauthorized" || error?.name === "AbortError") return { kind: "quiet", message: "" };
+  const info = spotifyError(error, computerName());
+  // A revoked sign-in shows "Spotify disconnected · Connect again"; "not connected" shows the plain connect row.
+  if ((info.kind === "disconnected" && !sp.disconnected) || (info.kind === "not-connected" && !sp.notConnected && !sp.disconnected)) {
+    if (info.kind === "disconnected") sp.disconnected = true; else sp.notConnected = true;
+    sp.tab = "now";
+    spResetData();
+    paint();
+    renderSheetIfOpen();
+  }
+  if (!quiet) notify(info.message, info.kind === "busy" || info.kind === "device" ? "neutral" : true);
+  return info;
+}
+function spOnOpen() {
+  if (spMode() !== "tabs" || !online) return;
+  spLoadStatus();
+  spLoadDevices();
+  if (sp.tab === "library" && !sp.library?.loaded && !sp.library?.loading) spLoadLibrary();
+  if (sp.tab === "now") spLoadQueue();
+}
+async function spLoadStatus() {
+  if (spMode() !== "tabs" || !online) return;
+  try { sp.status = normalizeSpotifyStatus(await api("/api/spotify/status")); }
+  catch (error) { spHandleError(error, true); return; }
+  renderSheetIfOpen();
+  spLoadLiked();
+}
+// The heart's state for the track playing now (GET /api/spotify/like).
+async function spLoadLiked() {
+  const track = sp.status?.track;
+  if (!track || sp.liked?.trackId === track.id || sp.likeBusy) return;
+  try {
+    const reply = await api("/api/spotify/like?trackId=" + encodeURIComponent(track.id));
+    if (sp.status?.track?.id === track.id && !sp.likeBusy) sp.liked = { trackId: track.id, liked: reply?.liked === true };
+  } catch (error) { spHandleError(error, true); return; }
+  renderSheetIfOpen();
+}
+const spTrackLiked = () => Boolean(sp.status?.track && sp.liked?.trackId === sp.status.track.id && sp.liked.liked);
+async function spLoadDevices() {
+  if (spMode() !== "tabs" || !online || sp.devicesLoading) return;
+  sp.devicesLoading = true; sp.devicesError = null;
+  renderSheetIfOpen();
+  try { sp.devices = normalizeDevices(await api("/api/spotify/devices")); }
+  catch (error) { sp.devicesError = spHandleError(error, true).message || null; }
+  finally { sp.devicesLoading = false; }
+  renderSheetIfOpen();
+}
+// Up next shows on wide screens only, and only when the host has the queue route.
+async function spLoadQueue() {
+  if (!sp.queueSupported || !spWide() || spMode() !== "tabs" || !online) return;
+  try { sp.queue = normalizeQueue(await api("/api/spotify/queue")); }
+  catch (error) { sp.queue = []; if (error.status === 404) sp.queueSupported = false; else spHandleError(error, true); }
+  renderSheetIfOpen();
+}
+// Library: Liked Songs (its count) and the first page of playlists, then a page more near the end.
+async function spLoadLibrary(more = false) {
+  const current = sp.library;
+  if (current?.loading || spMode() !== "tabs" || !online) return;
+  if (more && (!current?.loaded || current.next === null)) return;
+  const offset = more ? current.next : 0;
+  const keep = more ? current : { items: [], next: 0, loaded: false };
+  sp.library = { ...keep, loading: true, error: null };
+  renderSheetIfOpen();
+  try {
+    const [page, liked] = await Promise.all([
+      api("/api/spotify/playlists?offset=" + offset + "&limit=" + PAGE_SIZE),
+      more ? null : api("/api/spotify/liked?offset=0&limit=1").catch(() => null),
+    ]);
+    sp.library = mergePage(more ? current : null, normalizePage(page, "playlist", offset));
+    if (liked) {
+      const page = normalizePage(liked, "track");
+      sp.likedTotal = page.total;
+      sp.likedFirst = page.items[0]?.uri || null;
+    }
+  } catch (error) {
+    sp.library = { ...keep, loading: false, error: spHandleError(error, true).message || "Couldn't load your library." };
+  }
+  renderSheetIfOpen();
+  requestAnimationFrame(spMaybeMore);
+}
+function spMaybeMore() {
+  const panel = $("sp-panel");
+  if (!$("media").open || sp.tab !== "library" || spMode() !== "tabs") return;
+  const library = sp.library;
+  if (!library?.loaded || library.loading || library.error || library.next === null) return;
+  if (panel.scrollHeight - panel.scrollTop - panel.clientHeight < 240) spLoadLibrary(true);
+}
+function spPanelHtml(tab) {
+  const premium = spPremium();
+  if (tab === "library") return renderSpLibrary({ likedTotal: sp.likedTotal, playlists: sp.library, playingUri: spPlayingUri(), premium, online });
+  if (tab === "search") return renderSpSearchPanel({ premium, online });
+  if (tab === "devices") return renderSpDevices({ devices: sp.devices, loading: sp.devicesLoading, error: sp.devicesError, premium, online, hostName: state.hostName || "", playing: spIsPlaying() });
+  return "";
+}
+// The search field survives re-renders: its text and focus come back if the panel is rebuilt.
+function swapSpPanel(html, tab) {
+  const panel = $("sp-panel");
+  const changed = swapHtml(panel, html);
+  $("media").classList.toggle("is-search", html !== "" && tab === "search");
+  if (tab !== "search" || !html) return;
+  const input = panel.querySelector("[data-sp-search]");
+  if (changed && input) input.value = sp.search.text;
+  paintSpResults();
+}
+function paintSpResults() {
+  const el = $("sp-panel").querySelector("[data-sp-results]");
+  if (!el) return;
+  const s = sp.search;
+  swapHtml(el, renderSpResults({ query: s.results ? s.resultsQuery : s.query, results: s.results, loading: s.loading, error: s.error, premium: spPremium(), online, playingUri: spPlayingUri() }));
+}
+function spFooterHtml() {
+  const local = isSpotifySource(media);
+  const known = sp.status?.track;
+  const track = local ? { title: media.title, artist: media.artist, artwork: media.artwork } : known ? { title: known.name, artist: known.artists, image: known.image } : null;
+  const device = activeDevice(sp.devices) || sp.status?.device || null;
+  return renderSpFooter({ track, playing: spIsPlaying(), canPlay: local && media.controls?.playPause !== false, device, online });
+}
+// Search: 300 ms after the last keystroke; a newer query cancels the older request.
+const spSearch = createSearch({
+  load: (query, signal) => api("/api/spotify/search?q=" + encodeURIComponent(query) + "&types=track,artist,album,playlist&limit=10", { signal }),
+  onState: (next) => {
+    const error = next.error ? spHandleError(next.error, true).message || "Search didn't work. Try again." : null;
+    sp.search = { ...sp.search, query: next.query, loading: next.loading, error };
+    if ("results" in next) sp.search = { ...sp.search, results: next.results, resultsQuery: next.query };
+    if (!next.query) sp.search = { ...sp.search, results: null, resultsQuery: "" };
+    paintSpResults();
+  },
+});
+function spSelectTab(tab, { focus = "tab" } = {}) {
+  if (spMode() !== "tabs") return;
+  sp.tab = spotifyTab(tab);
+  renderSheet();
+  $("sp-panel").scrollTop = 0;
+  $("media").scrollTop = 0;
+  if (focus === "tab") document.getElementById("sp-tab-" + sp.tab)?.focus({ preventScroll: true });
+  if (focus === "search") $("sp-panel").querySelector("[data-sp-search]")?.focus({ preventScroll: true });
+  if (sp.tab === "library" && !sp.library?.loaded && !sp.library?.loading) spLoadLibrary();
+  if (sp.tab === "devices") spLoadDevices();
+  if (sp.tab === "now") spLoadQueue();
+}
+function spStartFlow() {
+  clearTimeout(sp.flow?.timer);
+  sp.flow = { stopped: false, timer: setTimeout(() => { if (sp.flow) { sp.flow.stopped = true; renderSheetIfOpen(); } }, WAIT_STOP_MS) };
+  renderSheetIfOpen();
+}
+function spStopFlow() { clearTimeout(sp.flow?.timer); sp.flow = null; renderSheetIfOpen(); }
+// Login happens on the computer: the host opens its browser; the snapshot says when it's done.
+async function spConnect() {
+  if (!online) return notify(offlineMessage(), true);
+  const first = !sp.flow;
+  spStartFlow();
+  if (first) $("sp-panel").querySelector("[data-sp-reopen]")?.focus({ preventScroll: true });
+  try { await api("/api/spotify/connect", { method: "POST", body: "{}" }); }
+  catch (error) { spStopFlow(); spHandleError(error); }
+}
+async function spPlay(item, { toast = false } = {}) {
+  if (!online) return notify(offlineMessage(), true);
+  if (!spPremium()) return notify(SP_COPY.premium, true);
+  const body = playBody(item.kind === "liked" ? { ...item, firstUri: sp.likedFirst } : item);
+  if (!body) return;
+  try {
+    await api("/api/spotify/play", { method: "POST", body: JSON.stringify(body) });
+    const context = item.kind === "liked" ? LIKED_CONTEXT : body.contextUri;
+    if (context) {
+      sp.lastContext = context;
+      if (sp.status) sp.status = { ...sp.status, contextUri: context };
+    }
+    if (toast) notify(SP_COPY.playingName(item.name)); else announce(SP_COPY.playingName(item.name));
+    renderSheetIfOpen();
+    mediaPoller.refresh().catch(() => {});
+    setTimeout(spLoadStatus, 700);
+  } catch (error) { spHandleError(error); }
+}
+async function spQueue(item) {
+  if (!online) return notify(offlineMessage(), true);
+  if (!spPremium()) return notify(SP_COPY.premium, true);
+  try {
+    await api("/api/spotify/queue", { method: "POST", body: JSON.stringify({ uri: item.uri }) });
+    notify(SP_COPY.queued);
+    spLoadQueue();
+  } catch (error) { spHandleError(error); }
+}
+async function spTransfer(id) {
+  const device = sp.devices?.find((entry) => entry.id === id);
+  if (!device || device.active || device.restricted) return;
+  if (!online) return notify(offlineMessage(), true);
+  if (!spPremium()) return notify(SP_COPY.premium, true);
+  const before = sp.devices;
+  sp.devices = sp.devices.map((entry) => ({ ...entry, active: entry.id === id }));
+  renderSheetIfOpen();
+  try {
+    await api("/api/spotify/transfer", { method: "POST", body: JSON.stringify({ deviceId: id }) });
+    announce("Playing on " + device.name);
+    setTimeout(spLoadDevices, 800);
+    mediaPoller.refresh().catch(() => {});
+  } catch (error) { sp.devices = before; renderSheetIfOpen(); spHandleError(error); }
+}
+async function spToggleLike() {
+  const track = sp.status?.track;
+  if (!track || sp.likeBusy) return;
+  if (!online) return notify(offlineMessage(), true);
+  const liked = !spTrackLiked();
+  sp.liked = { trackId: track.id, liked };
+  sp.likeBusy = true;
+  renderSheetIfOpen();
+  try {
+    await api("/api/spotify/like", { method: "POST", body: JSON.stringify({ trackId: track.id, liked }) });
+    announce(liked ? "Saved to Liked Songs" : "Removed from Liked Songs");
+  } catch (error) {
+    if (sp.liked?.trackId === track.id) sp.liked = { trackId: track.id, liked: !liked };
+    spHandleError(error);
+  } finally { sp.likeBusy = false; renderSheetIfOpen(); }
+}
+function spItemFrom(el) {
+  const d = el.dataset;
+  return { uri: d.spUri, kind: d.spKind, name: d.spName || "Spotify", image: d.spImage || null, sub: d.spSub || "" };
+}
+// Long-press: a song goes to the queue; a playlist or album opens Play / Add to dock.
+function spLongPress(el) {
+  const item = spItemFrom(el);
+  if (item.kind === "track") return spQueue(item);
+  if (isTileUri(item.uri)) spOpenMenu(item);
+}
+function spOpenMenu(item) {
+  sp.menuItem = item;
+  $("sp-menu-art").innerHTML = spotifyCover(item.image, item.name);
+  $("sp-menu-title").textContent = item.name;
+  $("sp-menu-sub").textContent = item.sub;
+  $("sp-menu-actions").innerHTML = renderSpMenuActions(item, { premium: spPremium() });
+  if (!$("sp-menu").open) $("sp-menu").showModal();
+}
+// Disconnect from the phone (DELETE /api/spotify/account), behind the shared confirmation.
+async function spDisconnect() {
+  if (!online) return notify(offlineMessage(), true);
+  setConfirm("confirm", { title: "Disconnect Spotify?", body: "Playlists, search and devices stop working on every phone until Spotify is connected again on " + computerName() + ".", primary: "disconnect" });
+  $("confirm-icon").innerHTML = icon("close");
+  $("confirm-go").textContent = "Disconnect";
+  confirmFlow++;
+  if (await showConfirm() !== "disconnect") return;
+  try {
+    await api("/api/spotify/account", { method: "DELETE" });
+    sp.tab = "now";
+    notify("Spotify disconnected");
+    renderSheetIfOpen();
+  } catch (error) { spHandleError(error); }
+}
+async function spAddToDock(item) {
+  const tile = spotifyTile(item);
+  if (!tile) return;
+  if (hasTile(state.tiles, tileKey(tile))) return notify(SP_COPY.alreadyOnDock, "neutral");
+  if (state.tiles.length >= MAX_TILES) return notify("Your dock is full. Remove a tile before adding another.", true);
+  if (!online) return notify(offlineMessage(), true);
+  try { await commitTiles(addSpotifyTile(state.tiles, tile)); notify(item.name + " added to your dock"); }
+  catch (error) { report(error); }
+}
+// Spotify controls in the Media sheet and its menu; true when the click was one of them.
+function handleSpotifyClick(el) {
+  const data = el.dataset;
+  if (data.spTab) spSelectTab(data.spTab, { focus: data.spTab === "search" ? "search" : "tab" });
+  else if (data.spGoto) spSelectTab(data.spGoto);
+  else if ("spConnect" in data || "spReopen" in data) spConnect();
+  else if ("spCancel" in data) { spStopFlow(); $("media-spotify").querySelector("[data-sp-connect]")?.focus({ preventScroll: true }); }
+  else if ("spLike" in data) spToggleLike();
+  else if (data.spUri) {
+    if (el.getAttribute("aria-disabled") === "true") notify(SP_COPY.premium, true);
+    else spPlay(spItemFrom(el));
+  } else if (data.spDevice) {
+    if (el.getAttribute("aria-disabled") === "true") notify(SP_COPY.premium, true);
+    else spTransfer(data.spDevice);
+  } else if ("spDisconnect" in data) spDisconnect();
+  else if (data.spRetry === "library") spLoadLibrary(Boolean(sp.library?.loaded));
+  else if (data.spRetry === "devices") spLoadDevices();
+  else if (data.spRetry === "search") spSearch.input(sp.search.text);
+  else if (data.spMenu) {
+    const item = sp.menuItem;
+    $("sp-menu").close();
+    if (!item) return true;
+    if (data.spMenu === "play") spPlay(item);
+    else if (data.spMenu === "queue") spQueue(item);
+    else if (data.spMenu === "dock") spAddToDock(item);
+  } else return false;
+  return true;
+}
+let spPress = null, spPointerType = "mouse";
+function spCancelPress() { if (spPress) clearTimeout(spPress.timer); spPress = null; }
+$("sp-panel").addEventListener("pointerdown", (event) => {
+  spPointerType = event.pointerType || "mouse";
+  spCancelPress();
+  const row = event.target.closest("[data-sp-uri]");
+  if (!row || row.disabled || event.button !== 0) return;
+  spPress = { id: event.pointerId, x: event.clientX, y: event.clientY, row, timer: setTimeout(() => {
+    spPress = null;
+    suppressClickUntil = Date.now() + 600;
+    navigator.vibrate?.(10);
+    spLongPress(row);
+  }, LONG_PRESS_MS) };
+});
+document.addEventListener("pointermove", (event) => {
+  if (spPress && event.pointerId === spPress.id && Math.hypot(event.clientX - spPress.x, event.clientY - spPress.y) > 10) spCancelPress();
+});
+document.addEventListener("pointerup", spCancelPress);
+document.addEventListener("pointercancel", spCancelPress);
+$("sp-panel").addEventListener("scroll", () => { spCancelPress(); spMaybeMore(); }, { passive: true });
+// Touch long-press is ours; a right click or the context-menu key does the same.
+$("sp-panel").addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  const row = event.target.closest("[data-sp-uri]");
+  if (row && !row.disabled && spPointerType !== "touch") spLongPress(row);
+});
+$("sp-panel").addEventListener("input", (event) => {
+  const input = event.target.closest("[data-sp-search]");
+  if (!input) return;
+  sp.search.text = input.value;
+  spSearch.input(input.value);
+});
+$("sp-panel").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.closest("[data-sp-search]")) { event.preventDefault(); spSearch.flush(); }
+});
+// Tabs: arrow keys, Home and End move between them (automatic activation).
+$("media").addEventListener("keydown", (event) => {
+  const tab = event.target.closest?.('[role="tab"][data-sp-tab]');
+  if (!tab) return;
+  const next = nextTab(tab.dataset.spTab, event.key);
+  if (!next) return;
+  event.preventDefault();
+  spSelectTab(next);
+});
+
 function openTileOptions(key) {
   selectedKey = key;
   const index = state.tiles.findIndex((tile) => tileKey(tile) === key);
   const tile = state.tiles[index];
   if (!tile) return;
   $("tile-options-title").textContent = tile.label;
-  $("tile-options-icon").innerHTML = tile.kind === "app" ? renderAppIcon(tile) : controlIcon(tile.verb);
+  $("tile-options-icon").innerHTML = tile.kind === "app" ? renderAppIcon(tile) : tile.kind === "spotify" ? spotifyCover(tile.image, tile.label) : controlIcon(tile.verb);
   $("tile-earlier").disabled = index === 0;
   $("tile-later").disabled = index === state.tiles.length - 1;
   $("tile-options").showModal();
@@ -1186,7 +1619,7 @@ function handleMediaClick(target) {
     if (data.perm === "ask") askPermission(permission.player);
     else if (data.perm === "later") { permissionUi.later = permission.player; miniDismissed.add(miniDismissKey(permission.player)); resetPermissionUi(); renderMedia(); }
     else if (data.perm === "settings") api("/api/permissions/open-settings", { method: "POST", body: JSON.stringify({ scope: permission.player }) }).catch(report);
-  } else return false;
+  } else if (!handleSpotifyClick(el)) return false;
   return true;
 }
 function toggleEditing() { if (!saving) { arming.disarm("arrange"); editing = !editing; paint(); } }
@@ -1403,7 +1836,7 @@ $("media-volume").addEventListener("change", (event) => {
   volumeThrottle.commit(volume.level);
 });
 document.addEventListener("pointerup", () => { if (volume.dragging) setTimeout(() => { volume.dragging = false; }, 0); });
-$("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; });
+$("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; spCancelPress(); });
 setInterval(() => { if ($("media").open && !document.hidden) tickProgress(); }, 1000);
 setInterval(() => { if (!document.hidden) tickMini(); }, 1000);
 $("refresh").addEventListener("click", async () => {

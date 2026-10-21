@@ -9,6 +9,7 @@
 import { icon, controlIcon } from "./icons.js";
 import { closeLabels, miniSeekMode, seekAria } from "./dock-controls.js";
 import { formatTime, spokenTime } from "./now-playing.js";
+import { spotifyTileGlyph } from "./spotify.js";
 
 /** Minimal HTML-escape for text interpolated into the dock. */
 export function escapeHtml(value) {
@@ -75,34 +76,37 @@ function renderCloseButton(tile, key) {
 export function renderTile(tile, { editing = false, first = false, last = false, launcher = false } = {}) {
   const unavailable = tile.available === false;
   const running = tile.kind === "app" && tile.running === true && !unavailable;
+  // A pinned Spotify playlist or album (DOCK-CONTROLS 12): tap plays it, no close button.
+  const spotify = tile.kind === "spotify";
   const classes = ["tile", `tile--${tile.kind}`];
   if (running) classes.push("is-running");
   if (unavailable) classes.push("is-unavailable");
   if (editing) classes.push("is-editing");
-  const action = tile.kind === "control" ? "control" : "launch";
+  const action = tile.kind === "control" ? "control" : spotify ? "spotify-play" : "launch";
   const hasValue = tile.kind === "control" && tile.value !== undefined && tile.value !== null;
   const key =
     tile.kind === "control"
       ? `control:${tile.verb}${hasValue ? `:${tile.value}` : ""}`
-      : `app:${tile.id}`;
-  const actionKey = tile.kind === "control" ? tile.verb : tile.id;
+      : spotify ? `spotify:${tile.uri}` : `app:${tile.id}`;
+  const actionKey = tile.kind === "control" ? tile.verb : spotify ? tile.uri : tile.id;
   // A valued verb carries its value on the element; tapping a tile with no
   // value would send an incomplete request the host correctly rejects.
   const valueAttr = hasValue ? ` data-value="${escapeHtml(String(tile.value))}"` : "";
   // A pinned tile that needs two taps (Sleep) shows the same armed pill as close.
   const arm = !editing && tile.kind === "control" && tile.arm && !unavailable ? tile.arm : null;
-  const glyph = tile.kind === "app" ? renderAppIcon(tile) : controlIcon(tile.verb, { playing: tile.playing === true });
+  const glyph = tile.kind === "app" ? renderAppIcon(tile) : spotify ? spotifyTileGlyph(tile) : controlIcon(tile.verb, { playing: tile.playing === true });
   const armPill = arm ? `<span class="tile__arm">${icon(arm.icon || "moon")}${escapeHtml(arm.text)}</span>` : "";
 
   const body = [
     `<span class="tile__glyph" aria-hidden="true">${glyph}${armPill}</span>`,
     `<span class="tile__label">${escapeHtml(tile.label)}</span>`,
-    !editing ? `<span class="tile__hint">${unavailable ? "Not available" : tile.kind === "app" ? running ? "Running" : "Open app" : "Quick action"}</span>` : "",
+    !editing ? `<span class="tile__hint">${unavailable ? "Not available" : tile.kind === "app" ? running ? "Running" : "Open app" : spotify ? "Spotify" : "Quick action"}</span>` : "",
     running && !editing ? '<span class="tile__dot" aria-hidden="true"></span>' : "",
   ].join("");
 
   if (!editing || launcher) {
-    const name = unavailable ? `${tile.label}, not available on this computer`
+    const name = spotify ? `${tile.label}, Spotify${unavailable ? ", connect Spotify on this computer to play it" : ""}`
+      : unavailable ? `${tile.label}, not available on this computer`
       : arm?.armed ? arm.label
       : running ? `${tile.label}, running` : tile.label;
     const close = !editing && running && tile.close ? tile.close : null;
@@ -328,9 +332,21 @@ export function renderMiniPlayer({ mode = "hidden", media = null, permission = n
   ].join("");
 }
 
-function renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, plain }) {
+/**
+ * The sheet header. Phase B (DOCK-CONTROLS 12) adds `tabs` (the tablist,
+ * centred between the source and the close button; the source then drops its
+ * "on {computer}" context, frames 21 and 22) and `brand` (the source button's
+ * content when no media source applies, e.g. Spotify on the Library tab or
+ * while finishing login on the computer).
+ */
+function renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, plain, tabs = "", brand = "" }) {
   const close = `<button class="icon-button media-close" type="button" data-close="media" aria-label="Close media controls">${icon("close")}</button>`;
   const source = !plain && media?.active ? media.source : null;
+  const middle = tabs ? `<span class="media-head__spacer"></span>${tabs}<span class="media-head__spacer"></span>` : '<span class="media-head__spacer"></span>';
+  if (!source && brand) {
+    const context = !online ? `Reconnecting to ${computer}…` : tabs ? "" : `on ${computer}`;
+    return `<header class="media-head${tabs ? " has-tabs" : ""}"><div class="media-source">${brand}${context ? `<small>${escapeHtml(context)}</small>` : ""}</div>${middle}${close}</header>`;
+  }
   if (!source) {
     const context = online ? "" : `<small class="media-head__context">Reconnecting to ${escapeHtml(computer)}…</small>`;
     return `<header class="media-head"><h2 class="media-head__title">Media</h2>${context}<span class="media-head__spacer"></span>${close}</header>`;
@@ -338,8 +354,8 @@ function renderSheetHeader({ media, caps, online, computer, kind, showOn, source
   const sessions = caps?.sessions && Array.isArray(media.sessions) ? media.sessions : [];
   const several = online && sessions.length > 1;
   const chip = `<span class="media-source__chip">${source.appId ? renderAppIcon({ id: source.appId, name: source.name }) : icon("music")}</span>`;
-  const context = !online ? `Reconnecting to ${computer}…` : several ? `· ${sessions.length} players` : `on ${computer}`;
-  const inner = `${chip}<span class="media-source__name">${escapeHtml(source.name)}</span><small>${escapeHtml(context)}</small>`;
+  const context = !online ? `Reconnecting to ${computer}…` : several ? `· ${sessions.length} players` : tabs ? "" : `on ${computer}`;
+  const inner = `${chip}<span class="media-source__name">${escapeHtml(source.name)}</span>${context || !tabs ? `<small>${escapeHtml(context)}</small>` : ""}`;
   const button = several
     ? `<button class="media-source" type="button" data-media-sources aria-expanded="${sourcesOpen ? "true" : "false"}" aria-controls="media-sources">${inner}${icon("chevron-down")}</button>`
     : `<div class="media-source">${inner}</div>`;
@@ -347,7 +363,7 @@ function renderSheetHeader({ media, caps, online, computer, kind, showOn, source
   const list = several && sourcesOpen
     ? `<div id="media-sources" class="media-sources" role="group" aria-label="Players">${sessions.map((s) => `<button type="button" data-media-select="${escapeHtml(s.sessionId)}"${s.current ? ' aria-current="true"' : ""}><span class="media-source__chip">${s.appId ? renderAppIcon({ id: s.appId, name: s.name }) : icon("music")}</span><span class="media-sources__text"><strong>${escapeHtml(s.name)}</strong>${s.title ? `<small>${escapeHtml(s.title)}</small>` : ""}</span>${s.current ? icon("check") : ""}</button>`).join("")}</div>`
     : "";
-  return `<header class="media-head">${button}<span class="media-head__spacer"></span>${show}${close}</header>${list}`;
+  return `<header class="media-head${tabs ? " has-tabs" : ""}">${button}${middle}${show}${close}</header>${list}`;
 }
 
 function renderPermissionCard(permission, { computer, online }) {
@@ -404,7 +420,7 @@ function renderNothingPlaying({ media, caps, computer, online }) {
   ].join("");
 }
 
-function renderPlayer(media, { online }) {
+function renderPlayer(media, { online, like = "", aside = "" }) {
   const c = media.controls || {};
   const off = (enabled) => (enabled && online ? "" : " disabled");
   const toggle = (name, on, label, glyph) => `<button class="media-btn media-btn--toggle" type="button" data-media="${name}" aria-label="${label}" aria-pressed="${on ? "true" : "false"}"${off(true)}>${icon(glyph)}</button>`;
@@ -427,7 +443,7 @@ function renderPlayer(media, { online }) {
     '<div class="media-body">',
     `<div class="media-art" aria-hidden="true">${renderArt(media)}</div>`,
     '<div class="media-info">',
-    `<h3 class="media-title">${escapeHtml(title)}</h3>`,
+    like ? `<div class="media-title-row"><h3 class="media-title">${escapeHtml(title)}</h3>${like}</div>` : `<h3 class="media-title">${escapeHtml(title)}</h3>`,
     media.title ? (media.artist ? `<p class="media-artist">${escapeHtml(media.artist)}</p>` : "") : '<p class="media-artist">No track details</p>',
     media.album ? `<p class="media-album">${escapeHtml(media.album)}</p>` : "",
     progress,
@@ -439,6 +455,7 @@ function renderPlayer(media, { online }) {
     c.repeat ? toggle("repeat", media.repeat !== "off", repeatLabel, media.repeat === "one" ? "repeat-one" : "repeat") : ghost,
     "</div>",
     "</div>",
+    aside,
     "</div>",
   ].join("");
 }
@@ -449,14 +466,22 @@ function renderPlayer(media, { online }) {
  * drag is never interrupted by a re-render. Progress values are filled in by
  * the page after rendering, so the markup only changes when the state does.
  */
-export function renderMediaSheet({ media = null, caps = null, permission = null, online = true, computer = "your computer", kind = "PC", showOn = false, sourcesOpen = false } = {}) {
+export function renderMediaSheet({ media = null, caps = null, permission = null, online = true, computer = "your computer", kind = "PC", showOn = false, sourcesOpen = false, tabs = "", brand = "", like = "", aside = "", body = null } = {}) {
+  // Phase B: with tabs, the body sits in the Now playing tab panel; `body`
+  // replaces it (another tab's panel lives outside, so it is "" there).
+  const panel = (html) => (tabs ? `<div class="sp-tabpanel" id="sp-tabpanel" role="tabpanel" aria-labelledby="sp-tab-now">${html}</div>` : html);
+  const plainHeader = () => renderSheetHeader({ media, caps, online, computer, kind, plain: true, tabs, brand });
+  if (body !== null) {
+    const sourced = media?.active && !brand;
+    return renderSheetHeader({ media, caps, online, computer, kind, showOn: false, sourcesOpen, plain: !sourced, tabs, brand }) + body;
+  }
   if (permission) {
-    return renderSheetHeader({ media, caps, online, computer, kind, plain: true }) + renderPermissionCard(permission, { computer, online });
+    return plainHeader() + panel(renderPermissionCard(permission, { computer, online }));
   }
   if (media?.active) {
-    return renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen }) + renderPlayer(media, { online });
+    return renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, tabs }) + panel(renderPlayer(media, { online, like, aside }));
   }
-  return renderSheetHeader({ media, caps, online, computer, kind, plain: true }) + renderNothingPlaying({ media, caps, computer, online });
+  return plainHeader() + panel(renderNothingPlaying({ media, caps, computer, online }));
 }
 
 /** The system volume row: a slider (new hosts), three buttons (older hosts) or nothing (6.2). */

@@ -12,6 +12,13 @@ import {
 } from "../public/dock-controls.js";
 import { normalizeMedia, fromNowPlaying, spokenTime, createMediaPoller } from "../public/now-playing.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow, COMPUTER_NAME_MAX } from "../public/native-bridge.js";
+import { addSpotifyTile, hasTile, removeTile, moveTile, toWireTiles, tileKey } from "../public/tiles.js";
+import {
+  SP_COPY, SP_TABS, LIKED_CONTEXT, SEARCH_DEBOUNCE_MS, LONG_PRESS_MS, WAIT_STOP_MS, MAX_TILES, formatCount, spotifyAccount, spotifyInstalled, isSpotifySource, spotifyMode,
+  spotifyTab, nextTab, spotifyImageUrl, normalizePage, mergePage, normalizeSearch, normalizeQueue, normalizeDevices, isLikedContext, deviceIcon, deviceSubtitle,
+  normalizeSpotifyStatus, playBody, spotifyTile, spotifyError, createSearch, spotifyBrand, renderSpTabs, renderSpEntry, renderSpWaiting, renderSpLibrary,
+  renderSpSearchPanel, renderSpResults, renderSpDevices, renderSpFooter, renderSpUpNext, renderLikeButton, spotifyMenuActions, renderSpMenuActions,
+} from "../public/spotify.js";
 
 const t = createChecker("pwa");
 const PUBLIC = join(import.meta.dirname, "..", "public");
@@ -780,4 +787,241 @@ t.ok(appJs.includes("const volumeThrottle = createThrottle((level, final) => sen
 t.ok(appJs.includes("await mediaPoller.command(() => api(\"/api/media\"") || appJs.includes('const fresh = await mediaPoller.command(() => api("/api/media"'), "media commands run through the poller so stale polls are discarded");
 t.ok(appJs.includes("if (transport && mediaCaps(caps()).available && !usesLegacyMedia()) return mediaCommand(transport);"), "the pinned Play/Pause tile shares the mini player's state and command path");
 t.ok(appJs.includes("syncPinnedPlay(before);"), "the pinned tile glyph follows optimistic changes too");
+// ---- Spotify account, Phase B (DOCK-CONTROLS 6.4, 12, 13) ----
+{
+  const F = (account, extra = {}) => ({ spotify: { installed: true, local: {}, account }, ...extra });
+  const spMedia = normalizeMedia({ source: { id: "spotify", name: "Spotify", appId: "com.spotify.client" }, title: "Houdini", artist: "Dua Lipa", playing: true });
+  const chrome = normalizeMedia({ source: { id: "chrome", name: "Chrome" }, title: "Video", playing: true });
+
+  // Visibility (6.4): everything hides without an available account.
+  t.equal(spotifyAccount(undefined), null, "no features: no Spotify account surface");
+  t.equal(spotifyAccount({ spotify: { installed: true, local: {} } }), null, "Phase A host (no account key): hidden");
+  t.equal(spotifyAccount(F({ available: false })), null, "available false: hidden");
+  t.deepEqual(spotifyAccount(F({ available: true, connected: true, premium: null, name: "Geri" })), { available: true, connected: true, premium: true, name: "Geri" }, "premium null (unknown) reads as allowed");
+  t.equal(spotifyAccount(F({ available: true, connected: true, premium: false })).premium, false, "only an explicit false is non-Premium");
+  t.equal(spotifyMode({ account: null, media: spMedia, installed: true }), "hidden", "mode hidden without an account");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: false })), media: spMedia }), "entry", "not connected + Spotify source: entry row");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: false })), media: chrome, installed: false }), "hidden", "not connected, other source, Spotify not installed: hidden");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: false })), media: null, installed: true }), "entry", "Spotify installed: entry row even with nothing playing");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: false })), media: spMedia, waiting: true }), "waiting", "connect pressed: waiting");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: true })), media: chrome }), "tabs", "connected: tabs whatever the source");
+  t.equal(spotifyMode({ account: spotifyAccount(F({ available: true, connected: true })), media: chrome, disconnected: true }), "entry", "revoked token: back to the entry row");
+  t.ok(spotifyInstalled({ media: { players: [{ id: "spotify", installed: true }] } }) && !spotifyInstalled({}), "installed from the player list too");
+  t.ok(isSpotifySource(spMedia) && !isSpotifySource(chrome) && !isSpotifySource(null), "Spotify source detection");
+
+  // Tabs: roles, selection, roving tabindex, offline greys them.
+  const tabs = renderSpTabs({ tab: "library" });
+  t.ok(tabs.includes('role="tablist"') && (tabs.match(/role="tab"/g) || []).length === 4, "a tablist with four tabs");
+  t.ok(tabs.includes('id="sp-tab-library" data-sp-tab="library" aria-selected="true" aria-controls="sp-tabpanel" tabindex="0"'), "the current tab is selected and focusable");
+  t.ok(tabs.includes('data-sp-tab="now" aria-selected="false" aria-controls="sp-tabpanel" tabindex="-1"'), "other tabs leave the tab order");
+  t.deepEqual(SP_TABS.map((x) => x.label), ["Now playing", "Library", "Search", "Devices"], "sp.tabs copy");
+  t.equal((renderSpTabs({ tab: "now", online: false }).match(/ disabled>/g) || []).length, 4, "offline: every tab is disabled");
+  t.equal(spotifyTab("bogus"), "now", "unknown tab falls back to Now playing");
+  t.deepEqual(["ArrowRight", "ArrowLeft", "Home", "End", "x"].map((k) => nextTab("now", k)), ["library", "devices", "now", "devices", null], "arrow keys, Home and End move between tabs");
+
+  // Header with tabs (frames 21, 22) and the heart (Now playing).
+  const tabbed = renderMediaSheet({ media: spMedia, caps: mediaCaps({ features: { media: { sources: "system" } } }), online: true, computer: "Studio PC", tabs, brand: spotifyBrand(), like: renderLikeButton({ liked: true }) });
+  t.ok(tabbed.includes('<header class="media-head has-tabs">') && tabbed.includes(tabs), "tabs sit in the sheet header");
+  t.ok(!tabbed.includes("on Studio PC"), "with tabs the source drops its \"on {computer}\" context");
+  t.ok(tabbed.includes('id="sp-tabpanel" role="tabpanel" aria-labelledby="sp-tab-now"'), "the Now playing body is the tab panel");
+  t.ok(tabbed.includes('class="media-title-row"') && tabbed.includes('data-sp-like aria-label="Like" aria-pressed="true"'), "the heart sits next to the title, pressed when liked");
+  t.ok(renderLikeButton({ liked: false, online: false }).includes('aria-pressed="false" disabled'), "heart: not liked, offline disabled");
+  const other = renderMediaSheet({ media: spMedia, online: true, computer: "Studio PC", tabs, brand: spotifyBrand(), body: "" });
+  t.ok(other.includes('<span class="media-source__name">Spotify</span>') && !other.includes("media-body"), "another tab: Spotify brand, no player body");
+  t.ok(!other.includes("Show on"), "Show on {Mac/PC} only on Now playing");
+  const offlineHead = renderMediaSheet({ media: spMedia, online: false, computer: "Studio PC", tabs, brand: spotifyBrand(), body: "" });
+  t.ok(offlineHead.includes("Reconnecting to Studio PC…"), "offline: the header says it is reconnecting");
+  const phaseA = renderMediaSheet({ media: spMedia, online: true, computer: "Studio PC" });
+  t.ok(!phaseA.includes("sp-tabpanel") && phaseA.includes("<small>on Studio PC</small>"), "without tabs the Phase A sheet is unchanged");
+
+  // Entry row, waiting view (frame 20) and copy (13).
+  const entry = renderSpEntry();
+  t.ok(entry.includes("Your playlists, search and devices") && entry.includes(">Connect Spotify</button>"), "entry row copy");
+  const again = renderSpEntry({ disconnected: true, online: false });
+  t.ok(again.includes("Spotify disconnected") && again.includes("Connect again") && again.includes("data-sp-connect disabled"), "revoked token: Spotify disconnected · Connect again (offline disabled)");
+  const waiting = renderSpWaiting({ computer: "Studio PC" });
+  t.ok(waiting.includes("<h3>Finish on Studio PC</h3>") && waiting.includes("A browser window opened on Studio PC. Log in to Spotify there and allow WinDock. Your password never passes through this phone."), "waiting: title and body");
+  t.ok(waiting.includes('role="status"><span class="spinner" aria-hidden="true"></span>Waiting for Spotify…'), "waiting: spinner and status text");
+  t.ok(waiting.includes("Open the window again") && waiting.includes(">Cancel</button>") && waiting.includes("Playing from your library needs Spotify Premium."), "waiting: actions and the after-note");
+  t.ok(renderSpWaiting({ stopped: true }).includes('class="spinner is-stopped"'), "the spinner stops after 60 s; the words stay");
+  t.equal(WAIT_STOP_MS, 60_000, "waiting spinner stops at 60 s");
+
+  // Host data shapes (src/spotify/contract.js mappers).
+  const page1 = normalizePage({ items: [
+    { id: "a".repeat(22), uri: "spotify:playlist:" + "a".repeat(22), name: "Shqip të vjetra", owner: { id: "geri", name: "Geri" }, tracks: 212, image: "0123456789abcdef0123456789abcdef" },
+    { id: "b".repeat(22), uri: "spotify:playlist:" + "b".repeat(22), name: "Discover Weekly", owner: { id: "spotify", name: null }, tracks: null, image: null },
+    { uri: "https://evil.example/x", name: "Bad" },
+  ], total: 3, offset: 0, limit: 2, next: true }, "playlist", 0);
+  t.equal(page1.items.length, 2, "malformed items are dropped");
+  t.equal(page1.next, 3, "next: true → the next offset");
+  t.equal(normalizePage({ items: [], next: false }, "playlist", 40).next, null, "next: false → the end");
+  t.equal(page1.items[0].owner, "Geri", "owner object → name");
+  const merged = mergePage(mergePage(null, page1), { items: [page1.items[1]], next: null });
+  t.equal(merged.items.length, 2, "paging drops duplicates");
+  t.equal(merged.next, null, "the last page ends paging");
+  const search = normalizeSearch({ q: "dua", tracks: { items: [{ type: "track", id: "c".repeat(22), uri: "spotify:track:" + "c".repeat(22), name: "Houdini", artists: [{ id: null, uri: null, name: "Dua Lipa" }, { name: "DaBaby" }], album: { id: null, name: "Radical Optimism" }, image: null }] }, artists: { items: [] } });
+  t.equal(search.tracks[0].artists, "Dua Lipa, DaBaby", "artists arrays of objects join with \", \"");
+  t.equal(search.tracks[0].album, "Radical Optimism", "album object → name");
+  t.deepEqual([search.albums.length, search.playlists.length], [0, 0], "missing sections are empty");
+  t.equal(normalizeQueue({ currentlyPlaying: null, queue: [{ type: "track", id: "d".repeat(22), uri: "spotify:track:" + "d".repeat(22), name: "Illusion", artists: [{ name: "Dua Lipa" }] }] }).length, 1, "queue reads { queue }");
+  const devices = normalizeDevices({ devices: [{ id: "abc", name: "Studio PC", type: "Computer", active: true }, { id: null, name: "Restricted TV", type: "TV", active: false }, { id: "s1", name: "Sonos", type: "Speaker", active: false, restricted: true }] });
+  t.deepEqual(devices.map((d) => [d.id, d.restricted]), [["abc", false], [null, true], ["s1", true]], "devices without an id or restricted can't take playback");
+  const status = normalizeSpotifyStatus({ configured: true, connected: true, premium: null, playback: { device: { id: "abc", name: "Studio PC", type: "Computer", active: true }, playing: true, item: { type: "track", id: "4OMJGnvZfDvsePyCwRGO7X", uri: "spotify:track:4OMJGnvZfDvsePyCwRGO7X", name: "Houdini", artists: [{ name: "Dua Lipa" }], image: null }, context: { type: "playlist", uri: "spotify:playlist:" + "a".repeat(22) } } });
+  t.deepEqual([status.track.id, status.playing, status.contextUri, status.device.name], ["4OMJGnvZfDvsePyCwRGO7X", true, "spotify:playlist:" + "a".repeat(22), "Studio PC"], "status.playback maps to track, playing, context, device");
+  t.equal(normalizeSpotifyStatus({ playback: null }).track, null, "nothing playing: no track (heart hidden)");
+  t.ok(isLikedContext("spotify:user:geri:collection") && isLikedContext(LIKED_CONTEXT) && !isLikedContext("spotify:playlist:x"), "Liked Songs context detection");
+  t.equal(spotifyImageUrl("0123456789abcdef0123456789abcdef"), "/api/spotify/image?key=0123456789abcdef0123456789abcdef", "image keys go through the host route");
+  for (const bad of ["https://i.scdn.co/image/x", "//evil", "/api/x", "javascript:alert(1)", "a b", "", null]) t.equal(spotifyImageUrl(bad), null, `never an image URL from data: ${bad}`);
+
+  // What a tap plays.
+  t.deepEqual(playBody({ kind: "track", uri: "spotify:track:" + "c".repeat(22) }), { uri: "spotify:track:" + "c".repeat(22) }, "a song plays by uri");
+  t.deepEqual(playBody({ kind: "playlist", uri: "spotify:playlist:" + "a".repeat(22) }), { contextUri: "spotify:playlist:" + "a".repeat(22) }, "a playlist plays as a context");
+  t.deepEqual(playBody({ kind: "liked", uri: LIKED_CONTEXT, firstUri: "spotify:track:" + "c".repeat(22) }), { uri: "spotify:track:" + "c".repeat(22) }, "Liked Songs starts the newest liked song");
+  t.equal(playBody({ kind: "liked", uri: LIKED_CONTEXT }), null, "Liked Songs before its first song is known: nothing");
+
+  // Library (frame 21): Liked first, two columns, playing row, paging, Premium.
+  const pl = page1.items;
+  const lib = renderSpLibrary({ likedTotal: 1284, playlists: mergePage(null, { ...page1, next: 30 }), playingUri: pl[0].uri });
+  t.ok(lib.includes('role="tabpanel" aria-labelledby="sp-tab-library"') && lib.includes('<ul class="sp-list" aria-label="Your library">'), "library: a tab panel with a list");
+  t.ok(lib.indexOf("Liked Songs") < lib.indexOf("Shqip të vjetra"), "Liked Songs comes first");
+  t.ok(lib.includes("1,284 songs"), "Liked Songs count: 1,284 songs");
+  t.ok(lib.includes("Playlist · Geri · 212 songs"), "playlist subtitle: Playlist · owner · count");
+  t.ok(/is-playing" type="button" data-sp-uri="spotify:playlist:a{22}"[^>]*aria-current="true"/.test(lib) && lib.includes('<span class="sp-row__playing">'), "the playing row shows Playing with the speaker");
+  t.equal((lib.match(/sp-row__playing/g) || []).length, 1, "only one row is playing");
+  t.ok(lib.includes('src="/api/spotify/image?key=0123456789abcdef0123456789abcdef"'), "covers load through the image route");
+  t.ok(lib.includes("data-sp-more"), "more pages: a paging sentinel");
+  t.ok(!renderSpLibrary({ playlists: merged }).includes("data-sp-more"), "last page: no sentinel");
+  t.ok(renderSpLibrary({ playlists: null }).includes("Loading your library…"), "first load: loading line");
+  t.ok(renderSpLibrary({ playlists: { items: pl, next: 30, loading: true, loaded: true } }).includes("Loading more…"), "next page: loading more");
+  const libErr = renderSpLibrary({ playlists: { items: [], next: 0, loading: false, loaded: false, error: SP_COPY.busy } });
+  t.ok(libErr.includes("Spotify is busy, try again in a moment") && libErr.includes('data-sp-retry="library"'), "library error with Try again");
+  t.ok(renderSpLibrary({ likedTotal: 0, playlists: { items: [], next: null, loaded: true } }).includes("0 songs"), "empty library: Liked Songs still listed");
+  const locked = renderSpLibrary({ playlists: mergePage(null, page1), premium: false });
+  t.ok(locked.includes("Needs Spotify Premium"), "not Premium: the note");
+  t.equal((locked.match(/aria-disabled="true"/g) || []).length, 3, "not Premium: every row stays readable but disabled");
+  t.ok(!locked.includes("sp-row__tail"), "not Premium: no play glyphs");
+  t.ok(renderSpLibrary({ playlists: mergePage(null, page1), online: false }).includes(" disabled>"), "offline: rows disabled");
+
+  // Search: field, sections, empty, error.
+  const panel = renderSpSearchPanel();
+  t.ok(panel.includes('type="search" data-sp-search placeholder="Songs, artists, albums" aria-label="Search Spotify"') && panel.includes("data-sp-results"), "search field with its placeholder, results under it");
+  t.equal(renderSpResults({ query: "" }), "", "no query: no results");
+  t.ok(renderSpResults({ query: "du", loading: true }).includes("Searching…"), "first search: searching line");
+  t.equal(renderSpResults({ query: "zzz", results: normalizeSearch({}) }), '<p class="sp-status" role="status">No results for &quot;zzz&quot;.</p>', "no results copy (quotes escaped)");
+  const full = normalizeSearch({ tracks: { items: [{ id: "c".repeat(22), name: "Houdini", artists: [{ name: "Dua Lipa" }] }] }, artists: { items: [{ id: "e".repeat(22), name: "Dua Lipa" }] }, albums: { items: [{ id: "f".repeat(22), name: "Radical Optimism", artists: [{ name: "Dua Lipa" }] }] }, playlists: { items: [{ id: "g".repeat(22), name: "This Is Dua Lipa", owner: { name: "Spotify" } }] } });
+  const res = renderSpResults({ query: "dua", results: full });
+  t.deepEqual([...res.matchAll(/<h3 class="sp-label">([^<]+)</g)].map((m) => m[1]), ["Songs", "Artists", "Albums", "Playlists"], "sections in order");
+  t.ok(res.includes("sp-row--compact") && res.includes("sp-art--round"), "rows 56; artists round");
+  t.ok(res.includes('data-sp-kind="track"') && res.includes('data-sp-kind="album"'), "rows carry their kind for tap / long-press");
+  t.ok(renderSpResults({ query: "dua", error: "Spotify is busy, try again in a moment" }).includes('data-sp-retry="search"'), "search error with Try again");
+  t.ok((renderSpResults({ query: "dua", results: full, premium: false }).match(/aria-disabled="true"/g) || []).length === 4, "not Premium: results readable, play disabled");
+
+  // Devices (frame 22).
+  const dev = renderSpDevices({ devices: normalizeDevices({ devices: [{ id: "d1", name: "Studio PC", type: "Computer", active: true }, { id: "d2", name: "Sonos Kuzhina", type: "Speaker" }, { id: "d3", name: "Geri's iPhone", type: "Smartphone" }] }), hostName: "Studio PC", playing: true });
+  t.ok(dev.includes('<h3 class="sp-label" id="sp-devices-label">Play on</h3>') && dev.includes('aria-labelledby="sp-devices-label"'), "devices: Play on, labelled list");
+  t.ok(dev.includes("This computer · Playing") && dev.includes(">Speaker<") && dev.includes(">Phone<"), "device subtitles (frame 22)");
+  t.ok(/is-active" type="button" data-sp-device="d1" aria-current="true"/.test(dev) && dev.includes("sp-row__check"), "the current device is checked");
+  t.ok(dev.includes("Only devices with Spotify open show up. Switching needs Spotify Premium."), "devices note");
+  t.ok(dev.includes(">Disconnect Spotify</button>"), "Disconnect Spotify row at the bottom");
+  const devLocked = renderSpDevices({ devices: normalizeDevices({ devices: [{ id: "d1", name: "A", type: "Computer", active: true }, { id: "d2", name: "B", type: "Speaker" }] }), premium: false });
+  t.ok(devLocked.includes("Needs Spotify Premium") && devLocked.includes('data-sp-device="d2" aria-disabled="true"') && !/data-sp-device="d1"[^>]*aria-disabled/.test(devLocked), "not Premium: switching disabled, the list readable");
+  t.ok(renderSpDevices({ devices: [], loading: true }).includes("Looking for devices…"), "devices loading");
+  t.deepEqual(["Computer", "Smartphone", "Speaker", "TV", "AVR"].map(deviceIcon), ["monitor", "phone", "speaker", "monitor", "speaker"], "device glyphs");
+  t.equal(deviceSubtitle({ name: "Mac", type: "Computer", active: false }, { hostName: "Studio PC" }), "Computer", "another computer reads Computer");
+
+  // Footer on every tab.
+  const foot = renderSpFooter({ track: { title: "Houdini", artist: "Dua Lipa", artwork: "/api/media/artwork?key=1" }, playing: true, canPlay: true, device: { name: "Studio PC", type: "Computer" } });
+  t.ok(foot.includes("<strong>Houdini</strong> · Dua Lipa") && foot.includes('data-media="pause" aria-label="Pause"'), "footer: track and Pause");
+  t.ok(foot.includes('data-sp-goto="devices" aria-label="Playing on Studio PC. Choose a device."'), "footer: device chip opens Devices");
+  t.ok(renderSpFooter({}).includes("Nothing playing") && renderSpFooter({}).includes('aria-label="Play" disabled'), "footer with nothing playing");
+  t.ok(renderSpUpNext([]) === "" && renderSpUpNext(normalizeQueue({ queue: Array.from({ length: 7 }, (_, i) => ({ id: String(i).repeat(22), name: "T" + i })) })).match(/<li>/g).length === 5, "Up next: at most five, absent when empty");
+
+  // Errors: the JSON error string decides (src/spotify/routes.js, account.js).
+  const err = (status, detail, message = detail) => Object.assign(new Error(message), { status, detail });
+  t.deepEqual(spotifyError(err(403, "premium required")), { kind: "premium", message: "Needs Spotify Premium" }, "403 premium required");
+  t.equal(spotifyError(err(429, "rate limited")).message, "Spotify is busy, try again in a moment", "429 busy");
+  t.equal(spotifyError(err(409, "no active device")).kind, "device", "409 no active device");
+  t.equal(spotifyError(err(409, "spotify not connected"), "Studio PC").kind, "not-connected", "409 spotify not connected → connect state, not the device message");
+  t.equal(spotifyError(err(409, "spotify disconnected")).kind, "disconnected", "409 spotify disconnected → disconnected footer");
+  t.equal(spotifyError(err(403, "spotify user not allowed")).kind, "error", "403 user not allowed is not the Premium state");
+  t.equal(spotifyError(err(409, "permission needed")).kind, "error", "an unrelated 409 is not the no-device message");
+  t.equal(spotifyError(Object.assign(new Error("Failed to fetch"), {})).message, "Connection lost. Check that WinDock is running on your computer.", "network failure");
+
+  // Search: 300 ms debounce, stale requests aborted and ignored.
+  {
+    const clock = fakeClock();
+    const calls = [], states = [], resolvers = [];
+    class Ctl { constructor() { this.signal = { aborted: false }; } abort() { this.signal.aborted = true; } }
+    const s = createSearch({ setTimer: clock.setTimer, clearTimer: clock.clearTimer, Controller: Ctl, onState: (st) => states.push(st),
+      load: (q, signal) => { calls.push({ q, signal }); return new Promise((resolve) => resolvers.push({ q, resolve })); } });
+    s.input("d"); clock.advance(100); s.input("du"); clock.advance(299);
+    t.equal(calls.length, 0, "nothing is sent within 300 ms of a keystroke");
+    clock.advance(1);
+    t.deepEqual(calls.map((c) => c.q), ["du"], "one request 300 ms after the last keystroke");
+    s.input("dua"); clock.advance(300);
+    t.ok(calls[0].signal.aborted, "a newer query aborts the request in flight");
+    t.deepEqual(calls.map((c) => c.q), ["du", "dua"], "then asks for the newer query");
+    resolvers[1].resolve({ tracks: { items: [{ id: "c".repeat(22), name: "Houdini" }] } });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    resolvers[0].resolve({ tracks: { items: [{ id: "h".repeat(22), name: "Stale" }] } });
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    const shown = states.filter((st) => "results" in st && st.results);
+    t.equal(shown.length, 1, "only one answer is shown");
+    t.equal(shown[0].results.tracks[0].name, "Houdini", "the stale answer never replaces the newer one");
+    t.ok(states.some((st) => st.loading && !("results" in st)), "while typing the previous results stay (no results key)");
+    s.input(""); t.deepEqual(states.at(-1), { query: "", results: null, loading: false, error: null }, "clearing the field clears the results");
+    s.input("x"); s.flush();
+    t.equal(calls.at(-1).q, "x", "Enter searches at once");
+    t.equal(SEARCH_DEBOUNCE_MS, 300, "debounce is 300 ms");
+  }
+
+  // Long-press menu actions and the playlist tile.
+  t.deepEqual(spotifyMenuActions({ kind: "playlist", uri: "spotify:playlist:" + "a".repeat(22) }).map((a) => a.id), ["play", "dock"], "playlist menu: Play, Add to dock");
+  t.deepEqual(spotifyMenuActions({ kind: "album", uri: "spotify:album:" + "f".repeat(22) }).map((a) => a.id), ["play", "dock"], "album menu: Play, Add to dock");
+  t.deepEqual(spotifyMenuActions({ kind: "track", uri: "spotify:track:" + "c".repeat(22) }).map((a) => a.id), ["play", "queue"], "song menu: Play, Add to queue (no dock tile)");
+  t.ok(renderSpMenuActions({ kind: "playlist", uri: "spotify:playlist:" + "a".repeat(22) }, { premium: false }).includes('data-sp-menu="play" disabled'), "not Premium: Play disabled, Add to dock allowed");
+  t.equal(LONG_PRESS_MS, 500, "long-press is 500 ms");
+  const tile = spotifyTile({ kind: "playlist", uri: "spotify:playlist:" + "a".repeat(22), name: "Shqip të vjetra", image: "0123456789abcdef0123456789abcdef" });
+  t.deepEqual(tile, { kind: "spotify", uri: "spotify:playlist:" + "a".repeat(22), label: "Shqip të vjetra", image: "0123456789abcdef0123456789abcdef" }, "Add to dock builds a spotify tile");
+  t.equal(spotifyTile({ kind: "track", uri: "spotify:track:" + "c".repeat(22), name: "x" }), null, "songs and artists never become tiles");
+  t.equal(tileKey(tile), "spotify:spotify:playlist:" + "a".repeat(22), "tile key is per URI");
+  const added = addSpotifyTile([{ kind: "app", id: "a", target: "a", label: "A" }], tile);
+  t.equal(added.length, 2, "the tile is appended");
+  t.deepEqual(toWireTiles(added)[1], tile, "spotify tiles survive toWireTiles (kind, uri, label, image)");
+  t.equal(addSpotifyTile(added, tile).length, 2, "a duplicate is a no-op (the page says Already on your dock)");
+  t.ok(hasTile(added, tileKey(tile)), "duplicates are found by key");
+  t.equal(addSpotifyTile(added, { kind: "spotify", uri: "spotify:track:" + "c".repeat(22), label: "x" }).length, 2, "a non-playlist URI is refused");
+  t.equal(removeTile(added, tileKey(tile)).length, 1, "removed like other tiles");
+  t.deepEqual(moveTile(added, tileKey(tile), -1).map((x) => x.kind), ["spotify", "app"], "arranged like other tiles");
+  t.equal(MAX_TILES, 64, "the max-tiles rule applies (64)");
+
+  const tileHtml = renderTile({ ...tile, available: true });
+  t.ok(tileHtml.includes('data-action="spotify-play" data-key="spotify:playlist:' + "a".repeat(22) + '" data-tile-key="spotify:spotify:playlist:' + "a".repeat(22) + '"'), "the tile plays its URI");
+  t.ok(tileHtml.includes('class="app-icon sp-cover"') && tileHtml.includes('/api/spotify/image?key=0123456789abcdef0123456789abcdef') && tileHtml.includes('<span class="sp-badge">'), "cover through the image route with a Spotify badge");
+  t.ok(tileHtml.includes('aria-label="Shqip të vjetra, Spotify"'), "tile name says Spotify");
+  t.ok(!tileHtml.includes("tile__close") && !tileHtml.includes("tile-slot"), "no close button: it is not an app");
+  const off = renderTile({ ...tile, available: false });
+  t.ok(off.includes("is-unavailable") && off.includes("connect Spotify on this computer to play it"), "unavailable: dimmed and explained");
+  t.ok(renderTile({ ...tile, label: "<b>" }).includes("&lt;b&gt;"), "tile label is escaped");
+  t.ok(renderTile({ kind: "spotify", uri: tile.uri, label: "No art" }).includes("sp-cover icon-failed"), "no image: the letter fallback");
+  t.ok(renderTile(tile, { editing: true }).includes('data-key="spotify:spotify:playlist:'), "arrange mode keys the tile");
+  t.equal(SP_COPY.connectFirst("Studio PC"), "Connect Spotify on Studio PC to play this", "unavailable tile toast");
+  t.equal(SP_COPY.playingName("Deep Focus"), "Playing Deep Focus", "tile play toast");
+  t.equal(SP_COPY.queued, "Added to queue", "queue toast");
+  t.equal(SP_COPY.alreadyOnDock, "Already on your dock", "duplicate toast");
+  t.equal(formatCount(1284), "1,284", "counts use thousands separators");
+
+  // Shell wiring.
+  t.ok(html.includes('<div id="sp-panel" class="sp-host"></div>') && html.includes('<div id="media-spotify" class="sp-foot-host"></div>'), "the Media sheet hosts the tab panel and the footer");
+  t.ok(html.includes('<dialog id="sp-menu" class="options sp-menu"'), "the long-press menu is a <dialog> (Android Back closes it)");
+  const sw = read("sw.js");
+  t.ok(sw.includes('"/spotify.js"') && /windock-v20-/.test(sw), "spotify.js is precached and the cache version bumped");
+  t.ok(readFileSync(join(import.meta.dirname, "build-website-demo.mjs"), "utf8").includes("'spotify.js'"), "the website demo copies spotify.js");
+  t.ok(css.includes(".sp-tab::before { content: \"\"; position: absolute; inset: -4px 0; }"), "tabs have a 44 px hit height");
+  t.ok(/\.media-sheet\.is-search \{ margin-top:/.test(css), "the sheet pins to the top while searching");
+  t.ok(appJs.includes("const spSearch = createSearch(") && appJs.includes('api("/api/spotify/search?q=" + encodeURIComponent(query)'), "app.js searches through createSearch");
+  t.ok(appJs.includes('api("/api/spotify/account", { method: "DELETE" })') && appJs.includes('title: "Disconnect Spotify?"'), "Disconnect Spotify asks, then calls DELETE /api/spotify/account");
+  t.ok(appJs.includes('"/api/spotify/like?trackId=" + encodeURIComponent(track.id)'), "the heart reads GET /api/spotify/like");
+}
+
 t.done("pwa verification passed");

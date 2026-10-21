@@ -79,6 +79,14 @@
   <button id="media-grip" class="sheet-grip" type="button" aria-label="Close media controls"><span></span></button>
   <div id="media-content" class="media-content"></div>
   <div id="media-volume"></div>
+  <div id="sp-panel" class="sp-host"></div>
+  <div id="media-spotify" class="sp-foot-host"></div>
+</dialog>
+
+<dialog id="sp-menu" class="options sp-menu" aria-labelledby="sp-menu-title" aria-describedby="sp-menu-sub">
+  <span id="sp-menu-art" class="options__icon sp-menu__art"></span><h2 id="sp-menu-title">Spotify</h2><p id="sp-menu-sub"></p>
+  <div id="sp-menu-actions" class="options__actions"></div>
+  <button class="button options__done" type="button" data-close="sp-menu">Cancel</button>
 </dialog>
 
 <button id="recording-stop" class="recording-stop" type="button" aria-label="Stop screen recording" hidden><span class="recording-dot"></span><span id="recording-time">00:00</span><strong>Stop</strong></button>
