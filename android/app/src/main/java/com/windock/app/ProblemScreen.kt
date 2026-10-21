@@ -51,6 +51,7 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         buttons.visibility = View.VISIBLE
         spacer.visibility = View.VISIBLE
         left.gravity = Gravity.NO_GRAVITY
+        left.layoutParams = left.layoutParams.apply { width = activity.resources.getDimensionPixelSize(R.dimen.split_left) }
         body.textSize = 15f
         right.gravity = Gravity.NO_GRAVITY
         glyph.setBackgroundResource(R.drawable.bg_glyph_lg)
@@ -60,7 +61,8 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
     }
 
     /** S8: likely cause first; retries continue in the coordinator while this is visible. */
-    fun cantReach(c: Computer, diagnosis: ReachChecks.Result, onRetry: () -> Unit, onOther: () -> Unit, onUsb: (() -> Unit)?) {
+    fun cantReach(c: Computer, diagnosis: ReachChecks.Result, onRetry: () -> Unit, onOther: () -> Unit, onUsb: (() -> Unit)?,
+                  hostUi: Boolean = false) {
         reset()
         kind = Kind.CANT_REACH; computer = c; onBackAction = onOther
         val name = c.displayName
@@ -76,34 +78,70 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         secondary.setText(R.string.reach_other)
         secondary.setOnClickListener { onOther() }
         if (onUsb != null) { usb.visibility = View.VISIBLE; usb.setOnClickListener { onUsb() } }
+        addChecks(c, diagnosis, hostUi, 0)
+        main.postDelayed(longWait, ScreenHost.SPINNER_STOP_MS)
+    }
+
+    /**
+     * Q10 (HOST-CONTROL-PAGE 10.7): the scanned address did not answer as the scanned computer.
+     * `otherDevice` when a different certificate answered there: that becomes the first check.
+     */
+    fun qrCantReach(c: Computer, address: String, diagnosis: ReachChecks.Result, otherDevice: Boolean,
+                    onRetry: () -> Unit, onCancel: () -> Unit) {
+        reset()
+        kind = Kind.CANT_REACH; computer = c; onBackAction = onCancel
+        val name = c.displayName
+        icon.setImageResource(R.drawable.ic_monitor)
+        titleView.text = str(R.string.reach_title, name)
+        body.text = Ui.rich(activity, str(R.string.qr_reach_body, address), commands = listOf(address))
+        statusRow.visibility = View.VISIBLE
+        spinner.visibility = View.VISIBLE
+        status.text = str(R.string.reach_status)
+        primary.setText(R.string.reach_retry)
+        primary.setOnClickListener { onRetry(); restartStatus() }
+        secondary.visibility = View.VISIBLE
+        secondary.setText(R.string.cancel)
+        secondary.setOnClickListener { onCancel() }
+        if (otherDevice) {
+            addCheck(0, str(R.string.qr_reach_other_title, address), str(R.string.qr_reach_other_body, name), likely = true)
+            addChecks(c, diagnosis.copy(checks = diagnosis.checks.filter { it != diagnosis.likely }.take(2), likely = null), false, 1)
+        } else addChecks(c, diagnosis, false, 0)
+        main.postDelayed(longWait, ScreenHost.SPINNER_STOP_MS)
+    }
+
+    private fun addCheck(index: Int, title: CharSequence, text: CharSequence, likely: Boolean) {
+        val card = activity.layoutInflater.inflate(R.layout.item_check, right, false)
+        card.findViewById<TextView>(R.id.check_number).apply {
+            this.text = (index + 1).toString()
+            setBackgroundResource(if (likely) R.drawable.bg_number_likely else R.drawable.bg_number)
+            setTextColor(activity.getColor(if (likely) R.color.accent else R.color.text_2))
+        }
+        if (likely) {
+            card.setBackgroundResource(R.drawable.bg_card_likely)
+            card.findViewById<View>(R.id.check_tag).visibility = View.VISIBLE
+        }
+        card.findViewById<TextView>(R.id.check_title).text = title
+        card.findViewById<TextView>(R.id.check_body).text = text
+        right.addView(card)
+    }
+
+    private fun addChecks(c: Computer, diagnosis: ReachChecks.Result, hostUi: Boolean, offset: Int) {
+        val name = c.displayName
         diagnosis.checks.forEachIndexed { i, check ->
-            val card = activity.layoutInflater.inflate(R.layout.item_check, right, false)
-            val likely = check == diagnosis.likely
-            card.findViewById<TextView>(R.id.check_number).apply {
-                text = (i + 1).toString()
-                setBackgroundResource(if (likely) R.drawable.bg_number_likely else R.drawable.bg_number)
-                setTextColor(activity.getColor(if (likely) R.color.accent else R.color.text_2))
-            }
-            if (likely) {
-                card.setBackgroundResource(R.drawable.bg_card_likely)
-                card.findViewById<View>(R.id.check_tag).visibility = View.VISIBLE
-            }
             val (t, b) = when (check) {
                 ReachChecks.Check.SUBNET -> str(R.string.check_subnet_title) to
                     Ui.rich(activity, str(R.string.check_subnet_body, diagnosis.phoneIp ?: "?", name, c.address),
                         commands = listOfNotNull(diagnosis.phoneIp, c.address).filter { it.isNotEmpty() })
                 ReachChecks.Check.RUNNING -> str(R.string.check_running_title, name) to
-                    if (DisplayName.normalizePlatform(c.platform) == "macos")
-                        Ui.rich(activity, str(R.string.check_running_mac), commands = listOf("npm run mac:status"))
-                    else str(R.string.check_running_windows)
+                    if (DisplayName.normalizePlatform(c.platform) == "macos") {
+                        if (hostUi) str(R.string.check_running_mac_ui)
+                        else Ui.rich(activity, str(R.string.check_running_mac), commands = listOf("npm run mac:status"))
+                    } else str(R.string.check_running_windows)
                 ReachChecks.Check.ISOLATION -> str(R.string.check_isolation_title) to str(R.string.check_isolation_body)
                 ReachChecks.Check.FIREWALL -> str(R.string.check_firewall_title) to str(R.string.check_firewall_body)
             }
-            card.findViewById<TextView>(R.id.check_title).text = t
-            card.findViewById<TextView>(R.id.check_body).text = b
-            right.addView(card)
+            addCheck(offset + i, t, b, check == diagnosis.likely)
         }
-        main.postDelayed(longWait, ScreenHost.SPINNER_STOP_MS)
     }
 
     /** Try again pressed: the status line restarts. */
@@ -146,8 +184,12 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         right.gravity = Gravity.CENTER_HORIZONTAL
     }
 
-    /** S10: both codes; "Not now" is the default and the Back action. */
-    fun changed(c: Computer, pinned: String?, presented: String?, onForget: () -> Unit, onNotNow: () -> Unit) {
+    /**
+     * S10: both codes; "Not now" is the default and the Back action. `qr` is the Q11 variant
+     * (HOST-CONTROL-PAGE 10.7): the scanned code against the pin, and "Pair again with the new code".
+     */
+    fun changed(c: Computer, pinned: String?, presented: String?, onForget: () -> Unit, onNotNow: () -> Unit,
+                hostUi: Boolean = false, qr: Boolean = false) {
         reset()
         kind = Kind.CHANGED; computer = c; onBackAction = onNotNow
         val name = c.displayName
@@ -155,9 +197,11 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         icon.setImageResource(R.drawable.ic_shield)
         icon.imageTintList = activity.getColorStateList(R.color.danger_text)
         titleView.text = str(R.string.changed_title, name)
-        body.text = str(R.string.changed_body, name)
+        body.text = str(if (qr) R.string.qr_changed_body else R.string.changed_body, name)
         body.textSize = 14f
-        primary.setText(R.string.changed_forget)
+        primary.setText(if (qr) R.string.qr_changed_pair else R.string.changed_forget)
+        // The longer Q11 button label needs the wider column of mockup qr-11.
+        if (qr) left.layoutParams = left.layoutParams.apply { width = Ui.dp(activity, 380f).toInt() }
         primary.setBackgroundResource(R.drawable.bg_button_danger)
         primary.setTextColor(activity.getColor(R.color.danger_text))
         primary.setOnClickListener { onForget() }
@@ -174,10 +218,10 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
             right.addView(v)
         }
         card(R.string.changed_then, pinned, false)
-        card(R.string.changed_now, presented, true)
-        right.addView(TextView(activity).apply {
+        card(if (qr) R.string.qr_changed_now else R.string.changed_now, presented, true)
+        if (!qr) right.addView(TextView(activity).apply {
             textSize = 13f; setTextColor(activity.getColor(R.color.text_3))
-            text = str(R.string.changed_howto, name)
+            text = str(if (hostUi) R.string.changed_howto_ui else R.string.changed_howto, name)
         }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Ui.dp(activity, 8f).toInt() })
         Ui.hapticReject(view)
         secondary.post { secondary.requestFocus() }

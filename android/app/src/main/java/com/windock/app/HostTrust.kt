@@ -15,6 +15,10 @@ object Fingerprint {
 
     fun isValid(value: String?): Boolean = value != null && HEX.matches(value)
 
+    /** Constant-time equality of two valid fingerprints (the TLS pin checks). */
+    fun matches(a: String?, b: String?): Boolean =
+        isValid(a) && isValid(b) && MessageDigest.isEqual(a!!.toByteArray(Charsets.US_ASCII), b!!.toByteArray(Charsets.US_ASCII))
+
     fun securityCode(fingerprint: String): String {
         require(isValid(fingerprint)) { "not a fingerprint" }
         val head = fingerprint.substring(0, 12).uppercase()

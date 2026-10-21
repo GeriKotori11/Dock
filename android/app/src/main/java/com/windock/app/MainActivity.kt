@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.app.Dialog
 import android.content.Context
 import android.content.DialogInterface
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -69,6 +70,8 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
     private lateinit var problem: ProblemScreen
     private lateinit var switchSheet: SwitchSheet
     private lateinit var usbSheet: UsbSheet
+    private lateinit var qr: QrPairScreen
+    private lateinit var cameraSheet: CameraSheet
     private val io = Executors.newFixedThreadPool(6)
 
     private var keyboardTarget: String? = null
@@ -88,6 +91,12 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
     private var wakingGesture = false
     private val wakingKeys = mutableSetOf<Int>()
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    /** The app was opened by a pairing link: Cancel continues the normal launch. */
+    private var linkAtLaunch = false
+    /** Q10 for a scanned link is the problem screen in front. */
+    private var qrProblem = false
+    /** `/health.hostUi` per host ID, from this session's verified answers (copy, spec 10.9). */
+    private val uiHosts = HashMap<String, Boolean>()
 
     private val loadTimeout = Runnable { if (loading) { web.stopLoading(); dockFailed() } }
     private val graceOver = Runnable { if (!dockReady && host.current == null) host.show(connecting, 180) }
@@ -171,7 +180,20 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         }
         hideSystemBars()
         registerNetworkCallback()
-        start()
+        // A pairing link at launch goes straight to its confirmation, before any network use.
+        val launchLink = if (savedInstanceState == null) pairLinkFrom(intent) else null
+        if (launchLink is LinkResult.Ok) { linkAtLaunch = true; receive(launchLink.link) }
+        else { start(); launchLink?.let(::linkRejected) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        when (val result = pairLinkFrom(intent)) {
+            null -> {}
+            is LinkResult.Ok -> receive(result.link)
+            else -> linkRejected(result)
+        }
     }
 
     private fun buildScreens() {
@@ -183,6 +205,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
             }
             override fun pair(found: HostScanner.Found) = handleAnswer(found.probe, fromAddress = false)
             override fun addByAddress() { address.bind(); host.show(address) }
+            override fun scan() = showCameraSheet()
             override fun usb() = showUsb()
             override fun phone() = showPhoneOptions()
             override fun close() = closeHub()
@@ -192,8 +215,34 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         pairing = PairingScreen(this, io, object : PairingScreen.Callbacks {
             override fun cancelled(request: PairingRequest) = showHub(overDock = false)
             override fun paired(request: PairingRequest, fingerprint: String?, session: SessionCookie) =
-                finishPairing(request, fingerprint, session)
+                finishPairing(request, fingerprint, session) { pairing.showPaired() }
+            override fun scanInstead() = showCameraSheet()
         })
+        qr = QrPairScreen(this, io, object : QrPairScreen.Callbacks {
+            override fun cancelled() = linkCancelled()
+            override fun paired(link: PairLink, probe: Probe, session: SessionCookie) {
+                linkAtLaunch = false
+                finishPairing(PairingRequest(probe, store.get(link.hostId), startAtPin = true), link.fingerprint, session) { qr.showPaired() }
+            }
+            override fun enterPin(probe: Probe) {
+                linkAtLaunch = false
+                showPairing(PairingRequest(probe, store.get(probe.hostId), startAtPin = true))
+            }
+            override fun openCamera(): Boolean = QrCamera.open(this@MainActivity)
+            override fun unreachable(link: PairLink, failure: ProbeFailure?, otherDevice: Boolean) =
+                showQrUnreachable(link, failure, otherDevice)
+            override fun unreachableShowing(): Boolean = qrProblem && host.current === problem
+            override fun resume() {
+                qrProblem = false
+                host.show(qr)
+                syncScanner()
+                syncIdleDisplay()
+            }
+            override fun discovered(): List<Probe> = scanner.snapshot().values.map { it.probe }
+            override fun scanningChanged() = syncScanner()
+            override fun seen(probe: Probe) = remember(probe)
+        })
+        cameraSheet = CameraSheet(this)
         address = AddressScreen(this, io, object : AddressScreen.Callbacks {
             override fun cancelled() = showHub(overDock = computers.overDock && dockReady)
             override fun answered(probe: Probe) = handleAnswer(probe, fromAddress = true)
@@ -272,6 +321,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
     override fun onVerdict(computer: Computer, verdict: Verdict, probe: Probe) {
         if (computer.hostId != current?.hostId) return
         web.removeCallbacks(graceOver)
+        remember(probe)
         when (verdict) {
             is Verdict.Open -> {
                 val fresh = refreshIdentity(computer, probe)
@@ -311,8 +361,9 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
             problem.cantReach(computer, diagnosis, onRetry = {
                 problem.restartStatus()
                 if (coordinator.active) coordinator.retryNow() else coordinator.open(computer)
-            }, onOther = { showHub(overDock = false) }, onUsb = usb)
+            }, onOther = { showHub(overDock = false) }, onUsb = usb, hostUi = uiHosts[computer.hostId] == true)
         }
+        qrProblem = false
         host.show(problem)
         syncScanner()
         syncIdleDisplay()
@@ -328,6 +379,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
 
     /** A probe answered at an address (Add by address, a discovered row, USB): identity by host ID only. */
     private fun handleAnswer(probe: Probe, fromAddress: Boolean) {
+        remember(probe)
         when (val found = TrustDecision.forAddress(probe, store::get, { PinStore.get(this, it) }, System.currentTimeMillis())) {
             is Verdict.Open -> {
                 val v = found.copy(computer = refreshIdentity(found.computer, probe))
@@ -377,13 +429,13 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         val computer = current ?: return
         store.markConnected(computer.hostId, endpoint ?: computer.endpoint)?.let { current = it }
         val screen = host.current
-        val yields = screen == null || screen === connecting || screen === pairing ||
-            (screen === problem && problem.kind != ProblemScreen.Kind.CHANGED)
+        val yields = screen == null || screen === connecting || screen === pairing || (screen === qr && qr.paired) ||
+            (screen === problem && problem.kind != ProblemScreen.Kind.CHANGED && !qrProblem)
         if (!yields) return
         val now = SystemClock.uptimeMillis()
         val hold = maxOf(
             if (connecting.movedShownAt > 0 && screen === connecting) 600 - (now - connecting.movedShownAt) else 0,
-            if (pairedShownAt > 0 && screen === pairing) 400 - (now - pairedShownAt) else 0,
+            if (pairedShownAt > 0 && (screen === pairing || screen === qr)) 400 - (now - pairedShownAt) else 0,
         ).coerceAtLeast(0)
         web.postDelayed({
             if (!dockReady || host.current !== screen) return@postDelayed
@@ -468,7 +520,8 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
     private fun showChanged(computer: Computer, pinned: String?, presented: String?, at: String) {
         coordinator.cancel()
         teardownDock()
-        problem.changed(computer, pinned, presented, onForget = {
+        qrProblem = false
+        problem.changed(computer, pinned, presented, hostUi = uiHosts[computer.hostId] == true, onForget = {
             // Removes the pin and session for this host ID only and keeps the nickname.
             PinStore.remove(this, computer.hostId)
             SessionCookies.remove(computer.endpoint)
@@ -502,7 +555,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         }
     }
 
-    private fun finishPairing(request: PairingRequest, fingerprint: String?, session: SessionCookie) {
+    private fun finishPairing(request: PairingRequest, fingerprint: String?, session: SessionCookie, shown: () -> Unit) {
         val probe = request.probe
         val hostId = probe.hostId ?: return showHub(overDock = false)
         if (fingerprint != null && !PinStore.save(this, hostId, fingerprint)) return showHub(overDock = false)
@@ -513,11 +566,102 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         store.save(computer)
         SessionCookies.install(probe.endpoint, session) {
             if (isDestroyed) return@install
-            pairing.showPaired()
+            shown()
             pairedShownAt = SystemClock.uptimeMillis()
             if (current?.hostId != computer.hostId) teardownDock()
             loadDock(computer, probe.endpoint)
         }
+    }
+
+    // ---- QR pairing links (HOST-CONTROL-PAGE 10.4 to 10.7) -----------------------------
+
+    /**
+     * A `windock://pair` VIEW intent, read once and then dropped from the intent because it
+     * carries a secret. Never logged. A relaunch from Recents replays the old intent: ignored.
+     */
+    private fun pairLinkFrom(intent: Intent?): LinkResult? {
+        if (intent == null || intent.action != Intent.ACTION_VIEW || intent.data == null) return null
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) { intent.data = null; return null }
+        val raw = intent.dataString
+        intent.data = null
+        return QrLink.parse(raw)
+    }
+
+    private fun linkRejected(result: LinkResult) {
+        val text = if (result is LinkResult.Newer) R.string.link_newer else R.string.link_invalid
+        showSystemDialog(AlertDialog.Builder(this).setMessage(text).setPositiveButton(R.string.ok, null).create())
+    }
+
+    /** A valid link: decide locally, before anything touches the network (spec 10.5). */
+    private fun receive(link: PairLink) {
+        dismissSheets()
+        coordinator.cancel()
+        qr.abort()
+        // A live dock stays under the confirmation; a dock still loading stops.
+        if (!dockReady) teardownDock()
+        val saved = store.get(link.hostId)
+        val session = saved != null && SessionCookies.has(saved.endpoint)
+        when (val start = QrDecision.decide(link, saved, PinStore.get(this, link.hostId), session, System.currentTimeMillis())) {
+            is QrStart.Confirm -> showQr(link, start.again)
+            is QrStart.OpenDock -> {
+                linkAtLaunch = false
+                if (start.computer.hostId == current?.hostId && dockReady) closeHub()
+                else {
+                    // Same identity, maybe a new address: the usual open finds it and moves it.
+                    scanner.candidate(link.endpoint)
+                    openComputer(start.computer, switching = true)
+                }
+            }
+            is QrStart.Changed -> {
+                problem.changed(start.computer, start.pinned, link.fingerprint, qr = true,
+                    onForget = { showQr(link, again = true) }, onNotNow = { linkCancelled() })
+                qrProblem = false
+                host.show(problem)
+                syncScanner()
+                syncIdleDisplay()
+            }
+        }
+    }
+
+    private fun showQr(link: PairLink, again: Boolean) {
+        qr.bind(link, again)
+        qrProblem = false
+        host.show(qr)
+        syncScanner()
+        syncIdleDisplay()
+    }
+
+    private fun linkCancelled() {
+        qr.abort()
+        qrProblem = false
+        val launch = linkAtLaunch
+        linkAtLaunch = false
+        when {
+            dockReady -> closeHub()
+            launch -> start()
+            else -> showHub(overDock = false)
+        }
+    }
+
+    /** Q10: retries continue in the QR screen while this is visible. */
+    private fun showQrUnreachable(link: PairLink, failure: ProbeFailure?, otherDevice: Boolean) {
+        val shown = Computer(hostId = link.hostId, hostName = link.name, endpoint = link.endpoint, addedAt = 0L)
+        val diagnosis = ReachChecks.diagnose(LocalNetwork.available(), DisplayName.hostOf(link.endpoint), failure, scanner.sawAny, "")
+        problem.qrCantReach(shown, link.address, diagnosis, otherDevice, onRetry = { qr.retryNow() }, onCancel = { linkCancelled() })
+        host.show(problem)
+        qrProblem = true
+        qr.retryWhileUnreachable()
+        syncScanner()
+        syncIdleDisplay()
+    }
+
+    private fun showCameraSheet() {
+        if (cameraSheet.dialog != null) return
+        cameraSheet.show { }
+    }
+
+    private fun remember(probe: Probe) {
+        probe.hostId?.let { uiHosts[it] = probe.hostUi }
     }
 
     // ---- rename / forget (S4) ---------------------------------------------------------
@@ -640,12 +784,14 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
     private fun dismissSheets() {
         switchSheet.dismiss()
         usbSheet.dismiss()
+        cameraSheet.dismiss()
         systemDialog?.dismiss()
     }
 
     // ---- discovery --------------------------------------------------------------------
 
     private fun onScan(found: Map<String, HostScanner.Found>) {
+        found.values.forEach { remember(it.probe) }
         val list = store.all()
         presence.discovered(list, found)
         if (host.current === computers) computers.setFound(found)
@@ -654,7 +800,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
 
     /** Discovery runs only while a native screen or the switch sheet is visible. */
     private fun syncScanner() {
-        val wanted = resumed && (host.current != null || switchSheet.dialog != null || coordinator.active)
+        val wanted = resumed && (host.current?.scans == true || switchSheet.dialog != null || coordinator.active)
         if (wanted) scanner.start() else scanner.stop()
     }
 
@@ -886,6 +1032,7 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         systemDialog?.dismiss()
         switchSheet.dismiss()
         usbSheet.dismiss()
+        cameraSheet.dismiss()
         coordinator.cancel()
         scanner.stop()
         presence.stop()

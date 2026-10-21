@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Q3 Scan with your camera (HOST-CONTROL-PAGE 10.3, mockup qr-03). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="560dp" android:layout_height="wrap_content"
+    android:background="@drawable/bg_sheet" android:orientation="vertical"
+    android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingBottom="16dp">
+    <FrameLayout android:layout_width="match_parent" android:layout_height="20dp">
+        <View android:layout_width="36dp" android:layout_height="5dp" android:layout_gravity="center"
+            android:background="@drawable/bg_grabber" android:importantForAccessibility="no" />
+    </FrameLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="44dp"
+        android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="4dp" android:paddingEnd="4dp">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="@string/cam_sheet_title" android:textSize="17sp" android:fontFamily="sans-serif-medium"
+            android:textColor="@color/text" android:accessibilityHeading="true" />
+    </LinearLayout>
+    <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:scrollbars="none" android:overScrollMode="never">
+        <LinearLayout android:id="@+id/camera_steps" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:paddingTop="4dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="4dp" android:paddingStart="4dp" android:paddingEnd="4dp" android:textSize="12sp"
+                android:textColor="@color/text_3" android:text="@string/cam_sheet_hint" />
+        </LinearLayout>
+    </ScrollView>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="12dp" android:orientation="horizontal" android:gravity="end|center_vertical">
+        <Button android:id="@+id/camera_pin" style="@style/Btn.Ghost" android:layout_width="wrap_content"
+            android:text="@string/scanner_pin_instead" />
+        <LinearLayout android:id="@+id/camera_open" android:layout_width="wrap_content" android:layout_height="48dp"
+            android:layout_marginStart="12dp" android:background="@drawable/bg_button_primary" android:orientation="horizontal"
+            android:gravity="center" android:paddingStart="20dp" android:paddingEnd="20dp" android:clickable="true" android:focusable="true">
+            <ImageView android:layout_width="18dp" android:layout_height="18dp" android:layout_marginEnd="10dp"
+                android:src="@drawable/ic_camera" android:tint="@color/on_accent" android:importantForAccessibility="no" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="@string/cam_sheet_open" android:textSize="15sp" android:fontFamily="sans-serif-medium"
+                android:textColor="@color/on_accent" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

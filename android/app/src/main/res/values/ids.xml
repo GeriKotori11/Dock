@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="hub_enter_address" type="id" />
+    <item name="hub_scan_qr" type="id" />
     <item name="pin_box_text" type="id" />
     <item name="pin_box_caret" type="id" />
 </resources>

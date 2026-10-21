@@ -85,6 +85,46 @@ object HostClient {
         } catch (e: Exception) { Result.Failed(failureOf(e)) }
     }
 
+    sealed class Pinned {
+        /** The handshake presented exactly the expected certificate and `/health` answered. */
+        data class Answer(val probe: Probe) : Pinned()
+        /** Something answered with a different certificate: nothing was sent to it. */
+        object OtherCertificate : Pinned()
+        data class Failed(val why: ProbeFailure) : Pinned()
+    }
+
+    /**
+     * QR pairing step 1 (HOST-CONTROL-PAGE 10.6): HTTPS only, and the handshake must present
+     * [fingerprint] (constant-time compare) before the `/health` request is written.
+     */
+    fun probePinned(endpoint: String, fingerprint: String, timeoutMs: Int = 4000): Pinned {
+        val https = EndpointPolicy.withScheme(endpoint, "https") ?: return Pinned.Failed(ProbeFailure.OTHER)
+        if (!Fingerprint.isValid(fingerprint)) return Pinned.Failed(ProbeFailure.OTHER)
+        var leaf: String? = null
+        var other = false
+        val strict = object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) =
+                throw CertificateException("client certificates are not used")
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+                val presented = chain?.firstOrNull()?.let { Fingerprint.of(it.encoded) } ?: throw CertificateException("no certificate")
+                if (!Fingerprint.matches(presented, fingerprint)) { other = true; throw CertificateException("certificate changed") }
+                leaf = presented
+            }
+            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        }
+        return try {
+            val conn = open(https, "/health", strict) { leaf }
+            try {
+                conn.connectTimeout = timeoutMs; conn.readTimeout = timeoutMs
+                val health = readHealth(conn) ?: return Pinned.Failed(ProbeFailure.OTHER)
+                val presented = leaf ?: return Pinned.Failed(ProbeFailure.OTHER)
+                Pinned.Answer(toProbe(https, health, presented))
+            } finally { conn.disconnect() }
+        } catch (e: Exception) {
+            if (other) Pinned.OtherCertificate else Pinned.Failed(failureOf(e))
+        }
+    }
+
     private fun toProbe(endpoint: String, health: JSONObject, presented: String?) = Probe(
         endpoint = endpoint,
         hostId = health.optString("hostId").lowercase().takeIf(PinStore::isHostId),
@@ -93,6 +133,7 @@ object HostClient {
         tlsAdvertised = health.optJSONObject("tls") != null,
         presented = presented,
         pairingOpen = health.optBoolean("pairingOpen", true),
+        hostUi = health.optBoolean("hostUi", false),
     )
 
     private fun failureOf(e: Exception): ProbeFailure = when (e) {
@@ -149,7 +190,7 @@ object HostClient {
                     throw CertificateException("client certificates are not used")
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
                     val presented = chain?.firstOrNull()?.let { Fingerprint.of(it.encoded) } ?: throw CertificateException("no certificate")
-                    if (presented != pinned) throw CertificateException("certificate changed")
+                    if (!Fingerprint.matches(presented, pinned)) throw CertificateException("certificate changed")
                     leaf = presented
                 }
                 override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()

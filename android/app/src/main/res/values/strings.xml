@@ -16,7 +16,6 @@
     <string name="welcome_body">Open WinDock on your computer, then pick it here.</string>
     <string name="hub_title">Computers</string>
     <string name="hub_body">Tap one to open its dock. Each computer keeps its own apps.</string>
-    <string name="hub_body_short">Tap one to open its dock.</string>
     <string name="hub_section_paired">Paired</string>
     <string name="hub_section_network">On this network</string>
     <string name="hub_searching">Looking</string>
@@ -155,6 +154,51 @@
     <string name="usb_find">Find computer over USB</string>
     <string name="usb_searching">Looking over USB…</string>
     <string name="usb_not_found">No computer found over USB. Check the cable and that USB tethering is on.</string>
+
+    <!-- QR pairing (docs/design/HOST-CONTROL-PAGE.md sections 10 and 14) -->
+    <string name="scan_rail">Scan QR code</string>
+    <string name="scan_empty_title">Scan the code on your computer</string>
+    <string name="scan_empty_body">On the computer, open WinDock and choose Pair a new phone. Scanning pairs in one step, even if this phone can’t find the computer.</string>
+    <string name="scan_step1_link">Scan the QR code instead</string>
+    <string name="scanner_pin_instead">Enter the PIN instead</string>
+    <string name="cam_sheet_title">Scan with your camera</string>
+    <string name="cam_sheet_step1">On the computer, open WinDock and choose Pair a new phone.</string>
+    <string name="cam_sheet_step1_bold">Pair a new phone</string>
+    <string name="cam_sheet_step2">Open the camera and point it at the code.</string>
+    <string name="cam_sheet_step3">Tap the link that appears. WinDock opens and asks before it pairs.</string>
+    <string name="cam_sheet_hint">Nothing appears? Turn on QR scanning in the camera’s settings, or use Google Lens.</string>
+    <string name="cam_sheet_open">Open camera</string>
+    <string name="link_invalid">This isn’t a WinDock pairing code</string>
+    <string name="link_newer">This code needs a newer WinDock app. Update the app, or pair with the PIN instead.</string>
+    <string name="ok">OK</string>
+    <string name="confirm_title">Pair with %1$s?</string>
+    <string name="confirm_again">Pair %1$s again?</string>
+    <string name="confirm_body">This phone will open its dock and can launch apps on it.</string>
+    <string name="confirm_caveat">Only pair if you just scanned this code on your own computer’s screen.</string>
+    <string name="confirm_address">Address</string>
+    <string name="confirm_code">Security code</string>
+    <string name="confirm_pair">Pair</string>
+    <string name="confirm_pairing">Pairing…</string>
+    <string name="confirm_paired">Paired. Opening the dock…</string>
+    <string name="used_title">This code was already used</string>
+    <string name="used_body">Each code pairs one phone, and %1$s shows a new one now.</string>
+    <string name="used_where">The new code and PIN are in WinDock on the computer, under Pair a new phone.</string>
+    <string name="qr_reach_body">The code says it’s at %1$s, but nothing answered there or on this network. WinDock keeps trying.</string>
+    <string name="qr_reach_other_title">A different device answered at %1$s</string>
+    <string name="qr_reach_other_body">%1$s may have a new address. Scan the code again; it always shows the current one.</string>
+    <string name="closed_qr_note">The code you scanned still works once pairing opens again, so there’s nothing to type.</string>
+    <string name="qr_changed_body">The code you scanned doesn’t match the one saved when this phone paired. That’s expected if WinDock was reinstalled or reset. If you scanned it on %1$s’s own screen, it’s safe to pair again.</string>
+    <string name="qr_changed_now">In the scanned code</string>
+    <string name="qr_changed_pair">Pair again with the new code</string>
+
+    <!-- Hosts with their own control page (/health.hostUi), HOST-CONTROL-PAGE 10.9 -->
+    <string name="pair_code_windows_ui">On %1$s, click the WinDock icon in the taskbar tray, by the clock, and choose Pair a new phone.</string>
+    <string name="pair_code_mac_ui">On the Mac, click the WinDock icon in the menu bar and choose Pair a new phone.</string>
+    <string name="closed_body_windows_ui">Click the WinDock icon in the taskbar tray and choose Pair a new phone. That opens pairing for 10 minutes, and this screen continues by itself.</string>
+    <string name="closed_body_mac_ui">Click the WinDock icon in the Mac’s menu bar and choose Pair a new phone. That opens pairing for 10 minutes, and this screen continues by itself.</string>
+    <string name="check_running_mac_ui">Its icon should be in the Mac’s menu bar.</string>
+    <string name="changed_howto_ui">To check, open WinDock on %1$s and choose Pair a new phone. If it shows the new code, pair again.</string>
+    <string name="pair_new_phone">Pair a new phone</string>
 
     <!-- Dock -->
     <string name="dock_prepare_failed">Couldn’t open the dock. Try again, or choose another computer.</string>

@@ -31,6 +31,8 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
         fun open(computer: Computer)
         fun pair(found: HostScanner.Found)
         fun addByAddress()
+        /** Q3 camera sheet (HOST-CONTROL-PAGE 10.1). */
+        fun scan()
         fun usb()
         fun phone()
         fun close()
@@ -44,6 +46,7 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
     private val list: LinearLayout = find(R.id.hub_list)
     private val closeButton: View = find(R.id.hub_close)
     private val railAdd: View = find(R.id.rail_add)
+    private val railScan: View = find(R.id.rail_scan)
 
     private var paired: List<Computer> = emptyList()
     private val pairedRows = LinkedHashMap<String, ComputerRows.Holder>()
@@ -71,6 +74,7 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
     init {
         closeButton.setOnClickListener { actions.close() }
         railAdd.setOnClickListener { actions.addByAddress() }
+        railScan.setOnClickListener { actions.scan() }
         find<View>(R.id.rail_usb).setOnClickListener { actions.usb() }
         find<View>(R.id.rail_phone).setOnClickListener { actions.phone() }
     }
@@ -89,9 +93,10 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
             body.text = str(R.string.welcome_body)
         } else {
             display.text = str(R.string.hub_title)
-            // At 844 the Android rail has three links, so the second sentence is dropped.
-            body.text = str(if (activity.resources.configuration.screenWidthDp < 900) R.string.hub_body_short else R.string.hub_body)
+            body.text = str(R.string.hub_body)
         }
+        // At 844 the Android rail has four links, so its body text is dropped (HOST-CONTROL-PAGE 10.1).
+        body.visibility = if (activity.resources.configuration.screenWidthDp < 900) View.GONE else View.VISIBLE
         build()
     }
 
@@ -143,21 +148,45 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
         refreshDiscovered()
     }
 
+    /** First launch, nothing found (HOST-CONTROL-PAGE 10.1, frame Q1): scanning first. */
     private fun buildEmpty(): View {
-        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(0, Ui.dp(activity, 4f).toInt(), 0, 0) }
-        val glyph = FrameLayout(activity).apply { setBackgroundResource(R.drawable.bg_glyph_lg); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val d = { v: Float -> Ui.dp(activity, v).toInt() }
+        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(0, d(4f), 0, 0) }
+        val glyph = FrameLayout(activity).apply { setBackgroundResource(R.drawable.bg_glyph_lg_accent); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         glyph.addView(ImageView(activity).apply {
-            setImageResource(R.drawable.ic_search); imageTintList = activity.getColorStateList(R.color.text_2)
-        }, FrameLayout.LayoutParams(Ui.dp(activity, 26f).toInt(), Ui.dp(activity, 26f).toInt(), Gravity.CENTER))
-        box.addView(glyph, LinearLayout.LayoutParams(Ui.dp(activity, 56f).toInt(), Ui.dp(activity, 56f).toInt()).apply { bottomMargin = Ui.dp(activity, 18f).toInt() })
-        box.addView(TextView(activity).apply { setTextAppearance(R.style.T_Title); text = str(R.string.hub_empty_title) })
+            setImageResource(R.drawable.ic_qr); imageTintList = activity.getColorStateList(R.color.accent)
+        }, FrameLayout.LayoutParams(d(26f), d(26f), Gravity.CENTER))
+        box.addView(glyph, LinearLayout.LayoutParams(d(56f), d(56f)).apply { bottomMargin = d(18f) })
+        box.addView(TextView(activity).apply { setTextAppearance(R.style.T_Title); text = str(R.string.scan_empty_title) })
         box.addView(TextView(activity).apply {
-            setTextAppearance(R.style.T_Body); text = str(R.string.hub_empty_body); maxWidth = Ui.dp(activity, 420f).toInt()
-        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Ui.dp(activity, 8f).toInt() })
-        box.addView(Button(activity, null, 0, R.style.Btn_Secondary).apply {
+            setTextAppearance(R.style.T_Body); text = str(R.string.scan_empty_body); maxWidth = d(460f)
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = d(8f) })
+        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val scan = LinearLayout(activity).apply {
+            id = R.id.hub_scan_qr
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
+            setBackgroundResource(R.drawable.bg_button_primary)
+            setPadding(d(20f), 0, d(20f), 0)
+            isClickable = true; isFocusable = true
+            contentDescription = str(R.string.scan_rail)
+            setOnClickListener { actions.scan() }
+            addView(ImageView(activity).apply {
+                setImageResource(R.drawable.ic_camera); imageTintList = activity.getColorStateList(R.color.on_accent)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(d(18f), d(18f)).apply { marginEnd = d(10f) })
+            addView(TextView(activity).apply {
+                text = str(R.string.scan_rail); textSize = 15f
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+                setTextColor(activity.getColor(R.color.on_accent))
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            })
+        }
+        buttons.addView(scan, LinearLayout.LayoutParams(-2, d(48f)))
+        buttons.addView(Button(activity, null, 0, R.style.Btn_Ghost).apply {
             text = str(R.string.hub_enter_address); id = R.id.hub_enter_address
             setOnClickListener { actions.addByAddress() }
-        }, LinearLayout.LayoutParams(-2, Ui.dp(activity, 48f).toInt()).apply { topMargin = Ui.dp(activity, 22f).toInt() })
+        }, LinearLayout.LayoutParams(-2, d(48f)).apply { marginStart = d(12f) })
+        box.addView(buttons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = d(22f) })
         box.visibility = View.GONE
         return box
     }
@@ -245,8 +274,9 @@ class ComputersScreen(activity: Activity, private val presence: Presence, privat
         val showEmpty = none && paired.isEmpty() && elapsed >= 8_000
         empty.visibility = if (showEmpty) View.VISIBLE else View.GONE
         foot.visibility = if (!showEmpty && (!none || elapsed >= 3_000)) View.VISIBLE else View.GONE
-        // The rail's Add by address is hidden while the empty state's button says the same.
+        // The rail's Scan and Add links are hidden while the empty state's buttons say the same.
         railAdd.visibility = if (showEmpty) View.GONE else View.VISIBLE
+        railScan.visibility = if (showEmpty) View.GONE else View.VISIBLE
         networkStatus.visibility = View.VISIBLE
         networkStatus.text = str(if (elapsed >= 8_000 && none) R.string.hub_searching_long else R.string.hub_searching)
         networkSpinner.visibility = if (elapsed < ScreenHost.SPINNER_STOP_MS) View.VISIBLE else View.GONE

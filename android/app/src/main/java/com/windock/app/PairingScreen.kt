@@ -47,6 +47,8 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
         fun cancelled(request: PairingRequest)
         /** 200 from /api/auth. The screen shows "Paired" once [showPaired] is called. */
         fun paired(request: PairingRequest, fingerprint: String?, cookie: SessionCookie)
+        /** "Scan the QR code instead" on step 1 (HOST-CONTROL-PAGE 10.1). */
+        fun scanInstead()
     }
 
     private enum class State { CODE, NOMATCH, CLOSED, PIN }
@@ -98,6 +100,7 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
         find<View>(R.id.pair_match).setOnClickListener { codesMatch() }
         find<View>(R.id.pair_no_match).setOnClickListener { setState(State.NOMATCH) }
         find<View>(R.id.pair_nomatch_back).setOnClickListener { callbacks.cancelled(request) }
+        find<View>(R.id.pair_scan_qr).setOnClickListener { callbacks.scanInstead() }
         buildBoxes()
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -186,9 +189,19 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
         }
         val how = find<TextView>(R.id.pair_how)
         val icon = find<ImageView>(R.id.pair_how_icon)
+        // Hosts with their own control page say "Pair a new phone" (HOST-CONTROL-PAGE 10.9).
+        val pairNew = listOf(str(R.string.pair_new_phone))
         when (DisplayName.normalizePlatform(req.platform)) {
-            "windows" -> { how.text = Ui.rich(activity, str(R.string.pair_code_windows, req.name), strong = listOf("Show connection info")); icon.setImageResource(R.drawable.ic_monitor) }
-            "macos" -> { how.text = Ui.rich(activity, str(R.string.pair_code_mac), commands = listOf("npm run info")); icon.setImageResource(R.drawable.ic_terminal) }
+            "windows" -> {
+                how.text = if (req.probe.hostUi) Ui.rich(activity, str(R.string.pair_code_windows_ui, req.name), strong = pairNew)
+                else Ui.rich(activity, str(R.string.pair_code_windows, req.name), strong = listOf("Show connection info"))
+                icon.setImageResource(R.drawable.ic_monitor)
+            }
+            "macos" -> if (req.probe.hostUi) {
+                how.text = Ui.rich(activity, str(R.string.pair_code_mac_ui), strong = pairNew); icon.setImageResource(R.drawable.ic_monitor)
+            } else {
+                how.text = Ui.rich(activity, str(R.string.pair_code_mac), commands = listOf("npm run info")); icon.setImageResource(R.drawable.ic_terminal)
+            }
             else -> { how.text = str(R.string.pair_code_other, req.name); icon.setImageResource(R.drawable.ic_monitor) }
         }
         find<TextView>(R.id.pair_nomatch_body).text = str(R.string.pair_no_match_body, req.name)
@@ -273,10 +286,7 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
                 hideKeyboard()
                 closedSince = System.currentTimeMillis()
                 find<TextView>(R.id.pair_closed_title).text = str(R.string.closed_title, request.name)
-                val bodyText = when (DisplayName.normalizePlatform(request.platform)) {
-                    "macos" -> Ui.rich(activity, str(R.string.closed_body_mac), commands = listOf("npm run info"))
-                    else -> Ui.rich(activity, str(R.string.closed_body_windows), strong = listOf("Show connection info"))
-                }
+                val bodyText = closedBody(activity, request.platform, request.probe.hostUi)
                 find<TextView>(R.id.pair_closed_body).text = if (hadWrong)
                     android.text.SpannableStringBuilder(str(R.string.closed_budget, request.name)).append(' ').append(bodyText) else bodyText
                 closedSpinner.visibility = View.VISIBLE
@@ -337,7 +347,7 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
         val req = request
         val fingerprint = checked
         io.execute {
-            val result = HostClient.pair(req.probe.endpoint, fingerprint, digits, deviceName())
+            val result = HostClient.pair(req.probe.endpoint, fingerprint, digits, deviceName(activity))
             main.post {
                 if (run != generation) return@post
                 sending = false
@@ -451,6 +461,26 @@ class PairingScreen(activity: Activity, private val io: ExecutorService, private
     }
 
     companion object {
-        fun deviceName(): String = DisplayName.clean(android.os.Build.MODEL, 60).ifEmpty { "Android phone" }
+        /**
+         * The name the user gave this phone (Settings > About phone; `Settings.Global.DEVICE_NAME`,
+         * API 25+, no permission), else the model, else "Android phone" (HOST-CONTROL-PAGE 10.8, D2).
+         */
+        fun deviceName(context: android.content.Context): String {
+            val named = if (android.os.Build.VERSION.SDK_INT >= 25) try {
+                android.provider.Settings.Global.getString(context.contentResolver, android.provider.Settings.Global.DEVICE_NAME)
+            } catch (_: Exception) { null } else null
+            return DisplayName.clean(named, 60).ifEmpty { DisplayName.clean(android.os.Build.MODEL, 60) }.ifEmpty { "Android phone" }
+        }
+
+        /** S6 / Q9 closed body for the computer's platform, with the host-UI wording when it has one. */
+        fun closedBody(activity: Activity, platform: String, hostUi: Boolean): CharSequence {
+            val mac = DisplayName.normalizePlatform(platform) == "macos"
+            return when {
+                hostUi -> Ui.rich(activity, activity.getString(if (mac) R.string.closed_body_mac_ui else R.string.closed_body_windows_ui),
+                    strong = listOf(activity.getString(R.string.pair_new_phone)))
+                mac -> Ui.rich(activity, activity.getString(R.string.closed_body_mac), commands = listOf("npm run info"))
+                else -> Ui.rich(activity, activity.getString(R.string.closed_body_windows), strong = listOf("Show connection info"))
+            }
+        }
     }
 }

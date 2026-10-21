@@ -200,3 +200,50 @@ object PhoneSheet {
         return d
     }
 }
+
+/**
+ * The system camera, which reads the QR code and offers the `windock://pair` link
+ * (HOST-CONTROL-PAGE 10.3, decision D10): no scanner library and no camera permission.
+ */
+object QrCamera {
+    private fun intent() = Intent(android.provider.MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+
+    fun available(activity: Activity): Boolean = try {
+        intent().resolveActivity(activity.packageManager) != null
+    } catch (_: Exception) { false }
+
+    fun open(activity: Activity): Boolean = try {
+        activity.startActivity(intent()); true
+    } catch (_: ActivityNotFoundException) { false } catch (_: SecurityException) { false }
+}
+
+/** Q3 Scan with your camera (spec 10.3): 560 wide, like S13. */
+class CameraSheet(private val activity: Activity) {
+    var dialog: Dialog? = null
+        private set
+
+    fun show(onDismiss: () -> Unit) {
+        dialog?.dismiss()
+        val (d, content) = Sheets.create(activity, R.layout.sheet_camera, 560f)
+        dialog = d
+        val steps = content.findViewById<LinearLayout>(R.id.camera_steps)
+        listOf(R.string.cam_sheet_step1, R.string.cam_sheet_step2, R.string.cam_sheet_step3).forEachIndexed { i, res ->
+            val step = activity.layoutInflater.inflate(R.layout.item_usb_step, steps, false)
+            step.findViewById<TextView>(R.id.usb_step_number).text = (i + 1).toString()
+            val text = activity.getString(res)
+            step.findViewById<TextView>(R.id.usb_step_text).text =
+                if (i == 0) Ui.rich(activity, text, strong = listOf(activity.getString(R.string.cam_sheet_step1_bold))) else text
+            step.contentDescription = "${i + 1}. $text"
+            steps.addView(step, i)
+        }
+        content.findViewById<View>(R.id.camera_pin).setOnClickListener { d.dismiss() }
+        val open = content.findViewById<View>(R.id.camera_open)
+        // No camera app that can take the intent: the button is hidden (spec 10.3).
+        open.visibility = if (QrCamera.available(activity)) View.VISIBLE else View.GONE
+        open.setOnClickListener { if (QrCamera.open(activity)) d.dismiss() else open.visibility = View.GONE }
+        d.setOnDismissListener { if (dialog === d) dialog = null; onDismiss() }
+        d.show()
+    }
+
+    fun dismiss() { dialog?.dismiss() }
+}

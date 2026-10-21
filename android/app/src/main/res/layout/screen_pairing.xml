@@ -78,6 +78,8 @@
                     <Button android:id="@+id/pair_no_match" style="@style/Btn.Secondary" android:layout_width="wrap_content"
                         android:layout_marginStart="12dp" android:text="@string/pair_no_match" />
                 </LinearLayout>
+                <Button android:id="@+id/pair_scan_qr" style="@style/Btn.Ghost" android:layout_width="wrap_content"
+                    android:layout_marginStart="-12dp" android:layout_marginTop="4dp" android:text="@string/scan_step1_link" />
             </LinearLayout>
             <!-- "They don't match". -->
             <LinearLayout android:id="@+id/pair_nomatch_panel" android:layout_width="match_parent" android:layout_height="wrap_content"

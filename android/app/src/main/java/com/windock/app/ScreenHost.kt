@@ -15,6 +15,8 @@ abstract class Screen(protected val activity: Activity, layout: Int) {
     val view: View = activity.layoutInflater.inflate(layout, FrameLayout(activity), false)
     /** Waiting screens dim to 60% after 2 minutes without a touch (spec 9.4). */
     open val waiting: Boolean get() = false
+    /** Whether discovery may run while this screen is in front (QR confirmation keeps the network quiet). */
+    open val scans: Boolean get() = true
     /** Where TalkBack focus goes when the screen appears. */
     open val title: View? get() = null
     open fun onShown() {}

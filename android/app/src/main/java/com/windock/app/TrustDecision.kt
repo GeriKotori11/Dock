@@ -15,6 +15,8 @@ data class Probe(
     val tlsAdvertised: Boolean,
     val presented: String?,
     val pairingOpen: Boolean,
+    /** `/health.hostUi`: the host has its own control page, so copy says "Pair a new phone". */
+    val hostUi: Boolean = false,
 )
 
 /** How a probe failed, for the Can't reach diagnosis (spec 4.10). */
