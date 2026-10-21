@@ -710,6 +710,14 @@ const IMG = { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-
   t.equal(page.displayName({ name: "iPhone", label: "Geri’s iPhone" }), "Geri’s iPhone", "a label wins over the phone's name");
 }
 
+{
+  // Native replaceChildren() renders a null argument as the text "null"; optional
+  // children must go through fill() (or h()), which skip empty slots.
+  const source = await readFile(new URL("../host-ui/host.js", import.meta.url), "utf8");
+  const calls = [...source.matchAll(/\.replaceChildren\(([\s\S]*?)\);/g)].map((m) => m[1]);
+  t.ok(calls.every((args) => !/:\s*null\b/.test(args)), "no replaceChildren() call passes a possibly-null child");
+}
+
 await rm(scratch, { recursive: true, force: true });
 process.stdout.write(`${t.assertions} assertions\n`);
 t.done("host-ui verification passed");

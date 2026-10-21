@@ -339,6 +339,10 @@ function startPage() {
     for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c);
     return el;
   }
+  // Native replaceChildren() turns null into a "null" text node; skip empty slots like h() does.
+  function fill(el, ...children) {
+    el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+  }
   function announce(text, assertive = false) {
     const target = assertive ? alertLive : live;
     target.textContent = "";
@@ -736,7 +740,7 @@ function startPage() {
         timeout: { glyph: "clock", tile: COPY.closedTile, title: COPY.closedTitle, text: COPY.closedTimeout, actions: [[COPY.closedOpen, "primary", openPairing]] },
       };
       const v = variants[reason] || variants.timeout;
-      return body.replaceChildren(
+      return fill(body,
         tlsOn ? h("div", { class: "h-qr-wrap" }, h("div", { class: "h-qr closed" }, h("span", { class: `h-gl lg${v.warn ? " warn" : ""}` }, icon(v.glyph)), h("p", { class: "h-c", text: v.tile }))) : null,
         h("p", { class: "h-t h-closed-title", text: v.title }),
         h("p", { class: "h-p h-closed-body", text: v.text }),
@@ -839,7 +843,7 @@ function startPage() {
       list.append(phoneRow(d));
     }
     const count = devices.length;
-    wrap.replaceChildren(
+    fill(wrap,
       h("h2", { class: "h-sec" }, COPY.phonesTitle, h("span", { class: "n", text: String(count) })),
       h("div", { class: "h-group" }, list),
       count >= 2 ? h("div", { class: "h-foot-act" }, h("button", { type: "button", class: "h-btn ghost sm muted", id: "remove-all-btn", text: COPY.removeAll, onclick: openRemoveAll })) : null,
@@ -1021,7 +1025,7 @@ function startPage() {
   function openMenu(items, trigger) {
     closeMenu(false);
     const menu = $("menu");
-    menu.replaceChildren(...items.map((item) => (item === "sep"
+    fill(menu, ...items.map((item) => (item === "sep"
       ? h("hr", { role: "separator" })
       : h("button", { type: "button", role: "menuitem", tabindex: "-1", class: item.danger ? "destr" : null, onclick: () => { closeMenu(true); item.run(); } }, icon(item.icon), item.text))));
     menu.hidden = false;
