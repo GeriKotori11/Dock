@@ -29,3 +29,14 @@ Windows is unsigned and Android remains debug-signed (version code 4). Dimming a
 Windows 0.2.1-preview.1 and newer can discover this release through **Check for updates** or a startup notification. Downloading and installing remain manual.
 
 Download hashes are in **SHA256SUMS.txt**. See the full [version history](https://github.com/aliihsaad/WinDock/blob/main/CHANGELOG.md).
+
+<!--
+Packaging TODO (host control page, HOST-CONTROL-PAGE.md 13.7), not user-facing:
+- WebView2 Evergreen bootstrapper: WinDock.iss does not install the WebView2 runtime
+  yet. Bundling needs MicrosoftEdgeWebview2Setup.exe (https://go.microsoft.com/fwlink/p/?LinkId=2124703)
+  in the package dir at build time, then a [Files] entry (Flags: dontcopy) that [Code]
+  extracts with ExtractTemporaryFile and runs with `/silent /install`, only when
+  HKCU or HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}
+  has a non-empty "pv" value. Until then the tray falls back to opening
+  http://127.0.0.1:{port}/host in the default browser when the runtime is missing.
+-->

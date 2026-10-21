@@ -15,7 +15,23 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\WinDock.ico</ApplicationIcon>
+    <!-- DPI awareness is set here (ApplicationConfiguration.Initialize), not in app.manifest. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- WebView2Loader.dll is native: let the single-file bundle extract it. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <!-- The package always references its WPF control on .NET 5+; this WinForms app
+       doesn't use it, and it drags in a WindowsBase version conflict (MSB3277). -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\WinDock.ico" LogicalName="WinDock.Tray.WinDock.ico" />

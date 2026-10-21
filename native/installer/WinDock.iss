@@ -62,10 +62,20 @@ Name: "{autodesktop}\WinDock"; Filename: "{app}\WinDockTray.exe"; WorkingDir: "{
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "WinDock"; ValueData: """{app}\WinDockTray.exe"""; Flags: uninsdeletevalue; Tasks: autostart
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "WinDock"; Flags: deletevalue; Tasks: not autostart
+; The tray's "Start when I sign in" switch can also create this value after
+; install, so uninstall removes it unconditionally in [Code] below.
 
 [Run]
 Filename: "{app}\WinDockTray.exe"; Description: "Open WinDock"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 
 [Messages]
 FinishedHeadingLabel=WinDock is ready.
-FinishedLabel=Find WinDock in your Windows system tray. Choose Show connection info to pair your phone, then make the dock your own.
+FinishedLabel=Find WinDock in your Windows system tray. Click its icon and choose Pair a new phone, then make the dock your own.
+
+[Code]
+// Always delete the login item on uninstall, whoever created it (installer task or tray).
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'WinDock');
+end;

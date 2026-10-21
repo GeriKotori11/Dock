@@ -1,4 +1,5 @@
 // Windows tray host. Process callbacks are marshalled to the UI thread.
+// The host control page (flyout, window, bridge) lives in TrayApp.Shell.cs.
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Text.Json;
@@ -38,12 +39,18 @@ internal sealed partial class TrayApp : ApplicationContext
     private string _endpoint = "starting…";
     private string _pin = "----";
     private string _lastError = "";
+    private int _port;
+    private bool _hostReady;
+    private OfflineVariant? _offline = OfflineVariant.Starting;
+    private int _offlinePort = 8620;
+    private string _offlineDetail = "";
+    private readonly HostLog _log = new();
+    private readonly System.Windows.Forms.Timer _slowStartTimer = new() { Interval = 15000 };
     private readonly HttpClient _captureHttp = new() { Timeout = TimeSpan.FromSeconds(35) };
     private readonly System.Windows.Forms.Timer _captureTimer = new() { Interval = 2000 };
     private ToolStripMenuItem _stopRecording = null!;
     private bool _checkingCapture;
     private bool _recording;
-    private bool _showingInfo;
     private readonly HttpClient _updateHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
         { Timeout = TimeSpan.FromSeconds(12), MaxResponseContentBufferSize = 64 * 1024 };
     private readonly CancellationTokenSource _shutdown = new();
@@ -55,6 +62,8 @@ internal sealed partial class TrayApp : ApplicationContext
 
     [GeneratedRegex(@"open:\s*(\S+)")] private static partial Regex EndpointLine();
     [GeneratedRegex(@"PIN:\s*(\d{4,8})")] private static partial Regex PinLine();
+    [GeneratedRegex(@":(\d{2,5})\s*$")] private static partial Regex TrailingPort();
+    [GeneratedRegex(@"^\s*Node\.js v\d")] private static partial Regex NodeFooter();
 
     public TrayApp(bool smoke)
     {
@@ -68,10 +77,13 @@ internal sealed partial class TrayApp : ApplicationContext
             Text = "WinDock",
             ContextMenuStrip = new ContextMenuStrip(),
         };
-        _icon.ContextMenuStrip.Items.Add("Show connection info", null, async (_, _) => await ShowInfo());
-        _icon.ContextMenuStrip.Items.Add("Copy URL", null, (_, _) => CopyUrl());
-        _stopRecording = new ToolStripMenuItem("Stop recording", null, async (_, _) => await StopRecording());
-        _stopRecording.Enabled = false;
+        // Menu per HOST-CONTROL-PAGE.md 6.2. Items that open the flyout wait for the menu to close.
+        var open = new ToolStripMenuItem("Open WinDock", null, (_, _) => BeginInvokeUi(() => ShowFlyout(false)));
+        open.Font = new Font(open.Font, FontStyle.Bold);
+        _icon.ContextMenuStrip.Items.Add(open);
+        _icon.ContextMenuStrip.Items.Add("Pair a new phone", null, (_, _) => BeginInvokeUi(() => ShowFlyout(true)));
+        _icon.ContextMenuStrip.Items.Add(new ToolStripSeparator());
+        _stopRecording = new ToolStripMenuItem("Stop recording", null, async (_, _) => await StopRecording()) { Visible = false };
         _icon.ContextMenuStrip.Items.Add(_stopRecording);
         var captures = new ToolStripMenuItem("Open saved files");
         captures.DropDownItems.Add("Screenshots", null, (_, _) => OpenCaptures(false));
@@ -84,11 +96,21 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.ContextMenuStrip.Items.Add(_checkUpdates);
         _icon.ContextMenuStrip.Items.Add(_downloadUpdate);
         _icon.ContextMenuStrip.Items.Add("Quit WinDock", null, async (_, _) => { if (await StopRecording()) ExitThread(); });
-        _icon.DoubleClick += async (_, _) => await ShowInfo();
+        // Left-click toggles the flyout; a double-click adds nothing (6.2).
+        _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ToggleFlyout(); };
         _icon.BalloonTipClicked += (_, _) => { if (_balloonRelease is { } page) OpenRelease(page); };
         _updateTimer.Tick += async (_, _) => { _updateTimer.Stop(); await CheckUpdates(false); };
         _captureTimer.Tick += async (_, _) => await CheckCapture();
-        if (!smoke) _captureTimer.Start();
+        _slowStartTimer.Tick += (_, _) =>
+        {
+            _slowStartTimer.Stop();
+            if (_offline == OfflineVariant.Starting) { _offline = OfflineVariant.Slow; NavigateAll(); }
+        };
+        if (!smoke)
+        {
+            _captureTimer.Start();
+            InitShell();
+        }
 
         if (smoke)
         {
@@ -111,11 +133,13 @@ internal sealed partial class TrayApp : ApplicationContext
         StartServer();
     }
 
-    private static Icon LoadTrayIcon()
+    private static Icon LoadTrayIcon() => LoadAppIcon(SystemInformation.SmallIconSize);
+
+    internal static Icon LoadAppIcon(Size size)
     {
         using var stream = typeof(TrayApp).Assembly.GetManifestResourceStream("WinDock.Tray.WinDock.ico")
             ?? throw new InvalidOperationException("The WinDock tray icon is missing.");
-        using var source = new Icon(stream, SystemInformation.SmallIconSize);
+        using var source = new Icon(stream, size);
         return (Icon)source.Clone();
     }
 
@@ -128,6 +152,17 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void StartServer()
     {
+        _hostReady = false;
+        _lastError = "";
+        _offline = OfflineVariant.Starting;
+        _offlineDetail = "";
+        if (!_smoke)
+        {
+            _slowStartTimer.Stop();
+            _slowStartTimer.Start();
+            _icon.Text = "WinDock · Starting";
+            NavigateAll();
+        }
         var root = AppContext.BaseDirectory;
         var bundledNode = Path.Combine(root, "node.exe");
         var psi = new ProcessStartInfo
@@ -140,25 +175,93 @@ internal sealed partial class TrayApp : ApplicationContext
             WorkingDirectory = root,
         };
         psi.ArgumentList.Add(Path.Combine(root, "server.js"));
+        psi.Environment["WINDOCK_SHELL"] = "windows-tray";
         var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _server = proc;
-        proc.OutputDataReceived += (_, e) => OnUi(() => ReadBanner(e.Data));
-        proc.ErrorDataReceived += (_, e) => { if (e.Data is not null) OnUi(() => _lastError = e.Data); };
-        proc.Exited += (_, _) => OnUi(() => Fail($"Server exited with code {proc.ExitCode}. {_lastError}"));
+        proc.OutputDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            _log.Write("out", e.Data);
+            OnUi(() => { if (ReferenceEquals(_server, proc)) ReadBanner(e.Data); });
+        };
+        proc.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is null) return;
+            _log.Write("err", e.Data);
+            // Keep the last meaningful line: Node ends a crash with a "Node.js vX" footer.
+            if (!string.IsNullOrWhiteSpace(e.Data) && !NodeFooter().IsMatch(e.Data))
+                OnUi(() => { if (ReferenceEquals(_server, proc)) _lastError = e.Data.Trim(); });
+        };
+        proc.Exited += (_, _) =>
+        {
+            int code;
+            // Drain the redirected streams first so the last stderr line is queued before this.
+            try { proc.WaitForExit(); code = proc.ExitCode; } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { code = -1; }
+            _log.Mark($"host exited with code {code}");
+            OnUi(() => { if (ReferenceEquals(_server, proc)) OnServerExited(code); });
+        };
         try
         {
+            _log.Mark($"starting host: {psi.FileName} server.js");
             proc.Start();
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
         }
-        catch (Exception ex) { OnUi(() => Fail(ex.Message)); }
+        catch (Exception ex)
+        {
+            _log.Mark($"host failed to start: {ex.Message}");
+            _lastError = ex.Message;
+            OnUi(() => { if (ReferenceEquals(_server, proc)) OnServerExited(-1); });
+        }
+    }
+
+    /// <summary>Show the offline page (5.8) and stay in the tray so the user can restart.</summary>
+    private void OnServerExited(int code)
+    {
+        if (_smoke || !_webViewAvailable)
+        {
+            // No page can show the problem without WebView2: keep the old dialog-and-exit.
+            Fail($"Server exited with code {code}. {_lastError}");
+            return;
+        }
+        _slowStartTimer.Stop();
+        _hostReady = false;
+        _recording = false;
+        _stopRecording.Visible = false;
+        var portInUse = _lastError.Contains("EADDRINUSE", StringComparison.Ordinal);
+        _offline = portInUse ? OfflineVariant.PortInUse : OfflineVariant.Exited;
+        const string prefix = "WinDock failed to start: ";
+        _offlineDetail = _lastError.StartsWith(prefix, StringComparison.Ordinal) ? _lastError[prefix.Length..] : _lastError;
+        var port = TrailingPort().Match(_lastError);
+        _offlinePort = _port > 0 ? _port : port.Success && int.TryParse(port.Groups[1].Value, out var p) ? p : 8620;
+        _icon.Text = "WinDock · Stopped";
+        NavigateAll();
+    }
+
+    /// <summary>Kill the host this tray spawned and start a new one.</summary>
+    private void RestartServer()
+    {
+        if (_stopping) return;
+        var old = _server;
+        _server = null; // its Exited event is ignored from here on
+        if (old is not null)
+        {
+            try
+            {
+                if (!old.HasExited) { old.Kill(entireProcessTree: true); old.WaitForExit(3000); }
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            old.Dispose();
+        }
+        _log.Mark("restart requested");
+        StartServer();
     }
 
     private void Fail(string message)
     {
         Environment.ExitCode = 1;
         if (_smoke) Console.Error.WriteLine($"TRAY FAILED: {message}");
-        else MessageBox.Show($"WinDock could not run its server.\n\n{message}",
+        else MessageBox.Show($"WinDock could not run its server.\n\n{message}\n\nLogs: {HostLog.Folder}",
             "WinDock", MessageBoxButtons.OK, MessageBoxIcon.Error);
         ExitThread();
     }
@@ -167,73 +270,39 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         var endpoint = EndpointLine().Match(line);
-        if (endpoint.Success) _endpoint = endpoint.Groups[1].Value;
+        if (endpoint.Success)
+        {
+            _endpoint = endpoint.Groups[1].Value;
+            if (Uri.TryCreate(_endpoint, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttp)
+            {
+                _port = uri.Port;
+                _offlinePort = uri.Port;
+                OnHostReady();
+            }
+        }
         var pin = PinLine().Match(line);
-        if (!pin.Success) return;
-        _pin = pin.Groups[1].Value;
-        _icon.Text = "WinDock — running";
-        if (!_smoke)
-        {
-            ShowBalloon("WinDock is running", $"{_endpoint}\nPIN {_pin}");
-            if (!_startupCheckScheduled) { _startupCheckScheduled = true; _updateTimer.Start(); }
-        }
+        if (pin.Success) _pin = pin.Groups[1].Value;
     }
 
-    private sealed record PairingInfo(string Endpoint, string Pin, string? SecureEndpoint, string? SecurityCode, long OpenForMs);
-
-    // Asking the server also reopens its pairing window, and returns the current
-    // PIN: the startup banner's PIN is spent after one pairing.
-    private async Task ShowInfo()
+    /// <summary>The banner is printed once the host listens: load /host in the panes.</summary>
+    private void OnHostReady()
     {
-        if (_showingInfo || _stopping) return;
-        _showingInfo = true;
-        try
-        {
-            var info = await FetchPairing();
-            if (_stopping) return;
-            string text;
-            if (info is not null)
-            {
-                _pin = info.Pin;
-                var minutes = Math.Max(1, (int)Math.Ceiling(info.OpenForMs / 60000.0));
-                var secure = info.SecureEndpoint is { Length: > 0 } && info.SecurityCode is { Length: > 0 }
-                    ? $"\n\nSecure address: {info.SecureEndpoint}\nSecurity code: {info.SecurityCode}"
-                    : "";
-                text = $"WinDock {UpdateChecker.InstalledVersion}\n\nOpen this address on your phone:\n\n{info.Endpoint}\n\nPairing PIN: {info.Pin}\nPairing is open for the next {minutes} minute{(minutes == 1 ? "" : "s")}.{secure}\n\nBoth devices must be on the same network.";
-            }
-            else
-            {
-                text = $"WinDock {UpdateChecker.InstalledVersion}\n\nOpen this address on your phone:\n\n{_endpoint}\n\nPairing PIN: {_pin}\n\n(Couldn't reach the WinDock server for the current PIN; this is the PIN from startup and may have changed.)\n\nBoth devices must be on the same network.";
-            }
-            MessageBox.Show(text, "WinDock", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-        finally { _showingInfo = false; }
+        if (_hostReady) return;
+        _hostReady = true;
+        if (_smoke) return;
+        _slowStartTimer.Stop();
+        _offline = null;
+        _offlineDetail = "";
+        _icon.Text = RunningTip();
+        NavigateAll();
+        if (!_startupCheckScheduled) { _startupCheckScheduled = true; _updateTimer.Start(); }
     }
 
-    private Uri? PairingEndpoint() => Uri.TryCreate(_endpoint, UriKind.Absolute, out var endpoint)
-        && endpoint.Scheme == "http" ? new Uri($"http://127.0.0.1:{endpoint.Port}/api/pairing") : null;
-
-    private async Task<PairingInfo?> FetchPairing()
+    private string RunningTip()
     {
-        if (PairingEndpoint() is not { } endpoint) return null;
-        try
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-            timeout.CancelAfter(TimeSpan.FromSeconds(3));
-            var json = await _captureHttp.GetStringAsync(endpoint, timeout.Token);
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            static string? Text(JsonElement root, string name) =>
-                root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            var pin = Text(root, "pin");
-            if (pin is null) return null;
-            var openFor = root.TryGetProperty("pairingOpenForMs", out var ms) && ms.ValueKind == JsonValueKind.Number ? ms.GetInt64() : 0;
-            return new PairingInfo(Text(root, "endpoint") ?? _endpoint, pin, Text(root, "secureEndpoint"), Text(root, "securityCode"), openFor);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException or JsonException or FormatException or InvalidOperationException)
-        {
-            return null;
-        }
+        var address = Uri.TryCreate(_endpoint, UriKind.Absolute, out var uri) ? uri.Host : "";
+        var tip = address.Length > 0 ? $"WinDock · Running · {address}" : "WinDock · Running";
+        return tip.Length <= 127 ? tip : tip[..127];
     }
 
     private void ShowBalloon(string title, string text, Uri? release = null)
@@ -242,13 +311,14 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.ShowBalloonTip(8000, title, text, ToolTipIcon.Info);
     }
 
-    private async Task CheckUpdates(bool interactive)
+    private async Task CheckUpdates(bool interactive, bool fromPage = false)
     {
-        if (interactive) _updateTimer.Stop();
+        if (interactive || fromPage) _updateTimer.Stop();
         if (_checkingUpdates || _stopping) return;
         _checkingUpdates = true;
         _checkUpdates.Enabled = false;
         _checkUpdates.Text = "Checking for updates…";
+        SetUpdateState("checking");
         try
         {
             var result = await new UpdateChecker(_updateHttp, UpdateChecker.InstalledVersion).CheckAsync(_shutdown.Token);
@@ -259,7 +329,14 @@ internal sealed partial class TrayApp : ApplicationContext
                 _downloadUpdate.Visible = _availableUpdate is not null;
                 _downloadUpdate.Text = "Download WinDock " + result.Version + "…";
             }
-            if (!result.ShouldNotify(interactive)) return;
+            SetUpdateState(result.Status switch
+            {
+                UpdateStatus.Available => "available",
+                UpdateStatus.Current => "current",
+                _ => "failed",
+            }, result.Version);
+            // The page shows its own banner; dialogs are for the tray menu only.
+            if (fromPage || !result.ShouldNotify(interactive)) return;
             if (result.Status == UpdateStatus.Available)
             {
                 if (!interactive) ShowBalloon("WinDock update available", $"Version {result.Version} is ready. Click to view the release and download it.", result.ReleasePage);
@@ -285,11 +362,6 @@ internal sealed partial class TrayApp : ApplicationContext
         catch (Exception ex) { MessageBox.Show($"Couldn’t open your browser. Visit {page}\n\n{ex.Message}", "WinDock updates", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
     }
 
-    private void CopyUrl()
-    {
-        if (_endpoint.StartsWith("http", StringComparison.OrdinalIgnoreCase)) Clipboard.SetText(_endpoint);
-    }
-
     private Uri? CaptureEndpoint(string suffix = "") => Uri.TryCreate(_endpoint, UriKind.Absolute, out var endpoint)
         && endpoint.Scheme == "http" ? new Uri($"http://127.0.0.1:{endpoint.Port}/api/capture{suffix}") : null;
 
@@ -304,8 +376,9 @@ internal sealed partial class TrayApp : ApplicationContext
             using var document = JsonDocument.Parse(json);
             var phase = document.RootElement.GetProperty("phase").GetString();
             var active = phase is "starting" or "recording" or "stopping";
+            _stopRecording.Visible = active;
             _stopRecording.Enabled = active && phase != "stopping";
-            _icon.Text = active ? "WinDock — screen recording" : "WinDock — running";
+            if (_hostReady) _icon.Text = active ? "WinDock · Recording your screen" : RunningTip();
             if (active && !_recording) ShowBalloon("Screen recording started", "Your main monitor is being recorded without audio. Right-click WinDock to stop.");
             _recording = active;
         }
@@ -314,7 +387,8 @@ internal sealed partial class TrayApp : ApplicationContext
     }
     private async Task<bool> StopRecording()
     {
-        if (CaptureEndpoint("/stop") is not { } endpoint) return true;
+        // Nothing can be recording while the host is down; don't block Quit on it.
+        if (!_hostReady || CaptureEndpoint("/stop") is not { } endpoint) return true;
         try
         {
             using var response = await _captureHttp.PostAsync(endpoint, new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
@@ -349,6 +423,9 @@ internal sealed partial class TrayApp : ApplicationContext
             _captureTimer.Dispose();
             _captureHttp.Dispose();
             _smokeTimer?.Dispose();
+            _slowStartTimer.Dispose();
+            _flyout?.Dispose();
+            _window?.Dispose();
             _icon.Visible = false;
             _icon.ContextMenuStrip?.Dispose();
             _icon.Dispose();
@@ -363,6 +440,7 @@ internal sealed partial class TrayApp : ApplicationContext
             }
             catch (InvalidOperationException) { /* never started or already exited */ }
             _server?.Dispose();
+            _log.Dispose();
             _dispatcher.Dispose();
         }
         base.Dispose(disposing);
