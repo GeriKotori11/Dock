@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinDock dock controls</title>
+<style>
+/* ------------------------------------------------------------------
+   Tokens copied from public/style.css (aurora background, Clear glass).
+   Spec: docs/design/DOCK-CONTROLS.md. New values are marked "new".
+------------------------------------------------------------------- */
+:root {
+  --text: #eef3f1; --muted: #a0afaf; --text-3: #8c9c9c; --accent: #b4edcc; --on-accent: #152c20; --live: #a3e6be;
+  --scene-base: #0b1720; --scene-a: #49876a; --scene-b: #36577a; --scene-c: #95ab87;
+  --glass-bg: #273d493b; --glass-card: #ffffff08; --glass-border: #e1f0ff29; --glass-blur: 28px;
+  --danger: #ed9695; --on-danger: #301516; --danger-text: #f1aaa6;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --badge: rgba(12, 20, 24, .78); /* new: close badge fill */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #05090c; color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }
+svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; display: block; }
+svg.f { fill: currentColor; stroke: currentColor; }
+
+/* ---------- gallery chrome ---------- */
+.doc { max-width: 1960px; margin: 0 auto; padding: 48px 32px 8px; }
+.doc h1 { font-size: 28px; font-weight: 650; letter-spacing: -.4px; margin: 0 0 8px; }
+.doc p { color: var(--muted); max-width: 820px; margin: 0 0 8px; }
+.doc code, figcaption code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--text-3); }
+.group-title { max-width: 1960px; margin: 56px auto 0; padding: 0 32px; font-size: 13px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+.row-of { display: flex; flex-wrap: wrap; gap: 0 8px; max-width: 1960px; margin: 0 auto; padding: 0 8px; }
+figure.frame { margin: 20px 0 0; padding: 0 24px; }
+figure.frame figcaption { max-width: 860px; margin-top: 10px; color: var(--muted); font-size: 13px; }
+figure.frame figcaption b { color: var(--text); font-weight: 600; margin-right: 8px; }
+.device { display: inline-block; padding: 10px; border-radius: 52px; background: #1a1e20; box-shadow: 0 0 0 1px #2a3033, 0 30px 60px #0008; }
+
+/* ---------- phone screen + wallpaper (style.css .wallpaper) ---------- */
+.screen { position: relative; width: 844px; height: 390px; overflow: hidden; border-radius: 42px; background: var(--scene-base); color: var(--text); isolation: isolate; }
+.screen.w932 { width: 932px; height: 430px; }
+.wp { position: absolute; inset: 0; z-index: -1; overflow: hidden; }
+.wp::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, #070f1845, transparent 60%); }
+.wp > span { position: absolute; border-radius: 50%; filter: blur(42px); opacity: .8; }
+.wp > span:nth-child(1) { width: 110%; height: 135%; left: -45%; top: -80%; background: radial-gradient(ellipse, var(--scene-a), transparent 65%); transform: rotate(-25deg); }
+.wp > span:nth-child(2) { width: 125%; height: 150%; right: -45%; bottom: -90%; background: radial-gradient(ellipse, var(--scene-b), transparent 66%); }
+.wp > span:nth-child(3) { width: 70%; height: 100%; left: 32%; top: -72%; background: radial-gradient(ellipse, var(--scene-c), transparent 70%); opacity: .4; }
+
+/* ---------- immersive dock grid ---------- */
+.dock { position: absolute; inset: 14px 44px 24px; display: grid; grid-template-columns: repeat(var(--cols, 3), 1fr); grid-template-rows: 1fr 1fr; place-items: center; }
+.has-mini .dock { bottom: 82px; top: 10px; }
+.dock.dim { opacity: .55; }
+.t { position: relative; width: var(--ic, 110px); height: var(--ic, 110px); }
+.t .ico { width: 100%; height: 100%; border-radius: 23%; display: grid; place-items: center; color: #fff; box-shadow: 0 12px 13px #0005; position: relative; overflow: hidden; }
+.t .ico::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, #ffffff22, transparent 45%); }
+.t .ico svg { width: 44%; height: 44%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; position: relative; }
+.t .ico b { position: relative; font-size: calc(var(--ic, 110px) * .42); font-weight: 700; letter-spacing: -.04em; line-height: 1; }
+.t .dot { position: absolute; left: 50%; bottom: -14px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--live); opacity: .8; }
+/* close badge: 24 visual, 44 hit (dashed ring only in the anatomy frame) */
+.t .x { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--badge); border: 1px solid #e1f0ff3a; display: grid; place-items: center; color: #e9f1ef; box-shadow: 0 2px 6px #0005; backdrop-filter: blur(12px); }
+.t .x svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.t .arm { position: absolute; top: -10px; right: -10px; height: 30px; padding: 0 12px 0 9px; border-radius: 15px; background: var(--danger); color: var(--on-danger); font-size: 12px; font-weight: 650; display: flex; align-items: center; gap: 5px; box-shadow: 0 4px 12px #0006; white-space: nowrap; }
+.t .arm svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.t.closing .ico { opacity: .45; }
+.t .spin { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--badge); border: 1px solid #e1f0ff3a; display: grid; place-items: center; }
+.t .spin::after { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #e9f1ef33; border-top-color: #e9f1ef; }
+.t .minus { position: absolute; left: -6px; top: -6px; width: 22px; height: 22px; border-radius: 50%; background: #e5edf0d9; color: #203128; display: grid; place-items: center; font-size: 17px; line-height: 1; }
+.t.wobble { transform: rotate(-1.3deg); }
+.t.wobble:nth-child(even) { transform: rotate(1.2deg); }
+.ctl .ico { background: linear-gradient(140deg, #ffffff13, #ffffff03); border: 1px solid var(--glass-border); color: #edf5f5; backdrop-filter: blur(28px); }
+
+/* app icon fills (stand-ins for real icons from the computer) */
+.a-word { background: linear-gradient(150deg, #3f7ee8, #1d4fb3); }
+.a-excel { background: linear-gradient(150deg, #2fa66b, #187144); }
+.a-slack { background: linear-gradient(150deg, #5b2a63, #3a1440); }
+.a-code { background: linear-gradient(150deg, #2f8ff0, #1765c0); }
+.a-chrome { background: linear-gradient(150deg, #f4f6f8, #d6dbe0); color: #3d6fd8 !important; }
+.a-spotify { background: #121212; }
+.a-notepad { background: linear-gradient(150deg, #8fd0f5, #4f9fd6); }
+.a-term { background: linear-gradient(150deg, #2c3238, #151a1e); }
+.a-figma { background: linear-gradient(150deg, #2a2a2e, #141416); }
+.a-outlook { background: linear-gradient(150deg, #2a8bdc, #0f5aa6); }
+.a-files { background: linear-gradient(150deg, #f6cd57, #e2a222); }
+.a-music { background: linear-gradient(150deg, #ff5d73, #e3264a); }
+.a-safari { background: linear-gradient(150deg, #f4f7fa, #d7dde3); color: #2a86e8 !important; }
+.a-mail { background: linear-gradient(150deg, #47a6ff, #1572e8); }
+.a-notes { background: linear-gradient(180deg, #ffd65a 0 24%, #f6f3e8 24%); color: #a7a39a !important; }
+.sp-mark { width: 54%; height: 54%; position: relative; border-radius: 50%; background: #1ed760; }
+.sp-mark::before, .sp-mark::after, .sp-mark i { content: ""; position: absolute; left: 20%; right: 20%; border-top: 2.5px solid #121212; border-radius: 50% 50% 0 0 / 60% 60% 0 0; }
+.sp-mark::before { top: 28%; height: 30%; border-top-width: calc(var(--ic, 110px) * .045); }
+.sp-mark i { top: 46%; left: 25%; right: 25%; height: 24%; border-top-width: calc(var(--ic, 110px) * .036); }
+.sp-mark::after { top: 62%; left: 30%; right: 30%; height: 18%; border-top-width: calc(var(--ic, 110px) * .03); }
+.sp-mark.s { width: 100%; height: 100%; }
+.sp-mark.s::before { border-top-width: 1.6px; } .sp-mark.s i { border-top-width: 1.3px; } .sp-mark.s::after { border-top-width: 1.1px; }
+
+/* album art stand-ins */
+.art { border-radius: 9px; flex-shrink: 0; position: relative; overflow: hidden; }
+.art-houdini { background: radial-gradient(circle at 28% 30%, #ffd1dc 0, #f39bb4 14%, transparent 34%), radial-gradient(circle at 72% 74%, #4c6cf0, transparent 52%), linear-gradient(140deg, #18224a, #6d2c62 60%, #e38a8f); }
+.art-houdini::after { content: ""; position: absolute; left: 14%; right: 14%; bottom: 12%; height: 9%; border-radius: 2px; background: #ffffffd0; opacity: .0; }
+.art-jazz { background: radial-gradient(circle at 70% 30%, #f5c46a, transparent 30%), linear-gradient(160deg, #1d1410, #5a3216 55%, #a8662a); }
+.art-pl1 { background: linear-gradient(135deg, #4b1fa8, #c25fe0 55%, #f5b0d0); }
+.art-pl2 { background: radial-gradient(circle at 30% 35%, #ffe08a, transparent 35%), linear-gradient(160deg, #0f3b2f, #2c8a6a); }
+.art-pl3 { background: linear-gradient(200deg, #c22d2d 0 50%, #1b1b1b 50%); }
+.art-pl4 { background: linear-gradient(160deg, #10203a, #3c6db0 60%, #b9d4f5); }
+.art-pl5 { background: radial-gradient(circle at 60% 60%, #ff9f68, transparent 45%), linear-gradient(140deg, #2a1838, #7b2f4f); }
+.art-liked { background: linear-gradient(135deg, #4a2fd6, #8ea9e8); display: grid; place-items: center; color: #fff; }
+
+/* ---------- mini player (new) ---------- */
+.mini { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); width: 404px; height: 58px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 8px; border-radius: 19px; background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(var(--glass-blur)) saturate(1.3); box-shadow: inset 0 1px 0 #ffffff14, 0 10px 30px #0004; }
+.w932 .mini { width: 440px; }
+.mini .art { width: 42px; height: 42px; }
+.mini .src { position: absolute; right: -4px; bottom: -4px; width: 17px; height: 17px; border-radius: 5px; background: #121212; display: grid; place-items: center; box-shadow: 0 0 0 1.5px #1b2a30; }
+.mini .src .sp-mark { width: 11px; height: 11px; }
+.mini .txt { flex: 1; min-width: 0; line-height: 1.3; }
+.mini .ti { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini .ar { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mb { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; color: #e6efec; flex-shrink: 0; }
+.mb svg { width: 21px; height: 21px; }
+.mb.play { border-radius: 50%; background: var(--accent); color: var(--on-accent); }
+.mb.play svg { width: 19px; height: 19px; }
+.artwrap { position: relative; flex-shrink: 0; }
+.fallback-art { display: grid; place-items: center; }
+.fallback-art .t { --ic: 42px; }
+
+/* ---------- reconnect / status pill (style.css .reconnect) ---------- */
+.pill { position: absolute; z-index: 4; top: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; padding: 7px 15px; border-radius: 999px; background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(var(--glass-blur)) saturate(1.3); box-shadow: inset 0 1px 0 #ffffff14, 0 8px 24px #0003; color: #d2dedbd9; font-size: 12px; white-space: nowrap; }
+.pill .pd { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pill svg { width: 14px; height: 14px; }
+.pill .sep { opacity: .5; }
+
+/* ---------- toast (style.css .toast) ---------- */
+.toast { position: absolute; z-index: 6; bottom: 24px; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100% - 40px); padding: 12px 18px; border: 1px solid #597462; border-radius: 13px; background: #2b4236; color: #e0f8e7; box-shadow: 0 5px 25px #0005; font-size: 12px; text-align: center; }
+.toast.neutral { background: #26343a; border-color: #4e6068; color: #e8f0ee; }
+.has-mini .toast { bottom: 84px; }
+
+/* ---------- scrims, drawer, sheets, dialogs ---------- */
+.scrim { position: absolute; inset: 0; background: #050b1730; backdrop-filter: blur(4px); z-index: 2; }
+.scrim.dark { background: #040a0c99; backdrop-filter: blur(9px); }
+.glass { background: var(--glass-bg); border: 1px solid var(--glass-border); backdrop-filter: blur(var(--glass-blur)) saturate(1.3); box-shadow: inset 0 1px 0 #ffffff14, 0 20px 75px #0005; color: #f0f6f6; }
+.drawer { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%); bottom: 14px; width: 760px; max-width: 92%; padding: 0 20px; border-radius: 29px; }
+.grip { height: 29px; display: grid; place-items: center; }
+.grip span { width: 33px; height: 3px; border-radius: 3px; background: #ebf5f44d; }
+.acts { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 7px; padding: 6px 0 14px; }
+.acts > div { display: flex; flex-direction: column; align-items: center; gap: 11px; border-radius: 18px; padding: 15px 4px 12px; min-height: 86px; background: #ffffff06; font-size: 11px; color: #eef6f5; white-space: nowrap; }
+.acts svg { width: 27px; height: 27px; }
+.acts > div.new { background: #ffffff0d; box-shadow: inset 0 0 0 1px #b4edcc40; }
+.dwrow { display: flex; gap: 8px; padding-bottom: 16px; }
+.sw { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 16px; border-radius: 14px; background: #ffffff08; font-size: 13px; }
+.sw svg { width: 18px; height: 18px; color: var(--muted); }
+.sw .nm { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sw .st { display: inline-flex; align-items: center; gap: 8px; color: var(--live); white-space: nowrap; }
+.sw .st::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sw .dv { width: 1px; height: 20px; background: #ffffff1f; }
+.sw .ac { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.sw .ac svg { width: 16px; height: 16px; color: inherit; }
+.pw { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 15px 0 13px; border-radius: 14px; background: #ffffff08; font-size: 13px; color: var(--text); white-space: nowrap; }
+.pw svg { width: 18px; height: 18px; color: #d2dedb; }
+.pw.off svg { color: var(--danger-text); }
+.pwgroup { display: flex; gap: 6px; }
+
+.sheet { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 720px; max-width: 92%; border-radius: 24px; overflow: hidden; }
+.sheet .handle { width: 33px; height: 3px; background: #ebf5f44d; border-radius: 4px; margin: 8px auto 0; }
+.shead { display: flex; align-items: center; gap: 12px; padding: 8px 14px 4px 22px; min-height: 56px; }
+.shead h2 { margin: 0; font-size: 21px; font-weight: 500; letter-spacing: -.5px; flex: 1; }
+.ibtn { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: #ffffff07; color: var(--muted); flex-shrink: 0; }
+.ibtn svg { width: 20px; height: 20px; }
+.srcbtn { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; padding: 0 12px 0 8px; border-radius: 12px; background: #ffffff07; font-size: 13px; font-weight: 600; }
+.srcbtn .chip { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; }
+.srcbtn small { font-weight: 400; color: var(--muted); font-size: 12px; }
+.srcbtn svg.i { width: 15px; height: 15px; color: var(--muted); }
+.flex1 { flex: 1; }
+.tabs { display: flex; padding: 4px; gap: 4px; background: #ffffff06; border: 1px solid #ffffff15; border-radius: 12px; }
+.tabs span { min-height: 36px; padding: 0 14px; display: grid; place-items: center; border-radius: 9px; font-size: 12px; color: var(--muted); }
+.tabs span.on { background: #ffffff10; color: var(--accent); }
+
+/* media sheet body */
+.mbody { display: flex; gap: 22px; padding: 6px 22px 0; }
+.mbody .art { width: 164px; height: 164px; border-radius: 14px; box-shadow: 0 14px 30px #0006; }
+.w932 .mbody .art { width: 188px; height: 188px; }
+.minfo { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 164px; }
+.w932 .minfo { min-height: 188px; }
+.minfo .ti { font-size: 22px; font-weight: 600; letter-spacing: -.4px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.minfo .ar { font-size: 15px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.minfo .al { font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prog { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { flex: 1; height: 4px; border-radius: 2px; background: #ffffff1f; position: relative; }
+.bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: #eef3f1; }
+.bar b { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #0006; }
+.trans { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: auto; padding-top: 8px; }
+.tb { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; color: #e6efec; position: relative; }
+.tb svg { width: 23px; height: 23px; }
+.tb.sm svg { width: 20px; height: 20px; color: var(--muted); }
+.tb.sm.on svg { color: var(--accent); }
+.tb.sm.on::after { content: ""; position: absolute; bottom: 5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
+.tb.big { width: 60px; height: 60px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
+.tb.big svg { width: 24px; height: 24px; }
+.vol { display: flex; align-items: center; gap: 12px; padding: 12px 22px 18px; }
+.vol .slider { flex: 1; height: 4px; border-radius: 2px; background: #ffffff1f; position: relative; }
+.vol .slider i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--accent); }
+.vol .slider b { position: absolute; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: #f2f7f5; box-shadow: 0 1px 5px #0007; }
+.vol .val { width: 40px; text-align: right; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vol .ibtn { color: #dbe6e2; }
+.mfoot { display: flex; align-items: center; gap: 12px; margin: 0 22px 18px; padding: 10px 10px 10px 14px; border-radius: 14px; background: #ffffff07; font-size: 12px; color: var(--muted); }
+.mfoot strong { color: var(--text); font-weight: 600; }
+.lnk { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 10px; background: #ffffff0a; color: var(--accent); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.lnk svg { width: 15px; height: 15px; }
+
+.empty-m { display: flex; gap: 22px; align-items: center; padding: 10px 26px 24px; }
+.empty-m .glyph { width: 120px; height: 120px; border-radius: 22px; display: grid; place-items: center; background: #ffffff06; border: 1px dashed #ffffff22; color: var(--muted); flex-shrink: 0; }
+.empty-m .glyph svg { width: 40px; height: 40px; }
+.empty-m h3 { margin: 0; font-size: 19px; font-weight: 550; letter-spacing: -.3px; }
+.empty-m p { margin: 6px 0 0; color: var(--muted); font-size: 13px; max-width: 420px; }
+.btns { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 0 18px; border-radius: 12px; background: #ffffff0b; border: 1px solid #ffffff14; font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; }
+.btn svg { width: 18px; height: 18px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.btn.danger { background: var(--danger); color: var(--on-danger); border-color: transparent; }
+.btn .ai { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; }
+
+.dialog { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 420px; padding: 22px 24px; border-radius: 24px; text-align: center; }
+.dialog .dic { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; background: #ed969520; color: var(--danger-text); margin-bottom: 10px; }
+.dialog .dic svg { width: 22px; height: 22px; }
+.dialog h2 { margin: 0; font-size: 20px; font-weight: 550; letter-spacing: -.4px; }
+.dialog p { margin: 8px auto 0; color: #c7d3d1; font-size: 13px; max-width: 340px; }
+.dialog .acts3 { display: flex; gap: 8px; margin-top: 20px; }
+.dialog .acts3 .btn { flex: 1; padding: 0 10px; }
+.dialog .note { display: flex; gap: 10px; align-items: flex-start; text-align: left; margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: #ffffff08; font-size: 12px; color: #c7d3d1; }
+.dialog .note svg { width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
+.waiting { display: inline-flex; align-items: center; gap: 9px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+.waiting::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ffffff2a; border-top-color: var(--accent); }
+
+/* permission card inside the media sheet */
+.perm { display: flex; gap: 18px; align-items: flex-start; margin: 4px 22px 20px; padding: 18px; border-radius: 18px; background: #ffffff07; border: 1px solid #ffffff12; }
+.perm .t { --ic: 64px; flex-shrink: 0; }
+.perm h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.perm p { margin: 4px 0 0; font-size: 13px; color: #c7d3d1; }
+.steps { margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); display: grid; gap: 4px; }
+.steps li { display: flex; gap: 8px; }
+.steps li span { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: #ffffff10; color: var(--text); font-size: 10px; font-weight: 700; flex-shrink: 0; }
+
+/* phase B lists */
+.listgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; padding: 4px 14px 16px; }
+.li { display: flex; align-items: center; gap: 13px; min-height: 60px; padding: 8px 10px; border-radius: 13px; }
+.li.on { background: #ffffff0a; }
+.li .art { width: 44px; height: 44px; border-radius: 8px; }
+.li .lt { flex: 1; min-width: 0; line-height: 1.3; }
+.li .lt div { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li .lt small { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li .tail { color: var(--muted); }
+.li .tail svg { width: 18px; height: 18px; }
+.li .dev { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: #ffffff0a; color: var(--muted); }
+.li .dev svg { width: 22px; height: 22px; }
+.li.on .dev { color: var(--accent); background: #b4edcc14; }
+.li .eq { color: var(--accent); font-size: 12px; font-weight: 600; display: inline-flex; gap: 6px; align-items: center; }
+.sublabel { padding: 2px 24px 4px; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.premium { margin: 0 24px 18px; font-size: 12px; color: var(--muted); }
+
+/* anatomy annotations */
+.anno { position: absolute; font: 11px/1.3 ui-monospace, "SF Mono", Menlo, monospace; color: #ffd38a; }
+.hit { position: absolute; width: 44px; height: 44px; border-radius: 50%; border: 1.5px dashed #ffd38a; }
+.ruler { position: absolute; border-color: #ffd38a; border-style: solid; border-width: 0; }
+
+/* ---------- solo mode for screenshots: #solo=<id> ---------- */
+body.solo { background: var(--scene-base); }
+body.solo .doc, body.solo .group-title, body.solo figure.frame:not(.is-solo) { display: none; }
+body.solo .row-of { padding: 0; }
+body.solo figure.frame.is-solo { margin: 0; padding: 0; }
+body.solo figure.frame.is-solo figcaption { display: none; }
+body.solo .device { padding: 0; border-radius: 0; box-shadow: none; background: none; }
+body.solo .screen { border-radius: 0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- paths from public/icons.js, plus new ones marked -->
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 14 8-14 8z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="m4 5 11 7-11 7zM19 5v14"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="m20 5-11 7 11 7zM5 5v14"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14A9 9 0 0 1 10 3a9 9 0 1 0 10.5 11z"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 2v9m-6-6a9 9 0 1 0 12 0"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="5.5" cy="18" rx="3.5" ry="3"/><ellipse cx="17.5" cy="16" rx="3.5" ry="3"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="m11 4-6 5H2v6h3l6 5zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8m-4-4v4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M5 3v7m0 4v7M12 3v12m0 4v2M19 3v2m0 4v12M2 10h6m1 5h6m1-10h6"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="m8 6 1-3h6l1 3"/><circle cx="12" cy="13" r="4"/></symbol>
+  <symbol id="i-touchpad" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="4"/><path d="M2 15h20m-10 0v5m-4-10 4-3 4 3"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L20 8a3.5 3.5 0 0 0-5-5L4 14z"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24"><path d="m8 9 4-4 4 4M8 15l4 4 4-4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M7 6h10M7 10h10M7 14h6"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></symbol>
+  <symbol id="i-chevd" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+  <symbol id="i-chevr" viewBox="0 0 24 24"><path d="m10 6 6 6-6 6"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+  <!-- new -->
+  <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M3 7h3c4.5 0 6.5 10 11 10h4m0 0-3-3m3 3-3 3M3 17h3c1.7 0 3-1.4 4.2-3.3M21 7h-4c-1.7 0-3 1.4-4.2 3.3M21 7l-3-3m3 3-3 3"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="m17 3 3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="3"/><circle cx="12" cy="14.5" r="3.2"/><path d="M12 7h.01"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-9.2-9.4A4.8 4.8 0 0 1 12 7.4a4.8 4.8 0 0 1 9.2 3.2C19.5 15.4 12 20 12 20z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.2c0 4.6-3.1 8.4-7.5 9.8-4.4-1.4-7.5-5.2-7.5-9.8V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
+</svg>
+
+<header class="doc">
+  <h1>WinDock: dock controls</h1>
+  <p>Close running apps, media and Spotify, and power actions, inside the shared web dock. Mockups only; the spec is <code>docs/design/DOCK-CONTROLS.md</code>. App icons are stand-ins for the real icons the computer sends. Sample computers: <b>Studio PC</b> (Windows) and <b>Geri's MacBook Air</b> (macOS).</p>
+  <p>Screenshot one screen: open this file with <code>#solo=&lt;id&gt;</code> at the frame's size (844 × 390 or 932 × 430).</p>
+</header>
+
+<!-- ============================= CLOSE APPS ============================= -->
+<h2 class="group-title">1 · Close a running app</h2>
+<div class="row-of">
+
+<figure class="frame" id="dock-01-close-buttons" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px">
+      <div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-excel"><b>X</b></div></div>
+      <div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot"></span><span class="arm"><svg class="i"><use href="#i-close"/></svg>Close</span></div>
+      <div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div><span class="dot"></span></div>
+      <div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div>
+    </div>
+  </div></div>
+  <figcaption><b>01 · Close buttons on running apps</b><code>#solo=dock-01-close-buttons</code><br>Windows, 6 per page, nothing playing (so no mini player). Word and VS Code are running: × at the icon's top-right. Slack's × was tapped once and is armed: "Close" (tap again within 3 s). File Explorer runs but has no ×: the host marks the shell as not closable. Excel and Terminal are not running.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-02-close-anatomy" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div style="position:absolute; left:120px; top:105px"><div class="t" style="--ic:150px"><div class="ico a-word"><b>W</b></div><span class="dot" style="bottom:-16px"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div></div>
+    <div class="hit" style="left:238px; top:85px"></div>
+    <div class="anno" style="left:292px; top:70px">× visual 24, hit 44<br>centred 4 px outside<br>the icon corner</div>
+    <div class="anno" style="left:292px; top:130px">disc rgba(12,20,24,.78)<br>+ blur 12, 1px #e1f0ff3a<br>glyph 12, stroke 2.4</div>
+    <div class="anno" style="left:120px; top:282px">running dot unchanged (4 px, --live)</div>
+    <div style="position:absolute; left:560px; top:105px"><div class="t" style="--ic:150px"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot" style="bottom:-16px"></span><span class="arm"><svg class="i"><use href="#i-close"/></svg>Close all</span></div></div>
+    <div class="anno" style="left:500px; top:30px">armed: pill 30 tall, hit ≥ 44 tall<br>--danger, grows from the corner;<br>2nd tap counts after 350 ms</div>
+    <div class="anno" style="left:560px; top:282px">2+ windows or instances → "Close all"<br>aria: "Close all 3 Slack windows"</div>
+  </div></div>
+  <figcaption><b>02 · Close button anatomy</b><code>#solo=dock-02-close-anatomy</code><br>Annotated (yellow marks are not UI). Same geometry at every icon size; at 4 per page the icon is ~118–140 pt, at 8 per page ~80 pt, so the 44 pt hit circle never covers more than a corner of the icon.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-03-closing" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px">
+      <div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-excel"><b>X</b></div></div>
+      <div class="t closing"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="spin"></span></div>
+      <div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div><span class="dot"></span></div>
+      <div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div>
+    </div>
+    <div class="toast neutral">Word is still open. It may be asking to save changes on Studio PC.</div>
+  </div></div>
+  <figcaption><b>03 · Closing, and an app that stayed open</b><code>#solo=dock-03-closing</code><br>Slack: confirmed, closing (icon at 45%, spinner in the badge, tile not tappable). Word: closed politely but still running after 5 s, so it returns to normal and a neutral toast explains. When an app quits, its × and dot fade out and the toast says "Slack closed".</figcaption>
+</figure>
+
+<figure class="frame" id="dock-04-arrange" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px">
+      <div class="t wobble"><div class="ico a-word"><b>W</b></div><span class="minus">−</span></div>
+      <div class="t wobble"><div class="ico a-excel"><b>X</b></div><span class="minus">−</span></div>
+      <div class="t wobble"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="minus">−</span></div>
+      <div class="t wobble"><div class="ico a-code"><svg><use href="#i-code"/></svg></div><span class="minus">−</span></div>
+      <div class="t wobble"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div><span class="minus">−</span></div>
+      <div class="t wobble"><div class="ico a-term"><svg><use href="#i-term"/></svg></div><span class="minus">−</span></div>
+    </div>
+    <div style="position:absolute; right:14px; top:10px; width:44px; height:44px; border-radius:50%; display:grid; place-items:center" class="glass"><svg class="i"><use href="#i-check"/></svg></div>
+  </div></div>
+  <figcaption><b>04 · Arrange hides every ×</b><code>#solo=dock-04-arrange</code><br>Long-press still enters Arrange (unchanged). Arrange owns the top-left "−" (remove from dock); × (quit the app) lives top-right and is hidden here, as are running dots, so "remove" and "quit" are never on screen together.</figcaption>
+</figure>
+</div>
+
+<!-- ============================= MEDIA ============================= -->
+<h2 class="group-title">2 · Media: one surface, richer when the player says more</h2>
+<div class="row-of">
+
+<figure class="frame" id="dock-05-mini-spotify" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932 has-mini">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:4; --ic:96px; left:56px; right:56px">
+      <div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-excel"><b>X</b></div></div>
+      <div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-outlook"><svg><use href="#i-mail"/></svg></div></div>
+      <div class="t ctl"><div class="ico"><svg><use href="#i-lock"/></svg></div></div>
+      <div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div>
+    </div>
+    <div class="mini">
+      <div class="artwrap"><div class="art art-houdini"></div><span class="src"><span class="sp-mark s"><i></i></span></span></div>
+      <div class="txt"><div class="ti">Houdini</div><div class="ar">Dua Lipa</div></div>
+      <span class="mb"><svg class="i f"><use href="#i-prev"/></svg></span>
+      <span class="mb play"><svg class="i"><use href="#i-pause"/></svg></span>
+      <span class="mb"><svg class="i f"><use href="#i-next"/></svg></span>
+    </div>
+  </div></div>
+  <figcaption><b>05 · Mini player, Spotify playing</b><code>#solo=dock-05-mini-spotify</code><br>Windows, 8 per page, 932 wide. The mini player appears only while a player has a session; icons shrink to make room (no animation on the reflow). Artwork, title, artist; the small badge is the source app. Previous · Pause · Next are 44 pt. Tap or swipe up on the artwork/title opens the Media sheet. A pinned Lock tile sits in the grid.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-06-mini-generic" data-w="844" data-h="390">
+  <div class="device"><div class="screen has-mini">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:2; --ic:110px; left:120px; right:120px">
+      <div class="t"><div class="ico a-chrome"><svg><use href="#i-globe"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-word"><b>W</b></div></div>
+      <div class="t"><div class="ico a-outlook"><svg><use href="#i-mail"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div><span class="dot"></span></div>
+    </div>
+    <div class="mini">
+      <div class="artwrap fallback-art"><div class="t" style="--ic:42px"><div class="ico a-chrome" style="box-shadow:none"><svg><use href="#i-globe"/></svg></div></div></div>
+      <div class="txt"><div class="ti">Live from Tirana: Jazz Night at Hemingway Bar — Full Concert (2024)</div><div class="ar">Paused · Chrome</div></div>
+      <span class="mb"><svg class="i f"><use href="#i-prev"/></svg></span>
+      <span class="mb play"><svg class="i f"><use href="#i-play"/></svg></span>
+      <span class="mb"><svg class="i f"><use href="#i-next"/></svg></span>
+    </div>
+  </div></div>
+  <figcaption><b>06 · Mini player, paused, no artwork</b><code>#solo=dock-06-mini-generic</code><br>Windows system media session from Chrome, 4 per page. No thumbnail, so the source app's own icon stands in. Long titles truncate with an ellipsis, never scroll. With no title at all the strip reads "Playing in Chrome" / "No track details".</figcaption>
+</figure>
+
+<figure class="frame" id="dock-07-media-spotify" data-w="844" data-h="390">
+  <div class="device"><div class="screen has-mini">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:100px"><div class="t"><div class="ico a-safari"><svg><use href="#i-compass"/></svg></div></div><div class="t"><div class="ico a-mail"><svg><use href="#i-mail"/></svg></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div></div><div class="t"><div class="ico a-notes"><svg><use href="#i-note"/></svg></div></div><div class="t"><div class="ico a-music"><svg><use href="#i-music"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass" style="top:calc(50% + 2px)">
+      <div class="handle"></div>
+      <div class="shead">
+        <span class="srcbtn"><span class="chip" style="background:#121212"><span class="sp-mark s" style="width:15px;height:15px"><i></i></span></span>Spotify <small>on Geri's MacBook Air</small></span>
+        <span class="flex1"></span>
+        <span class="lnk"><svg class="i"><use href="#i-open"/></svg>Show on Mac</span>
+        <span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span>
+      </div>
+      <div class="mbody">
+        <div class="art art-houdini"></div>
+        <div class="minfo">
+          <div class="ti">Houdini</div>
+          <div class="ar">Dua Lipa</div>
+          <div class="al">Radical Optimism</div>
+          <div class="prog"><span>1:12</span><span class="bar"><i style="width:39%"></i><b style="left:39%"></b></span><span>3:05</span></div>
+          <div class="trans">
+            <span class="tb sm on"><svg class="i"><use href="#i-shuffle"/></svg></span>
+            <span class="tb"><svg class="i f"><use href="#i-prev"/></svg></span>
+            <span class="tb big"><svg class="i"><use href="#i-pause"/></svg></span>
+            <span class="tb"><svg class="i f"><use href="#i-next"/></svg></span>
+            <span class="tb sm"><svg class="i"><use href="#i-repeat"/></svg></span>
+          </div>
+        </div>
+      </div>
+      <div class="vol"><span class="ibtn"><svg class="i"><use href="#i-volume"/></svg></span><span class="slider"><i style="width:45%"></i><b style="left:45%"></b></span><span class="val">45%</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>07 · Media sheet, Spotify on a Mac</b><code>#solo=dock-07-media-spotify</code><br>macOS host, Spotify via AppleScript: artwork, album, position (draggable: seek), shuffle on, repeat off, system volume. "Show on Mac" brings Spotify forward on the computer. Same sheet for Apple Music; with a source that says less, rows it can't fill disappear (frame 08).</figcaption>
+</figure>
+
+<figure class="frame" id="dock-08-media-generic" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932 has-mini">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:4; --ic:96px; left:56px; right:56px"><div class="t"><div class="ico a-chrome"><svg><use href="#i-globe"/></svg></div></div><div class="t"><div class="ico a-word"><b>W</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-outlook"><svg><use href="#i-mail"/></svg></div></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass">
+      <div class="handle"></div>
+      <div class="shead">
+        <span class="srcbtn"><span class="chip a-chrome" style="color:#3d6fd8"><svg class="i" style="width:15px;height:15px"><use href="#i-globe"/></svg></span>Chrome <small>· 2 players</small><svg class="i"><use href="#i-chevd"/></svg></span>
+        <span class="flex1"></span>
+        <span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span>
+      </div>
+      <div class="mbody">
+        <div class="art art-jazz"></div>
+        <div class="minfo">
+          <div class="ti">Live from Tirana: Jazz Night at Hemingway Bar — Full Concert (2024)</div>
+          <div class="ar">Tirana Jazz Collective</div>
+          <div class="trans">
+            <span class="tb sm" style="visibility:hidden"></span>
+            <span class="tb"><svg class="i f"><use href="#i-prev"/></svg></span>
+            <span class="tb big"><svg class="i f"><use href="#i-play"/></svg></span>
+            <span class="tb"><svg class="i f"><use href="#i-next"/></svg></span>
+            <span class="tb sm" style="visibility:hidden"></span>
+          </div>
+        </div>
+      </div>
+      <div class="vol"><span class="ibtn"><svg class="i"><use href="#i-volume"/></svg></span><span class="slider"><i style="width:62%"></i><b style="left:62%"></b></span><span class="val">62%</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>08 · Media sheet, any app on Windows</b><code>#solo=dock-08-media-generic</code><br>Windows system media session: thumbnail, title, artist, play state, transport, volume. No album, position or shuffle from this source, so those rows are absent (not greyed). Two sessions are open (Chrome and Spotify): the source button opens a short list to pick which one the dock controls.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-09-media-nothing" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass">
+      <div class="handle"></div>
+      <div class="shead"><h2>Media</h2><span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="empty-m">
+        <div class="glyph"><svg class="i"><use href="#i-music"/></svg></div>
+        <div>
+          <h3>Nothing playing</h3>
+          <p>Play something on Studio PC and it will show up here, with its controls.</p>
+          <div class="btns"><span class="btn primary"><svg class="i f"><use href="#i-play"/></svg>Resume last player</span><span class="btn"><span class="ai a-spotify"><span class="sp-mark s" style="width:14px;height:14px"><i></i></span></span>Open Spotify</span></div>
+        </div>
+      </div>
+      <div class="vol" style="padding-top:0"><span class="ibtn"><svg class="i"><use href="#i-volume"/></svg></span><span class="slider"><i style="width:30%"></i><b style="left:30%"></b></span><span class="val">30%</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>09 · Nothing playing</b><code>#solo=dock-09-media-nothing</code><br>Opened from the drawer's Media button (the mini player is hidden when there's no session). Windows can resume the last player with the play key. "Open Spotify" shows only if Spotify is installed and not running. Volume still works.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-10-media-permission" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-safari"><svg><use href="#i-compass"/></svg></div></div><div class="t"><div class="ico a-mail"><svg><use href="#i-mail"/></svg></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div></div><div class="t"><div class="ico a-notes"><svg><use href="#i-note"/></svg></div></div><div class="t"><div class="ico a-music"><svg><use href="#i-music"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass">
+      <div class="handle"></div>
+      <div class="shead"><h2>Media</h2><span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span></div>
+      <div class="perm">
+        <div class="t"><div class="ico a-spotify"><div class="sp-mark" style="--ic:64px"><i></i></div></div></div>
+        <div style="flex:1; min-width:0">
+          <h3>Control Spotify from your phone</h3>
+          <p>Your Mac asks once before WinDock can read and control Spotify.</p>
+          <ol class="steps"><li><span>1</span>Tap Ask on Mac.</li><li><span>2</span>On Geri's MacBook Air, click OK in the prompt.</li></ol>
+          <div class="btns" style="margin-top:14px"><span class="btn primary">Ask on Mac</span><span class="btn">Not now</span></div>
+        </div>
+      </div>
+      <div class="vol" style="padding-top:0"><span class="ibtn"><svg class="i"><use href="#i-volume"/></svg></span><span class="slider"><i style="width:45%"></i><b style="left:45%"></b></span><span class="val">45%</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>10 · Needs permission on the Mac</b><code>#solo=dock-10-media-permission</code><br>macOS, Spotify running, Automation permission not yet asked. After "Ask on Mac": "Waiting for your Mac… Click OK in the prompt on Geri's MacBook Air." If it was denied before, the card says where to turn it on and offers "Open Settings on Mac". The mini player shows a compact "Allow Spotify" version of this until permission is granted or dismissed.</figcaption>
+</figure>
+</div>
+
+<!-- ============================= DRAWER ============================= -->
+<h2 class="group-title">3 · Drawer: Windows and Mac side by side (conditional entries)</h2>
+<div class="row-of">
+
+<figure class="frame" id="dock-11-drawer-windows" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim"></div>
+    <div class="drawer glass">
+      <div class="grip"><span></span></div>
+      <div class="acts">
+        <div><svg class="i"><use href="#i-plus"/></svg>Apps</div>
+        <div class="new"><svg class="i"><use href="#i-music"/></svg>Media</div>
+        <div><svg class="i"><use href="#i-sliders"/></svg>Controls</div>
+        <div><svg class="i"><use href="#i-camera"/></svg>Capture</div>
+        <div><svg class="i"><use href="#i-touchpad"/></svg>Touch &amp; sign</div>
+        <div><svg class="i"><use href="#i-sun"/></svg>Appearance</div>
+        <div><svg class="i"><use href="#i-edit"/></svg>Arrange</div>
+      </div>
+      <div class="dwrow">
+        <div class="sw"><svg class="i"><use href="#i-monitor"/></svg><span class="nm">Studio PC</span><span class="st">Connected</span><span class="dv"></span><span class="ac">Switch<svg class="i"><use href="#i-updown"/></svg></span></div>
+        <div class="pwgroup">
+          <span class="pw"><svg class="i"><use href="#i-lock"/></svg>Lock</span>
+          <span class="pw"><svg class="i"><use href="#i-moon"/></svg>Sleep</span>
+          <span class="pw off"><svg class="i"><use href="#i-power"/></svg>Shut down</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>11 · Drawer on a Windows host</b><code>#solo=dock-11-drawer-windows</code><br>Inside the native app (no Fullscreen entry: the app is already full screen). New: Media (outlined here only to point it out) and the power group on the computer row: Lock and Sleep act at once; Shut down opens a confirmation that also offers Restart. Drawer max width grows from 640 to 760.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-12-drawer-mac" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-safari"><svg><use href="#i-compass"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-mail"><svg><use href="#i-mail"/></svg></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-notes"><svg><use href="#i-note"/></svg></div></div><div class="t"><div class="ico a-music"><svg><use href="#i-music"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim"></div>
+    <div class="drawer glass">
+      <div class="grip"><span></span></div>
+      <div class="acts">
+        <div><svg class="i"><use href="#i-plus"/></svg>Apps</div>
+        <div class="new"><svg class="i"><use href="#i-music"/></svg>Media</div>
+        <div><svg class="i"><use href="#i-sliders"/></svg>Controls</div>
+        <div><svg class="i"><use href="#i-sun"/></svg>Appearance</div>
+        <div><svg class="i"><use href="#i-edit"/></svg>Arrange</div>
+      </div>
+      <div class="dwrow">
+        <div class="sw"><svg class="i"><use href="#i-monitor"/></svg><span class="nm">Geri's MacBook Air</span><span class="st">Connected</span><span class="dv"></span><span class="ac">Switch<svg class="i"><use href="#i-updown"/></svg></span></div>
+        <div class="pwgroup">
+          <span class="pw"><svg class="i"><use href="#i-lock"/></svg>Lock</span>
+          <span class="pw"><svg class="i"><use href="#i-moon"/></svg>Sleep</span>
+          <span class="pw off"><svg class="i"><use href="#i-power"/></svg>Shut down</span>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>12 · Drawer on a Mac host</b><code>#solo=dock-12-drawer-mac</code><br>No Capture or Touch &amp; sign (macOS host lacks them), so the grid has 5 columns and no holes. Media is here because Spotify and Music are installed. Controls holds Sound and Your Mac (no brightness). Shut down looks the same even before macOS has granted permission; the permission step happens in its dialog (frame 17).</figcaption>
+</figure>
+</div>
+
+<!-- ============================= POWER ============================= -->
+<h2 class="group-title">4 · Power</h2>
+<div class="row-of">
+
+<figure class="frame" id="dock-13-shutdown-confirm" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="dialog glass">
+      <span class="dic"><svg class="i"><use href="#i-power"/></svg></span>
+      <h2>Shut down Studio PC?</h2>
+      <p>Apps with unsaved work may ask on the computer before it turns off. To reconnect, you'll need to turn Studio PC on.</p>
+      <div class="acts3"><span class="btn" style="box-shadow:0 0 0 2px var(--accent)">Cancel</span><span class="btn"><svg class="i"><use href="#i-refresh"/></svg>Restart</span><span class="btn danger">Shut down</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>13 · Shut down asks first</b><code>#solo=dock-13-shutdown-confirm</code><br>The only confirmation in this feature set. Cancel has focus (ring shown). Restart lives here so the other session-ending action gets the same check without a second dialog. Same dialog from a pinned Shut down tile or the Controls sheet.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-14-sleep-sent" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t ctl"><div class="ico"><svg><use href="#i-moon"/></svg></div></div></div>
+    <div class="toast">Studio PC is going to sleep</div>
+  </div></div>
+  <figcaption><b>14 · Sleep, the moment after</b><code>#solo=dock-14-sleep-sent</code><br>Tapped from the drawer (which closes) or from a pinned Sleep tile (bottom right). No confirmation, per decision. The toast appears as soon as the host acknowledges; the host waits 500 ms before sleeping so the reply arrives.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-15-asleep" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="pill"><svg class="i"><use href="#i-moon"/></svg>Studio PC is asleep<span class="sep">·</span>Wake it to reconnect</div>
+    <div class="dock dim" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t ctl"><div class="ico"><svg><use href="#i-moon"/></svg></div></div></div>
+  </div></div>
+  <figcaption><b>15 · Asleep: the reconnect pill, with the reason</b><code>#solo=dock-15-asleep</code><br>Same pill and dimming as "Reconnecting to Studio PC…", but because the phone sent Sleep it names the cause, shows a moon instead of the pulsing dot and stays still. The dock keeps retrying quietly; when the PC wakes, the pill and dimming clear. × and running dots are hidden while offline. Shut down reads "Studio PC is off · Turn it on to reconnect"; Restart reads "Studio PC is restarting…" with the pulsing dot.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-16-locked" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="pill"><svg class="i"><use href="#i-lock"/></svg>Studio PC is locked</div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-word"><b>W</b></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-slack"><svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16M4 8h16M4 16h16"/></svg></div><span class="dot"></span><span class="x"><svg class="i"><use href="#i-close"/></svg></span></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+  </div></div>
+  <figcaption><b>16 · Locked, still connected</b><code>#solo=dock-16-locked</code><br>Locking doesn't stop the host, so the dock usually stays connected. A quiet pill says the computer is locked (host reports it); tiles still work and open behind the lock screen. If the connection does drop, the reconnect pill replaces this one.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-17-mac-shutdown-permission" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:118px"><div class="t"><div class="ico a-safari"><svg><use href="#i-compass"/></svg></div></div><div class="t"><div class="ico a-mail"><svg><use href="#i-mail"/></svg></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div></div><div class="t"><div class="ico a-notes"><svg><use href="#i-note"/></svg></div></div><div class="t"><div class="ico a-music"><svg><use href="#i-music"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="dialog glass">
+      <span class="dic" style="background:#b4edcc18; color:var(--accent)"><svg class="i"><use href="#i-shield"/></svg></span>
+      <h2>Allow on your Mac</h2>
+      <p>Geri's MacBook Air is asking whether WinDock may shut it down. Click OK there and it shuts down.</p>
+      <div class="waiting">Waiting for your Mac…</div>
+      <div class="acts3"><span class="btn">Close</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>17 · Mac shut down, first time</b><code>#solo=dock-17-mac-shutdown-permission</code><br>After confirming Shut down (frame 13 wording), the host asks macOS; the prompt appears on the Mac. OK there shuts down at once (the user is at the Mac). If it was denied: "Shut down is turned off on your Mac" with "Open Settings on Mac". The spinner stops after 60 s; the text stays.</figcaption>
+</figure>
+</div>
+
+<!-- ============================= SPOTIFY PHASE B ============================= -->
+<h2 class="group-title">5 · Spotify account (Phase B, later)</h2>
+<div class="row-of">
+
+<figure class="frame" id="dock-20-spotify-connect" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="dock" style="--cols:3; --ic:100px"><div class="t"><div class="ico a-word"><b>W</b></div></div><div class="t"><div class="ico a-excel"><b>X</b></div></div><div class="t"><div class="ico a-spotify"><div class="sp-mark"><i></i></div></div></div><div class="t"><div class="ico a-code"><svg><use href="#i-code"/></svg></div></div><div class="t"><div class="ico a-files"><svg><use href="#i-folder"/></svg></div></div><div class="t"><div class="ico a-term"><svg><use href="#i-term"/></svg></div></div></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass">
+      <div class="handle"></div>
+      <div class="shead">
+        <span class="srcbtn"><span class="chip" style="background:#121212"><span class="sp-mark s" style="width:15px;height:15px"><i></i></span></span>Spotify <small>on Studio PC</small></span>
+        <span class="flex1"></span>
+        <span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span>
+      </div>
+      <div class="empty-m" style="padding-top:4px">
+        <div class="glyph" style="border-style:solid; background:#121212; border-color:#ffffff18"><span class="sp-mark" style="width:56px;height:56px; --ic:110px"><i></i></span></div>
+        <div>
+          <h3>Finish on Studio PC</h3>
+          <p>A browser window opened on Studio PC. Log in to Spotify there and allow WinDock. Your password never passes through this phone.</p>
+          <div class="waiting">Waiting for Spotify…</div>
+          <div class="btns"><span class="btn">Open the window again</span><span class="btn">Cancel</span></div>
+        </div>
+      </div>
+      <p class="premium" style="margin-top:-6px">After this: playlists, liked songs, search, the queue and choosing which device plays. Playing from your library needs Spotify Premium.</p>
+    </div>
+  </div></div>
+  <figcaption><b>20 · Connect a Spotify account (Phase B)</b><code>#solo=dock-20-spotify-connect</code><br>Entry point: a footer row in the Spotify Media sheet, "Your playlists, search and devices · Connect Spotify". Login happens on the computer (the host owns the token and the loopback redirect), started from the phone or from the host page. When it lands, this sheet switches to the tabs in frame 21.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-21-spotify-library" data-w="932" data-h="430">
+  <div class="device"><div class="screen w932">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass" style="width:840px">
+      <div class="handle"></div>
+      <div class="shead">
+        <span class="srcbtn"><span class="chip" style="background:#121212"><span class="sp-mark s" style="width:15px;height:15px"><i></i></span></span>Spotify</span>
+        <span class="flex1"></span>
+        <span class="tabs"><span>Now playing</span><span class="on">Library</span><span>Search</span><span>Devices</span></span>
+        <span class="flex1"></span>
+        <span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span>
+      </div>
+      <div class="listgrid">
+        <div class="li"><div class="art art-liked"><svg class="i f" style="width:20px;height:20px"><use href="#i-heart"/></svg></div><div class="lt"><div>Liked Songs</div><small>1,284 songs</small></div><span class="tail"><svg class="i f"><use href="#i-play"/></svg></span></div>
+        <div class="li on"><div class="art art-pl2"></div><div class="lt"><div>Shqip të vjetra</div><small>Playlist · Geri · 212 songs</small></div><span class="eq"><svg class="i" style="width:16px;height:16px"><use href="#i-volume"/></svg>Playing</span></div>
+        <div class="li"><div class="art art-pl1"></div><div class="lt"><div>Discover Weekly</div><small>Made for Geri</small></div><span class="tail"><svg class="i f"><use href="#i-play"/></svg></span></div>
+        <div class="li"><div class="art art-pl3"></div><div class="lt"><div>Kënga Magjike 2024 — Finalistët</div><small>Playlist · Top Channel · 38 songs</small></div><span class="tail"><svg class="i f"><use href="#i-play"/></svg></span></div>
+        <div class="li"><div class="art art-pl4"></div><div class="lt"><div>Deep Focus</div><small>Playlist · Spotify</small></div><span class="tail"><svg class="i f"><use href="#i-play"/></svg></span></div>
+        <div class="li"><div class="art art-pl5"></div><div class="lt"><div>Rrugëtim: road trip Tiranë – Sarandë</div><small>Playlist · Geri · 96 songs</small></div><span class="tail"><svg class="i f"><use href="#i-play"/></svg></span></div>
+      </div>
+      <div class="mfoot" style="margin-top:-6px"><div class="artwrap"><div class="art art-houdini" style="width:32px;height:32px;border-radius:6px"></div></div><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><strong>Houdini</strong> · Dua Lipa</span><span class="mb"><svg class="i"><use href="#i-pause"/></svg></span><span class="lnk"><svg class="i"><use href="#i-monitor"/></svg>Studio PC</span></div>
+    </div>
+  </div></div>
+  <figcaption><b>21 · Library (Phase B)</b><code>#solo=dock-21-spotify-library</code><br>Tabs appear in the same sheet only once an account is connected; Phase A's sheet is the "Now playing" tab. Tap a row to play it on the current device. The footer keeps the track and the device in view on every tab.</figcaption>
+</figure>
+
+<figure class="frame" id="dock-22-spotify-devices" data-w="844" data-h="390">
+  <div class="device"><div class="screen">
+    <div class="wp"><span></span><span></span><span></span></div>
+    <div class="scrim dark"></div>
+    <div class="sheet glass" style="width:776px">
+      <div class="handle"></div>
+      <div class="shead">
+        <span class="srcbtn"><span class="chip" style="background:#121212"><span class="sp-mark s" style="width:15px;height:15px"><i></i></span></span>Spotify</span>
+        <span class="flex1"></span>
+        <span class="tabs"><span>Now playing</span><span>Library</span><span>Search</span><span class="on">Devices</span></span>
+        <span class="flex1"></span>
+        <span class="ibtn"><svg class="i"><use href="#i-close"/></svg></span>
+      </div>
+      <p class="sublabel">Play on</p>
+      <div class="listgrid">
+        <div class="li on"><span class="dev"><svg class="i"><use href="#i-monitor"/></svg></span><div class="lt"><div>Studio PC</div><small>This computer · Playing</small></div><span class="tail" style="color:var(--accent)"><svg class="i"><use href="#i-check"/></svg></span></div>
+        <div class="li"><span class="dev"><svg class="i"><use href="#i-speaker"/></svg></span><div class="lt"><div>Sonos Kuzhina</div><small>Speaker</small></div></div>
+        <div class="li"><span class="dev"><svg class="i"><use href="#i-phone"/></svg></span><div class="lt"><div>Geri's iPhone</div><small>Phone</small></div></div>
+        <div class="li"><span class="dev"><svg class="i"><use href="#i-monitor"/></svg></span><div class="lt"><div>Geri's MacBook Air</div><small>Computer · Spotify open</small></div></div>
+      </div>
+      <p class="premium">Only devices with Spotify open show up. Switching needs Spotify Premium.</p>
+    </div>
+  </div></div>
+  <figcaption><b>22 · Devices (Phase B)</b><code>#solo=dock-22-spotify-devices</code><br>Spotify Connect devices from the Web API. Tapping one moves playback there; the mini player then shows "on Sonos Kuzhina" under the artist and keeps controlling it, even though the sound left the computer.</figcaption>
+</figure>
+</div>
+
+<script>
+  const m = location.hash.match(/solo=([\w-]+)/);
+  if (m) {
+    const f = document.getElementById(m[1]);
+    if (f) { document.body.classList.add("solo"); f.classList.add("is-solo"); }
+  }
+</script>
+</body>
+</html>
