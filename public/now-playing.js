@@ -1,17 +1,28 @@
 // Poll only while the dock is usable. Manual refreshes share any pending request
 // so a slow native media provider cannot accumulate concurrent requests.
 // Allow the host's 20-second native timeout to finish before retrying a stalled read.
-export function createNowPlayingPoller({ load, onChange, isActive, intervalMs = 2000, timeoutMs = 25000 }) {
-  let pending = null, controller = null, stopped = false;
+//
+// Commands (`command(run)`) order against polls: a poll whose request started
+// before the latest command's reply arrived is discarded, and while a command
+// runs polls are held (the optimistic state stays) for up to `holdMs`. The
+// command's own reply, when it carries state, is applied as the shared state.
+// Without this an in-flight poll overwrote the optimistic play/pause state
+// and the glyph flickered pause -> play -> pause.
+export function createNowPlayingPoller({ load, onChange, isActive, intervalMs = 2000, timeoutMs = 25000, holdMs = 2000, now = Date.now }) {
+  let pending = null, pendingTick = 0, controller = null, stopped = false;
+  let tick = 0, commandsRunning = 0, commandStartedAt = 0, commandDoneTick = 0;
+  const stale = (startTick) => startTick < commandDoneTick || (commandsRunning > 0 && now() - commandStartedAt < holdMs);
   function refresh() {
     if (stopped) return Promise.resolve();
-    if (pending) return pending;
+    // A pending poll from before the latest command can't answer for it: queue a fresh one.
+    if (pending) return pendingTick < commandDoneTick ? pending.catch(() => {}).then(refresh) : pending;
     controller = new AbortController();
     const signal = controller.signal;
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const startTick = pendingTick = ++tick;
     pending = Promise.resolve()
       .then(() => load(signal))
-      .then((media) => { if (!stopped) onChange(media); })
+      .then((media) => { if (!stopped && !stale(startTick)) onChange(media); })
       .finally(() => { clearTimeout(timeout); pending = null; controller = null; });
     return pending;
   }
@@ -20,6 +31,22 @@ export function createNowPlayingPoller({ load, onChange, isActive, intervalMs = 
   }, intervalMs);
   return {
     refresh,
+    /** Run a command; its resolved value (a media state, or null for none) becomes the shared state. */
+    async command(run) {
+      commandsRunning += 1;
+      commandStartedAt = now();
+      ++tick;
+      let settled = false;
+      try {
+        const reply = await run();
+        commandsRunning -= 1; settled = true;
+        commandDoneTick = ++tick;
+        if (!stopped && reply !== null && reply !== undefined) onChange(reply);
+        return reply;
+      } finally {
+        if (!settled) { commandsRunning -= 1; commandDoneTick = ++tick; }
+      }
+    },
     stop() { stopped = true; clearInterval(timer); controller?.abort(); },
   };
 }

@@ -505,6 +505,29 @@ t.equal(macClosable({ bundleId: "com.apple.calculator" }), true, "Calculator is 
   t.equal((await h2.req("/api/volume")).status, 501, "a host without volume: 501");
   await h2.stop();
 }
+{
+  // Flicker regression: a read that started before a command must not cache its stale state.
+  let state = { source: { id: "spotify", name: "Spotify", appId: "com.spotify.client", sessionId: null }, title: "T", playing: true, controls: {} };
+  let releaseSlow = null;
+  const p = fakeProvider({
+    async media() {
+      p.calls.media += 1;
+      const snapshot = state;
+      if (p.calls.media === 1) await new Promise((r) => { releaseSlow = r; });
+      return snapshot;
+    },
+    async mediaCommand(action) { if (action === "pause") state = { ...state, playing: false }; },
+  });
+  const h = await serve(p, { mediaCacheMs: 10_000 });
+  const slowGet = h.req("/api/media"); // starts reading "playing", stays in flight
+  await until(() => releaseSlow, "slow read started");
+  const paused = await h.req("/api/media", { action: "pause" });
+  t.equal(paused.json.playing, false, "the command reply is the new state");
+  releaseSlow();
+  t.equal((await slowGet).json.playing, true, "the old read still answers its own request");
+  t.equal((await h.req("/api/media")).json.playing, false, "a stale read that finished after the command never replaces the cached state");
+  await h.stop();
+}
 
 // =========================================================================
 // 5. volume
@@ -933,6 +956,29 @@ const spotifyRow = (over = {}) => JSON.stringify({
   await mac.mediaCommand("repeat", "all", null);
   t.deepEqual(rec.calls.at(-1).args.slice(5), ["repeat", "all"], "repeat argv");
   await t.rejects(() => mac.mediaCommand("select", "x", null), "select is not offered on a Mac");
+}
+{
+  // Flicker regression: right after playpause Spotify can still report the old state;
+  // the command waits (<= 800 ms, 100 ms steps) until the player shows the change.
+  let clock = 0, reads = 0, commanded = false;
+  const states = ["playing", "playing", "paused"];
+  const rec = macRecorder([[RUNNING_JXA, SPOTIFY_RUNNING],
+    [SPOTIFY_STATE_JXA, () => spotifyRow({ state: commanded ? states[Math.min(reads++, states.length - 1)] : "playing" })],
+    [SPOTIFY_COMMAND_JXA, () => { commanded = true; return '{"running":true,"permission":0,"ok":true}'; }]]);
+  const sleeps = [];
+  const mac = createMacProvider({ exec: rec.exec, appDirs: [], now: () => clock, sleep: async (ms) => { sleeps.push(ms); clock += ms; } });
+  await mac.mediaCommand("toggle", null, null);
+  t.equal(reads, 3, "toggle re-reads the player until it reports the change");
+  t.deepEqual(sleeps, [100, 100], "re-reads are 100 ms apart");
+  t.equal(normalizeMediaState(await mac.media()).playing, false, "the state read right after the command is the new one");
+  // A player that never changes: give up after 800 ms.
+  clock = 0; reads = 0; sleeps.length = 0; states.splice(0, 3, "playing");
+  await mac.mediaCommand("toggle", null, null);
+  t.ok(clock >= 800 && clock <= 900 && sleeps.every((ms) => ms === 100), "the wait is capped at about 800 ms");
+  // Seek and next do not wait.
+  reads = 0; sleeps.length = 0;
+  await mac.mediaCommand("next", null, null);
+  t.deepEqual([reads, sleeps.length], [1, 0], "next reads the player once (to pick it) and does not wait for a state change");
 }
 {
   // Permission not granted yet: no state, a permission hint, a 409 on commands.

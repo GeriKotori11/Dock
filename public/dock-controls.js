@@ -350,3 +350,142 @@ export function powerLabels(computer, entry) {
     shutdown: entry && !entry.restart ? `Shut down ${name}` : entry && !entry.shutdown ? `Restart ${name}` : `Shut down or restart ${name}`,
   };
 }
+
+// ---- mini player volume and seek (5.2 additions) ----
+
+export const VOLUME_STEP = 5;
+export const HOLD_DELAY_MS = 400;
+export const HOLD_REPEAT_MS = 150;
+export const CHIP_HIDE_MS = 1200;
+export const SEEK_KEY_STEP_MS = 5000;
+export const MINI_VOLUME_MIN_WIDTH = 440;
+
+/** A volume level one step up (+1) or down (-1), clamped to 0–100. */
+export function stepVolume(level, direction, step = VOLUME_STEP) {
+  const base = Number(level);
+  if (level === null || level === undefined || !Number.isFinite(base)) return null;
+  return Math.max(0, Math.min(100, Math.round(base + Math.sign(direction) * step)));
+}
+
+/**
+ * Volume buttons in the mini player: "level" (POST /api/volume with a level)
+ * when the host can set the volume, "legacy" (volume-up/down verbs through
+ * /api/control) on older hosts without `features.volume`, or null.
+ */
+export function miniVolumeMode({ features, verbs } = {}) {
+  const volume = features?.volume;
+  if (isObject(volume)) return volume.set === true ? "level" : null;
+  const verbList = list(verbs);
+  return verbList.includes("volume-up") || verbList.includes("volume-down") ? "legacy" : null;
+}
+
+/** The floating mini player's width: min(440px, 48vw, 100% - 48px), or min(560px, 62vw, 100% - 48px) with volume. */
+export function miniPlayerWidth({ viewportWidth, containerWidth, wide = false }) {
+  return Math.min(wide ? 560 : 440, (wide ? 0.62 : 0.48) * viewportWidth, containerWidth - 48);
+}
+
+/** Volume buttons show only on the floating player, and only when the wide width is at least 440 px. */
+export function miniVolumeShown({ mode, immersive = true, viewportWidth, containerWidth }) {
+  if (!mode || !immersive) return false;
+  return miniPlayerWidth({ viewportWidth, containerWidth: containerWidth ?? viewportWidth, wide: true }) >= MINI_VOLUME_MIN_WIDTH;
+}
+
+/** The level chip: "45%", "Muted", or "" when the level is unknown. */
+export function miniVolumeChip({ level, muted } = {}) {
+  if (muted === true) return "Muted";
+  return Number.isFinite(level) ? `${level}%` : "";
+}
+
+/**
+ * Press-and-hold: `fire()` once at `start()`, then after `delayMs` every
+ * `intervalMs` until `stop()`.
+ */
+export function createHoldRepeat(fire, { delayMs = HOLD_DELAY_MS, intervalMs = HOLD_REPEAT_MS, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let timer = null, active = false;
+  function schedule(ms) {
+    timer = setTimer(() => {
+      timer = null;
+      if (!active) return;
+      fire();
+      if (active) schedule(intervalMs);
+    }, ms);
+  }
+  function stop() {
+    active = false;
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  }
+  return {
+    start() { stop(); active = true; fire(); if (active) schedule(delayMs); },
+    stop,
+    get active() { return active; },
+  };
+}
+
+/**
+ * The mini player's volume buttons: each step moves the level by 5 from the
+ * last known level, holding repeats, and requests go through the same
+ * throttle as the sheet's slider (at most one per 100 ms, plus the final
+ * value on release when one is still waiting). `send(level, final)`.
+ */
+export function createVolumeStepper({ send, getLevel, onLevel = () => {}, step = VOLUME_STEP, delayMs = HOLD_DELAY_MS, intervalMs = HOLD_REPEAT_MS, throttleMs = 100, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let direction = 0, level = null;
+  const throttle = createThrottle(send, { intervalMs: throttleMs, now, setTimer, clearTimer });
+  const repeat = createHoldRepeat(() => {
+    const next = stepVolume(level, direction, step);
+    if (next === null) return repeat.stop();
+    if (next === level) return;
+    level = next;
+    onLevel(level);
+    throttle.input(level);
+  }, { delayMs, intervalMs, setTimer, clearTimer });
+  function release() {
+    if (!repeat.active && !throttle.pending) return;
+    repeat.stop();
+    if (throttle.pending) throttle.commit(level);
+  }
+  return {
+    press(dir) {
+      release();
+      direction = Math.sign(dir);
+      level = getLevel();
+      repeat.start();
+    },
+    release,
+    get holding() { return repeat.active; },
+    get level() { return level; },
+  };
+}
+
+/** "seek" (draggable), "progress" (read-only line) or null (no line) for the mini player. */
+export function miniSeekMode(media) {
+  if (!media?.active || !(media.durationMs > 0)) return null;
+  return media.controls?.seek === true ? "seek" : "progress";
+}
+
+const clampMs = (ms, durationMs) => Math.max(0, Math.min(durationMs, Math.round(Number(ms) || 0)));
+
+/** Slider values for the seek hit area, in whole seconds, with a spoken value. */
+export function seekAria(positionMs, durationMs, spoken) {
+  const position = clampMs(positionMs, durationMs);
+  return {
+    min: 0,
+    max: Math.round(durationMs / 1000),
+    now: Math.round(position / 1000),
+    text: `${spoken(position)} of ${spoken(durationMs)}`,
+  };
+}
+
+/** The position under a pointer on the seek line. */
+export function seekFromPointer(clientX, rect, durationMs) {
+  if (!rect || !(rect.width > 0)) return 0;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return Math.round(ratio * durationMs);
+}
+
+/** Arrow keys move ±5 s; other keys return null. */
+export function seekKey(positionMs, durationMs, key) {
+  const delta = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[key];
+  if (!delta) return null;
+  return clampMs(positionMs + delta * SEEK_KEY_STEP_MS, durationMs);
+}

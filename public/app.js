@@ -8,6 +8,7 @@ import {
   computerKind, powerCaps, offersPower, shutdownEntry, volumeMode, mediaCaps, showMediaButton, showFullscreenButton,
   closeTarget, closeLabels, createArming, createThrottle, expectDisconnect, readExpected, pillVariant, pillContent,
   closeOutcome, pendingPermission, miniPlayerMode, shutdownDialog, powerToast, powerLabels, RESTART_GRACE_MS,
+  miniVolumeMode, miniVolumeShown, miniVolumeChip, createVolumeStepper, createHoldRepeat, seekAria, seekFromPointer, seekKey, CHIP_HIDE_MS,
 } from "./dock-controls.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow } from "./native-bridge.js";
 
@@ -27,6 +28,15 @@ let media = null, mediaReceivedAt = 0, mediaLegacyFallback = false, sourcesOpen 
 let volume = { level: null, muted: false, dragging: false, loading: false };
 let permissionUi = { player: null, asking: false, stopped: false, denied: false, later: null, timer: null };
 const miniDismissed = new Set();
+// Mini player volume buttons and seek line (5.2 additions).
+let miniSeek = null, miniVolumeFetched = false, miniChipTimer = null, miniLegacyHold = null;
+// Mini player volume − / +: 5 per step from the last known level, held = repeat,
+// requests throttled like the sheet's slider (8.4). Every reply is applied and errors reported.
+const miniStepper = createVolumeStepper({
+  getLevel: () => volume.level,
+  onLevel: (level) => { volume.level = level; paintVolume(false); showMiniChip(); },
+  send: (level) => sendVolume({ level }, true),
+});
 const POWER_VERBS = new Set(["lock", "sleep", "restart", "shutdown"]);
 const EXPECTED_KEY = "windock-expected";
 // Native shell hand-shakes: ready is posted once, unauthorized once per lost session.
@@ -366,6 +376,8 @@ function paint() {
   $("dock").classList.toggle("is-editing", editing);
   $("dock").scrollTo({ left: currentPage * $("dock").clientWidth, behavior: "instant" });
   $("host-name").textContent = state.hostName || state.platformName || "Your computer";
+  // Icon geometry differs per host (macOS icons carry a transparent margin): the close badge follows it.
+  if (state.platform) document.documentElement.dataset.platform = state.platform; else delete document.documentElement.dataset.platform;
   syncNative();
   document.body.classList.toggle("is-arranging", editing);
   $("edit-done").hidden = !layout.immersive || !editing || !paired;
@@ -535,6 +547,9 @@ async function activate(button) {
     }
     return runPower(key);
   }
+  // Transport tiles share the mini player's path and state (optimistic, ordered against polls).
+  const transport = action === "control" && { "media-play-pause": media?.active && media.playing ? "pause" : "play", "media-next": "next", "media-previous": "previous" }[key];
+  if (transport && mediaCaps(caps()).available && !usesLegacyMedia()) return mediaCommand(transport);
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   try {
@@ -642,7 +657,10 @@ function applyMedia(next) {
   mediaReceivedAt = Date.now();
   if (permissionUi.asking && pendingPermission(mediaCaps(caps()), media)?.status !== "needed") resetPermissionUi();
   renderMedia(before);
-  // The pinned Play/Pause tile follows the live state.
+  syncPinnedPlay(before);
+}
+// The pinned Play/Pause tile reads the same shared `media` as the mini player and the sheet.
+function syncPinnedPlay(before) {
   if (Boolean(before?.active && before.playing) !== Boolean(media?.active && media.playing)
     && state.tiles.some((tile) => tile.kind === "control" && tile.verb === "media-play-pause")) paint();
 }
@@ -670,8 +688,15 @@ function renderMedia(before = media) {
   const media_ = mediaCaps(caps());
   const permission = pendingPermission(media_, media);
   const mode = miniPlayerMode({ caps: media_, media, enabled: layout.miniPlayer, offlineVisible: offlineVisible || !paired, dismissed: Boolean(permission && miniDismissed.has(miniDismissKey(permission.player))) });
-  const html = renderMiniPlayer({ mode, media, permission, online });
   const floating = layout.immersive;
+  // A drag on the seek line or a held volume button is never interrupted by a re-render.
+  if (miniSeek || miniStepper.holding || miniLegacyHold?.active) { if ($("media").open) renderSheet(); return; }
+  const volMode = miniVolumeMode(caps());
+  const workspace = $("mini-player").parentElement;
+  const showVolume = mode === "player" && miniVolumeShown({ mode: volMode, immersive: floating, viewportWidth: window.innerWidth, containerWidth: workspace.clientWidth || window.innerWidth });
+  const html = renderMiniPlayer({ mode, media, permission, online, volume: showVolume ? volMode : null });
+  // The level is fetched once when the mini player first shows its buttons, if still unknown.
+  if (showVolume && volMode === "level" && !miniVolumeFetched && !Number.isFinite(volume.level)) { miniVolumeFetched = true; fetchVolumeLevel(); }
   const target = floating ? $("mini-player") : $("nowplaying");
   const other = floating ? $("nowplaying") : $("mini-player");
   if (other.innerHTML) clearHtml(other);
@@ -692,8 +717,30 @@ function renderMedia(before = media) {
       else if (trackChanged) mini?.classList.add("is-track");
     } else target.querySelector(".mini")?.classList.remove("is-leaving");
     document.body.classList.toggle("has-mini", floating);
+    tickMini(true);
   }
   if ($("media").open) renderSheet();
+}
+// The mini player's seek line follows the same interpolated position as the sheet (8.3).
+function miniHost() { return layout.immersive ? $("mini-player") : $("nowplaying"); }
+function paintMiniSeek(position, instant) {
+  const line = miniHost().querySelector("[data-mini-seek]");
+  if (!line || !media?.durationMs || position === null) return;
+  if (instant) line.classList.add("is-instant");
+  line.style.setProperty("--p", (position / media.durationMs).toFixed(4));
+  const hit = line.querySelector("[data-mini-seek-hit]");
+  if (hit) {
+    const aria = seekAria(position, media.durationMs, spokenTime);
+    hit.setAttribute("aria-valuemax", String(aria.max));
+    hit.setAttribute("aria-valuenow", String(aria.now));
+    hit.setAttribute("aria-valuetext", aria.text);
+    line.querySelector("[data-mini-seek-time]").textContent = formatTime(position) + " / " + formatTime(media.durationMs);
+  }
+  if (instant) { void line.offsetWidth; line.classList.remove("is-instant"); }
+}
+function tickMini(instant = false) {
+  if (miniSeek) return;
+  paintMiniSeek(mediaPosition(media, mediaReceivedAt, Date.now()), instant);
 }
 function sheetPermission() {
   const permission = pendingPermission(mediaCaps(caps()), media);
@@ -758,15 +805,62 @@ const clampLevel = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.
 async function sendVolume(change, final) {
   try {
     const fresh = await api("/api/volume", { method: "POST", body: JSON.stringify(change) });
-    if (final && !volume.dragging && fresh && typeof fresh === "object") {
+    if (final && !volume.dragging && !miniStepper.holding && fresh && typeof fresh === "object") {
       if (Number.isFinite(fresh.level)) volume.level = clampLevel(fresh.level);
       volume.muted = fresh.muted === true;
       paintVolume(false);
+      const chip = miniHost().querySelector("[data-mini-chip].is-visible");
+      if (chip) chip.textContent = miniVolumeChip(volume);
     }
   } catch (error) { if (final) { report(error); refreshVolume(); } }
 }
 // At most one level per 100 ms while dragging, and always the final value (8.4).
 const volumeThrottle = createThrottle((level, final) => sendVolume({ level }, final), { intervalMs: 100 });
+async function fetchVolumeLevel() {
+  if (!online) return;
+  try {
+    const fresh = await api("/api/volume");
+    if (!volume.dragging && !miniStepper.holding && fresh && typeof fresh === "object") {
+      volume.level = clampLevel(fresh.level); volume.muted = fresh.muted === true; paintVolume(true);
+    }
+  } catch { /* The next press tries again. */ }
+}
+function showMiniChip() {
+  const chip = miniHost().querySelector("[data-mini-chip]");
+  if (!chip) return;
+  chip.textContent = miniVolumeChip(volume);
+  chip.classList.add("is-visible");
+  clearTimeout(miniChipTimer);
+  miniChipTimer = setTimeout(() => chip.classList.remove("is-visible"), CHIP_HIDE_MS);
+}
+function legacyVolume(direction) {
+  return () => api("/api/control", { method: "POST", body: JSON.stringify({ verb: direction > 0 ? "volume-up" : "volume-down" }) }).catch(report);
+}
+let miniVolumeDown = false;
+async function pressMiniVolume(button) {
+  const direction = button.dataset.miniVol === "up" ? 1 : -1;
+  miniVolumeDown = true;
+  if (button.closest("[data-mini-vol-mode]")?.dataset.miniVolMode === "legacy") {
+    miniLegacyHold?.stop();
+    miniLegacyHold = createHoldRepeat(legacyVolume(direction));
+    miniLegacyHold.start();
+    return;
+  }
+  if (!Number.isFinite(volume.level)) {
+    await fetchVolumeLevel();
+    if (!Number.isFinite(volume.level)) return;
+    // Released while the level loaded: still one step, but no hold.
+    if (!miniVolumeDown) { miniStepper.press(direction); miniStepper.release(); return; }
+  }
+  miniStepper.press(direction);
+}
+function releaseMiniVolume() {
+  miniVolumeDown = false;
+  const wasHolding = miniStepper.holding || miniLegacyHold?.active;
+  miniStepper.release();
+  miniLegacyHold?.stop();
+  if (wasHolding) renderMedia();
+}
 function openMedia() {
   if (!paired) return;
   $("drawer").close();
@@ -801,23 +895,27 @@ async function mediaCommand(action, value) {
   if (media?.active || action === "play") {
     const patch = { play: { playing: true }, pause: { playing: false }, shuffle: { shuffle: !media?.shuffle }, repeat: { repeat: { off: "all", all: "one", one: "off" }[media?.repeat] || "all" } }[action];
     if (patch && media) {
+      const before = media;
       if ("playing" in patch) media = { ...media, positionMs: mediaPosition(media, mediaReceivedAt, Date.now()) ?? media.positionMs };
       media = { ...media, ...patch };
       mediaReceivedAt = Date.now();
-      renderMedia();
+      renderMedia(before);
+      syncPinnedPlay(before);
     }
   }
   const body = action === "shuffle" ? { action, value: media?.shuffle === true } : action === "repeat" ? { action, value: media?.repeat || "off" } : value === undefined ? { action } : { action, value };
+  // Through the poller: polls that started before the reply can't overwrite the
+  // optimistic state, and the reply (when it has state) becomes the shared state.
   try {
     if (legacy) {
       const verb = { play: "media-play-pause", pause: "media-play-pause", next: "media-next", previous: "media-previous" }[action];
       if (!verb) return;
-      await api("/api/control", { method: "POST", body: JSON.stringify({ verb }) });
+      await mediaPoller.command(() => api("/api/control", { method: "POST", body: JSON.stringify({ verb }) }).then(() => null));
       setTimeout(() => mediaPoller.refresh().catch(() => {}), 350);
     } else {
-      const fresh = await api("/api/media", { method: "POST", body: JSON.stringify(body) });
-      if (fresh && typeof fresh === "object" && "source" in fresh) applyMedia(normalizeMedia(fresh));
-      else mediaPoller.refresh().catch(() => {});
+      const fresh = await mediaPoller.command(() => api("/api/media", { method: "POST", body: JSON.stringify(body) })
+        .then((reply) => (reply && typeof reply === "object" && "source" in reply ? normalizeMedia(reply) : null)));
+      if (!fresh) mediaPoller.refresh().catch(() => {});
     }
   } catch (error) {
     mediaPoller.refresh().catch(() => {});
@@ -1031,6 +1129,7 @@ function handleMediaClick(target) {
   if (!el || el.disabled) return false;
   const data = el.dataset;
   if ("mediaOpen" in data || "mediaAllow" in data) openMedia();
+  else if (data.miniVol) return true; // pressed on pointerdown; keyboard clicks are handled by the host listener
   else if (data.media) mediaCommand(data.media);
   else if ("mediaDismiss" in data) {
     const permission = pendingPermission(mediaCaps(caps()), media);
@@ -1137,8 +1236,78 @@ document.addEventListener("pointerup", (event) => {
 // Swipe up on the mini player opens the Media sheet, not the drawer; sideways does nothing (9.3).
 let miniGesture = null;
 for (const host of [$("mini-player"), $("nowplaying")]) {
-  host.addEventListener("pointerdown", (event) => { miniGesture = event.target.closest(".mini") ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null; });
+  host.addEventListener("pointerdown", (event) => {
+    // The seek line and the volume buttons are their own controls: no swipe-up, no tap-to-open.
+    const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol]");
+    miniGesture = event.target.closest(".mini") && !own ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
+    if (!own || event.button !== 0) return;
+    event.stopPropagation();
+    const vol = event.target.closest("[data-mini-vol]");
+    if (vol) { if (!vol.disabled) { event.preventDefault(); pressMiniVolume(vol); } return; }
+    startMiniSeek(event);
+  });
+  // Enter / Space (and assistive taps) on a volume button: one step.
+  host.addEventListener("click", (event) => {
+    const vol = event.target.closest("[data-mini-vol]");
+    if (!vol || vol.disabled || event.detail !== 0) return;
+    pressMiniVolume(vol).then(() => releaseMiniVolume());
+  });
+  host.addEventListener("keydown", (event) => {
+    const hit = event.target.closest("[data-mini-seek-hit]");
+    if (!hit || !media?.durationMs || !online) return;
+    const from = mediaPosition(media, mediaReceivedAt, Date.now()) ?? 0;
+    const next = seekKey(from, media.durationMs, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    media = { ...media, positionMs: next };
+    mediaReceivedAt = Date.now();
+    paintMiniSeek(next, true);
+    miniSeekThrottle.input(next);
+  });
+  host.addEventListener("keyup", (event) => {
+    if (event.target.closest("[data-mini-seek-hit]") && miniSeekThrottle.pending) miniSeekThrottle.commit(media?.positionMs ?? 0);
+  });
 }
+const miniSeekThrottle = createThrottle((position) => mediaCommand("seek", position), { intervalMs: 100 });
+// Seek drag: local only while dragging, one request on release, cancel reverts.
+function startMiniSeek(event) {
+  const hit = event.target.closest("[data-mini-seek-hit]");
+  if (!hit || !media?.durationMs || !online) return;
+  event.preventDefault();
+  const line = hit.closest("[data-mini-seek]");
+  try { hit.setPointerCapture(event.pointerId); } catch { /* Synthetic pointers can't be captured. */ }
+  miniSeek = { id: event.pointerId, line, value: seekFromPointer(event.clientX, line.getBoundingClientRect(), media.durationMs) };
+  line.classList.add("is-dragging");
+  paintMiniSeek(miniSeek.value, true);
+}
+function endMiniSeek(commit) {
+  if (!miniSeek) return;
+  const { line, value } = miniSeek;
+  miniSeek = null;
+  line.classList.remove("is-dragging");
+  suppressClickUntil = Date.now() + 400;
+  if (commit && media) {
+    media = { ...media, positionMs: value };
+    mediaReceivedAt = Date.now();
+    paintMiniSeek(value, true);
+    mediaCommand("seek", value);
+  } else tickMini(true);
+  renderMedia();
+}
+document.addEventListener("pointermove", (event) => {
+  if (!miniSeek || event.pointerId !== miniSeek.id || !media?.durationMs) return;
+  miniSeek.value = seekFromPointer(event.clientX, miniSeek.line.getBoundingClientRect(), media.durationMs);
+  paintMiniSeek(miniSeek.value, true);
+});
+document.addEventListener("pointerup", (event) => {
+  if (miniSeek && event.pointerId === miniSeek.id) endMiniSeek(true);
+  releaseMiniVolume();
+});
+document.addEventListener("pointercancel", (event) => {
+  if (miniSeek && event.pointerId === miniSeek.id) endMiniSeek(false);
+  releaseMiniVolume();
+});
+window.addEventListener("blur", () => { endMiniSeek(false); releaseMiniVolume(); });
 document.addEventListener("pointerup", (event) => {
   if (miniGesture?.id !== event.pointerId) return;
   const dx = event.clientX - miniGesture.x, dy = miniGesture.y - event.clientY;
@@ -1198,6 +1367,7 @@ $("media-volume").addEventListener("change", (event) => {
 document.addEventListener("pointerup", () => { if (volume.dragging) setTimeout(() => { volume.dragging = false; }, 0); });
 $("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; });
 setInterval(() => { if ($("media").open && !document.hidden) tickProgress(); }, 1000);
+setInterval(() => { if (!document.hidden) tickMini(); }, 1000);
 setInterval(() => { if ($("media").open && paired && online && !document.hidden && !volume.dragging) refreshVolume(); }, 2000);
 $("refresh").addEventListener("click", async () => {
   $("refresh").disabled = true;

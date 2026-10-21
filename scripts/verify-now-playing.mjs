@@ -112,4 +112,56 @@ t.equal(formatTime(3_723_000), "1:02:03", "hours");
 t.equal(spokenTime(72_000), "1 minute 12 seconds", "spoken position");
 t.equal(spokenTime(185_000), "3 minutes 5 seconds", "spoken duration");
 t.equal(spokenTime(61_000), "1 minute 1 second", "singular units");
+// Flicker regression (pause -> play -> pause): a poll that started before a
+// command must never overwrite the optimistic state or the command's reply.
+{
+  let clock = 0;
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const loads = [], applied = [];
+  const p = createMediaPoller({
+    intervalMs: 1e9, isActive: () => false, now: () => clock,
+    load: () => new Promise((resolve) => loads.push(resolve)),
+    onChange: (value) => applied.push(value),
+  });
+  const stale = p.refresh(); // started while the player was still playing
+  let reply;
+  const command = p.command(() => new Promise((resolve) => { reply = resolve; }));
+  await flush(); loads[0]({ playing: true });
+  await stale;
+  t.equal(applied.length, 0, "a poll that started before the command is discarded while the command runs");
+  const during = p.refresh(); // started during the command, host may still be stale
+  reply({ playing: false });
+  t.deepEqual(await command, { playing: false }, "command() hands back the reply");
+  t.deepEqual(applied, [{ playing: false }], "the command's reply is applied as the shared state");
+  await flush(); loads[1]({ playing: true });
+  await during;
+  t.deepEqual(applied, [{ playing: false }], "a poll that started before the reply arrived is discarded");
+  const fresh = p.refresh();
+  await flush(); loads[2]({ playing: false, title: "next poll" });
+  await fresh;
+  t.equal(applied.at(-1).title, "next poll", "a poll that started after the reply is applied");
+  // A command without a reply (older hosts): polls after it settle are accepted.
+  await p.command(() => Promise.resolve(null));
+  const after = p.refresh();
+  await flush(); loads[3]({ playing: true, title: "legacy" });
+  await after;
+  t.equal(applied.at(-1).title, "legacy", "after a reply-less command, the next poll is accepted");
+  // A command that hangs: after ~2 s polls are accepted again.
+  p.command(() => new Promise(() => {}));
+  const early = p.refresh();
+  await flush(); loads[4]({ title: "too early" });
+  await early;
+  t.ok(applied.at(-1).title !== "too early", "while a command is pending, polls are held");
+  clock += 2100;
+  const late = p.refresh();
+  await flush(); loads[5]({ title: "after timeout" });
+  await late;
+  t.equal(applied.at(-1).title, "after timeout", "after the 2 s hold a poll is accepted even if the command never answered");
+  // A failed command still releases the hold.
+  const q = createMediaPoller({ intervalMs: 1e9, isActive: () => false, now: () => clock, load: async () => ({ title: "after failure" }), onChange: (v) => applied.push(v) });
+  await q.command(() => Promise.reject(new Error("boom"))).catch(() => {});
+  await q.refresh();
+  t.equal(applied.at(-1).title, "after failure", "a failed command does not block later polls");
+  p.stop(); q.stop();
+}
 t.done("now-playing verification passed");

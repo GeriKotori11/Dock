@@ -7,8 +7,10 @@ import {
   computerKind, powerCaps, offersPower, shutdownEntry, volumeMode, mediaCaps, showMediaButton, showFullscreenButton, closeTarget,
   createArming, createThrottle, expectDisconnect, readExpected, pillVariant, pillContent, closeOutcome, closeLabels,
   pendingPermission, miniPlayerMode, shutdownDialog, powerToast, powerLabels, ARM_WINDOW_MS, ARM_MIN_GAP_MS, EXPECTED_WINDOW_MS, RESTART_GRACE_MS,
+  stepVolume, miniVolumeMode, miniPlayerWidth, miniVolumeShown, miniVolumeChip, createHoldRepeat, createVolumeStepper, miniSeekMode, seekAria, seekFromPointer, seekKey,
+  VOLUME_STEP, HOLD_DELAY_MS, HOLD_REPEAT_MS, CHIP_HIDE_MS,
 } from "../public/dock-controls.js";
-import { normalizeMedia, fromNowPlaying } from "../public/now-playing.js";
+import { normalizeMedia, fromNowPlaying, spokenTime } from "../public/now-playing.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow, COMPUTER_NAME_MAX } from "../public/native-bridge.js";
 
 const t = createChecker("pwa");
@@ -416,6 +418,23 @@ t.ok(sleepTile.includes('data-armed="true"') && sleepTile.includes('aria-label="
 t.ok(renderTile({ kind: "control", verb: "media-play-pause", label: "Play / Pause", playing: true }).includes('<path d="M8 5v14M16 5v14"/>'), "the Play/Pause tile shows Pause while media plays");
 t.ok(renderTile({ kind: "control", verb: "media-play-pause", label: "Play / Pause" }).includes('<path d="m7 4 14 8-14 8z"/>'), "the Play/Pause tile shows Play otherwise");
 t.ok(/\.tile__close \{[^}]*min-width: 44px; height: 44px/.test(css), "the close button's hit area is 44 px");
+// The badge sits ON the artwork's top-right corner (centre --close-inset in on both axes), scaled with the icon.
+t.ok(/\.tile-slot \{[^}]*--icon-pad: 0; --close-inset: calc\(var\(--glyph\) \* \(var\(--icon-pad\) \+ 0\.07\)\)/.test(css), "the close inset scales with the icon (0.07 x icon past the artwork margin)");
+t.ok(css.includes(':root[data-platform="macos"] .tile-slot { --icon-pad: 0.098; }'), "macOS icons carry a 824/1024 margin, so the badge moves in to the artwork");
+t.ok(/\.tile__close \{[^}]*top: calc\(50% \+ var\(--glyph-shift\) - var\(--glyph\) \/ 2 \+ var\(--close-inset\) - 22px\); right: calc\(50% - var\(--glyph\) \/ 2 \+ var\(--close-inset\) - 22px\)/.test(css), "the 44 px hit area is centred on the badge (22 px), which is centred --close-inset inside the icon corner");
+t.ok(appJs.includes("document.documentElement.dataset.platform = state.platform"), "the host platform reaches CSS");
+{
+  // Geometry: badge centre relative to the artwork corner, at phone icon sizes (8, 6, 4 per page) and classic 72 px.
+  const centre = (glyph, pad) => { const inset = glyph * (pad + 0.07); return { fromArtworkCorner: inset - glyph * pad }; };
+  for (const glyph of [82.6, 89, 107, 140, 72]) {
+    const mac = centre(glyph, 0.098).fromArtworkCorner, win = centre(glyph, 0).fromArtworkCorner;
+    t.ok(Math.abs(mac - glyph * 0.07) < 1e-9 && Math.abs(win - glyph * 0.07) < 1e-9, `badge centre is ${(glyph * 0.07).toFixed(1)} px inside the artwork corner at a ${glyph} px icon`);
+  }
+  t.ok(Math.abs(89 * 0.07 - 6.2) < 0.1, "about 6 px in at the phone's 8-per-page icon");
+  // The armed pill grows leftwards from the hit area's right edge (padding 10): it ends inside the icon box.
+  const pillRight = (glyph, pad) => glyph / 2 - glyph * (pad + 0.07) + 22 - 10;
+  t.ok([82.6, 107, 140].every((g) => pillRight(g, 0) < g / 2 + 13 && pillRight(g, 0.098) < g / 2), "the armed pill never extends more than a few px past the icon's right edge, so the rightmost column stays on screen");
+}
 t.ok(/\.tile__close-badge \{[^}]*width: 24px; height: 24px[^}]*background: var\(--badge\)/.test(css), "the close badge is 24 px on the badge token");
 t.ok(/\.tile__close-pill \{[^}]*height: 30px[^}]*background: var\(--danger\); color: var\(--on-danger\); font-size: 12px; font-weight: 650/.test(css), "the armed pill is 30 px, danger on on-danger, 12/650");
 for (const token of ["--ease-out: cubic-bezier(0.23, 1, 0.32, 1)", "--badge: rgba(12, 20, 24, .78)", "--text-3: #8c9c9c"]) t.ok(css.includes(token), `style.css defines ${token}`);
@@ -520,7 +539,7 @@ t.equal(miniPlayerMode({ caps: mediaCaps({ features: { ...MAC, media: { ...MAC.m
 t.deepEqual(pendingPermission(macCaps, normalizeMedia({ source: null })), { player: "spotify", name: "Spotify", appId: "com.spotify.client", status: "needed" }, "the pending permission names the player");
 t.deepEqual(pendingPermission(winMedia, normalizeMedia({ source: null, permission: { player: "music", status: "denied" } })).status, "denied", "a live permission from /api/media is used");
 const mini = renderMiniPlayer({ mode: "player", media: spotify });
-t.ok(mini.startsWith('<div class="mini" role="region" aria-label="Now playing"'), "the mini player is a Now playing region");
+t.ok(/^<div class="mini( has-seek)?" role="region" aria-label="Now playing"/.test(mini), "the mini player is a Now playing region");
 t.ok(mini.includes('aria-label="Houdini by Dua Lipa, Spotify. Open media controls."'), "its open button has the spec's name");
 t.ok(mini.includes('<img class="art-img" src="/api/media/artwork?key=9f2c"') && mini.includes('class="media-badge"'), "artwork with the source badge");
 t.ok(mini.includes('data-media="pause" aria-label="Pause"') && mini.includes('aria-label="Previous track"') && mini.includes('aria-label="Next track"'), "transport is Previous · Pause · Next");
@@ -565,6 +584,108 @@ t.ok(renderVolumeRow({ mode: "slider" }).includes('type="range" min="0" max="100
 t.ok(renderVolumeRow({ mode: "buttons" }).includes("Quieter") && renderVolumeRow({ mode: "buttons" }).includes('data-media-control="mute-toggle"'), "legacy volume is three buttons");
 t.equal(renderVolumeRow({ mode: null }), "", "no volume, no row");
 
+// Mini player volume buttons, width rule and seek line (5.2 additions).
+{
+  t.equal(VOLUME_STEP, 5, "a volume step is 5");
+  t.deepEqual([stepVolume(45, 1), stepVolume(45, -1), stepVolume(98, 1), stepVolume(3, -1), stepVolume(100, 1), stepVolume(0, -1)], [50, 40, 100, 0, 100, 0], "steps clamp to 0–100");
+  t.equal(stepVolume(null, 1), null, "no known level, no step");
+  t.equal(miniVolumeMode({ features: WIN }), "level", "volume.set gives level buttons");
+  t.equal(miniVolumeMode({ features: { volume: { get: true, set: false } }, verbs: LEGACY_VERBS }), null, "a new host that can't set the volume shows none (no legacy fallback)");
+  t.equal(miniVolumeMode({ features: { controls: true }, verbs: ["volume-up", "volume-down"] }), "legacy", "older hosts use the volume verbs");
+  t.equal(miniVolumeMode({ features: { controls: true }, verbs: ["media-next"] }), null, "no volume, no buttons");
+  t.equal(miniPlayerWidth({ viewportWidth: 844, containerWidth: 844 }), 405.12, "the base width stays min(440, 48vw, 100% - 48px)");
+  t.equal(Math.round(miniPlayerWidth({ viewportWidth: 844, containerWidth: 844, wide: true })), 523, "with volume: min(560, 62vw, 100% - 48px) = 523 at 844");
+  t.equal(miniPlayerWidth({ viewportWidth: 932, containerWidth: 932, wide: true }), 560, "560 at 932");
+  t.equal(miniVolumeShown({ mode: "level", viewportWidth: 844, containerWidth: 844 }), true, "844 wide shows the buttons");
+  t.equal(miniVolumeShown({ mode: "level", viewportWidth: 667, containerWidth: 667 }), false, "below 440 px (62vw of 667 = 413) the buttons hide");
+  t.equal(miniVolumeShown({ mode: "level", immersive: false, viewportWidth: 932, containerWidth: 932 }), false, "the classic footer player never shows them");
+  t.equal(miniVolumeShown({ mode: null, viewportWidth: 932, containerWidth: 932 }), false, "no volume capability, no buttons");
+  t.deepEqual([miniVolumeChip({ level: 45 }), miniVolumeChip({ level: 45, muted: true }), miniVolumeChip({ level: null })], ["45%", "Muted", ""], "chip copy");
+  t.equal(CHIP_HIDE_MS, 1200, "the chip hides after 1.2 s");
+
+  const wide = renderMiniPlayer({ mode: "player", media: spotify, volume: "level" });
+  t.ok(wide.startsWith('<div class="mini mini--wide has-seek"'), "volume buttons widen the player");
+  t.ok(wide.indexOf('aria-label="Next track"') < wide.indexOf('class="mini__divider"') && wide.indexOf('class="mini__divider"') < wide.indexOf('data-mini-vol="down"'), "a hairline after Next, then the volume buttons");
+  t.ok(wide.includes('data-mini-vol="down" aria-label="Volume down"') && wide.includes('data-mini-vol="up" aria-label="Volume up"'), "Volume down / Volume up names");
+  t.ok(wide.includes('<span class="mini__chip" data-mini-chip aria-live="polite"></span>'), "the level chip is a polite live region");
+  t.ok(wide.includes('<path d="m11 4-6 5H2v6h3l6 5zM16 12h6"/>') && wide.includes('<path d="m11 4-6 5H2v6h3l6 5zM16 12h6m-3-3v6"/>'), "speaker-minus / speaker-plus glyphs");
+  t.ok(/\.mini__btn \{[^}]*width: 44px; height: 44px/.test(css), "volume buttons are 44 px targets");
+  t.ok(css.includes(".mini__divider { width: 1px; height: 18px; flex-shrink: 0; background: var(--line); }"), "the divider uses the hairline token");
+  t.ok(css.includes("body.is-immersive .mini.mini--wide { width: min(560px, 62vw, 100% - 48px); }") && css.includes("width: min(440px, 48vw, 100% - 48px); }"), "the wide width rule in CSS");
+  const plain = renderMiniPlayer({ mode: "player", media: spotify });
+  t.ok(!plain.includes("mini__vol") && !plain.includes("mini--wide"), "without volume the player keeps its width and has no buttons");
+  const legacyVol = renderMiniPlayer({ mode: "player", media: spotify, volume: "legacy" });
+  t.ok(legacyVol.includes('data-mini-vol-mode="legacy"') && !legacyVol.includes("data-mini-chip"), "legacy volume buttons have no level chip");
+  t.ok(appJs.includes('verb: direction > 0 ? "volume-up" : "volume-down"'), "legacy buttons send the volume verbs");
+  t.ok(appJs.includes('const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol]");') && appJs.includes("event.stopPropagation();"), "volume and seek never start the mini player's swipe or tap-to-open");
+  t.ok(appJs.includes('else if (data.miniVol) return true;'), "a volume tap never opens the media sheet");
+
+  // Seek line rules.
+  t.equal(miniSeekMode(spotify), "seek", "seekable with a duration: draggable");
+  const noSeek = normalizeMedia({ source: { name: "Chrome" }, title: "T", durationMs: 200000, positionMs: 1000 });
+  t.equal(miniSeekMode(noSeek), "progress", "a duration without seek: read-only line");
+  t.equal(miniSeekMode(normalizeMedia({ source: { name: "Chrome" }, title: "T" })), null, "no duration: no line");
+  t.ok(wide.includes('data-mini-seek="seek"') && wide.includes('role="slider"') && wide.includes('aria-valuemin="0" aria-valuemax="185" aria-valuenow="0" aria-valuetext="0 seconds of 3 minutes 5 seconds"'), "the seek hit area is a slider with aria values in seconds");
+  t.ok(wide.includes('data-mini-seek-time aria-hidden="true">0:00 / 3:05</span>') && wide.includes('class="mini__seek-thumb"'), "thumb and time label exist for dragging");
+  const prog = renderMiniPlayer({ mode: "player", media: noSeek });
+  t.ok(prog.includes('data-mini-seek="progress"') && !prog.includes('role="slider"') && !prog.includes("mini__seek-thumb"), "progress only: no slider, no thumb");
+  t.ok(!renderMiniPlayer({ mode: "player", media: normalizeMedia({ source: { name: "Chrome" }, title: "T" }) }).includes("mini__seek"), "no duration renders no line");
+  t.deepEqual(seekAria(72000, 185000, spokenTime), { min: 0, max: 185, now: 72, text: "1 minute 12 seconds of 3 minutes 5 seconds" }, "slider values while playing");
+  t.equal(seekFromPointer(150, { left: 50, width: 400 }, 200000), 50000, "pointer to position");
+  t.deepEqual([seekFromPointer(0, { left: 50, width: 400 }, 200000), seekFromPointer(999, { left: 50, width: 400 }, 200000)], [0, 200000], "pointer clamps to the line");
+  t.deepEqual([seekKey(72000, 185000, "ArrowRight"), seekKey(72000, 185000, "ArrowLeft"), seekKey(2000, 185000, "ArrowDown"), seekKey(183000, 185000, "ArrowUp"), seekKey(1, 2, "Enter")], [77000, 67000, 0, 185000, null], "arrow keys move 5 s, clamped");
+  t.ok(css.includes(".mini__seek-hit { position: absolute; z-index: 3; left: 0; right: 0; top: 50%; height: 28px;") && /\.mini__seek \{[^}]*height: 3px/.test(css) && css.includes("background: var(--accent); transform: scaleX(var(--p))"), "3 px line, accent fill, 28 px hit area");
+  // Every mini player button stacks above the seek hit area (same stacking context: .mini__seek and .mini__vol set no z-index).
+  const zOf = (sel) => Number((css.match(new RegExp(sel.replace(/[.]/g, "\\.") + " \\{[^}]*z-index: (\\d+)")) || [])[1]);
+  t.ok(css.includes(".mini__btn { position: relative; z-index: 4; }") && zOf(".mini__btn") > zOf(".mini__seek-hit"), "buttons (z 4) sit above the seek hit area (z 3), so a tap near a button's bottom edge still hits the button");
+  t.ok(css.includes('.mini__btn::after { content: ""; position: absolute; inset: 0; border-radius: 0; }'), "the full 44 px square of each button takes the tap, corners included");
+  t.ok(!/\.mini__seek \{[^}]*z-index/.test(css) && !/\.mini__vol \{[^}]*z-index/.test(css), "no wrapper creates a stacking context that would undo that order");
+  t.ok(/\.mini__seek \{ --inset-l: 60px; --inset-r: 6px;/.test(css) && 8 + 42 + 10 === 60, "the line starts at the text column, clear of the artwork's source badge");
+  t.ok(css.includes(".mini__seek-thumb { position: absolute; z-index: 2; top: 50%; left: calc(var(--p) * 100%); width: 12px; height: 12px;"), "12 px thumb");
+  t.ok(appJs.includes('mediaCommand("seek", value);') && appJs.includes("if (commit && media)"), "the seek request goes out once, on release");
+
+  // Hold-repeat and throttle timing with fake timers.
+  t.deepEqual([HOLD_DELAY_MS, HOLD_REPEAT_MS], [400, 150], "hold starts after 400 ms, repeats every 150 ms");
+  const clock = fakeClock();
+  const fired = [];
+  const hold = createHoldRepeat(() => fired.push(clock.now()), clock);
+  hold.start();
+  clock.advance(1000);
+  hold.stop();
+  t.deepEqual(fired.map((at) => at - 1000), [0, 400, 550, 700, 850, 1000], "fires at once, then after 400 ms every 150 ms");
+  clock.advance(1000);
+  t.equal(fired.length, 6, "stop ends the repeat");
+  t.equal(clock.pending, 0, "no timer left after stop");
+
+  const c2 = fakeClock();
+  let level = 45;
+  const sent = [];
+  const stepper = createVolumeStepper({ ...c2, getLevel: () => level, onLevel: (v) => { level = v; }, send: (v, final) => sent.push([v, final, c2.now()]) });
+  stepper.press(1);
+  stepper.release();
+  t.deepEqual(sent, [[50, false, 1000]], "a tap sends one level (+5) at once");
+  c2.advance(500);
+  stepper.press(-1);
+  c2.advance(700);
+  stepper.release();
+  t.deepEqual(sent.slice(1).map(([v]) => v), [45, 40, 35, 30], "holding steps down every 150 ms after 400 ms");
+  const at = sent.slice(1).map(([, , t0]) => t0);
+  t.ok(at.every((t0, i) => i === 0 || t0 - at[i - 1] >= 100), "never more than one request per 100 ms");
+  c2.advance(1000);
+  t.equal(sent.length, 5, "nothing is sent after release");
+  level = 98;
+  stepper.press(1); c2.advance(400); c2.advance(150); stepper.release();
+  t.deepEqual(sent.slice(5).map(([v]) => v), [100], "at 100 a held button stops sending");
+  const c3 = fakeClock();
+  const sent3 = [];
+  const fast = createVolumeStepper({ ...c3, intervalMs: 40, getLevel: () => 50, send: (v, final) => sent3.push([v, final, c3.now()]) });
+  fast.press(1); c3.advance(400 + 40 + 20); fast.release();
+  t.ok(sent3.at(-1)[1] === true && sent3.at(-1)[0] === 65, "a value still waiting in the throttle goes out as the final value on release");
+  const nullStep = createVolumeStepper({ ...fakeClock(), getLevel: () => null, send: () => sent3.push("x") });
+  const before = sent3.length; nullStep.press(1); nullStep.release();
+  t.equal(sent3.length, before, "an unknown level sends nothing");
+}
+
 // Controls sheet keeps Sound, Display and Your PC/Mac (4, 17).
 const controlsHtml = renderControls(LEGACY_VERBS.concat("brightness-set"), true, { power: powerCaps({ features: MAC }), kind: "Mac" });
 t.ok(!controlsHtml.includes("Playback") && !controlsHtml.includes('data-key="media-play-pause"'), "the Playback card is gone");
@@ -582,4 +703,8 @@ t.ok(/body\.is-immersive\.has-mini \.tile, body\.is-immersive\.has-mini \.tile-s
 t.ok(/@media \(prefers-reduced-motion: reduce\) \{ \*, \*::before, \*::after \{ transition: none !important; animation: none !important;/.test(css), "reduced motion still stops every transition and animation");
 t.ok(appJs.includes("const volumeThrottle = createThrottle((level, final) => sendVolume({ level }, final), { intervalMs: 100 });"), "the slider is throttled to one level per 100 ms");
 
+// Flicker fix: every transport surface goes through the poller's ordered command path.
+t.ok(appJs.includes("await mediaPoller.command(() => api(\"/api/media\"") || appJs.includes('const fresh = await mediaPoller.command(() => api("/api/media"'), "media commands run through the poller so stale polls are discarded");
+t.ok(appJs.includes("if (transport && mediaCaps(caps()).available && !usesLegacyMedia()) return mediaCommand(transport);"), "the pinned Play/Pause tile shares the mini player's state and command path");
+t.ok(appJs.includes("syncPinnedPlay(before);"), "the pinned tile glyph follows optimistic changes too");
 t.done("pwa verification passed");

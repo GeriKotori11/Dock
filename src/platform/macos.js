@@ -600,7 +600,11 @@ const finiteOrNull = (v) => (typeof v === "number" && Number.isFinite(v) ? v : n
  * @param {() => number} [opts.now] clock (tests)
  * @param {typeof fetch} [opts.fetchImpl] used only for allowlisted Spotify artwork
  */
-export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript = OSASCRIPT, now = Date.now, fetchImpl = globalThis.fetch } = {}) {
+const SETTLE_MAX_MS = 800;
+const SETTLE_STEP_MS = 100;
+const isPlayingState = (state) => state === "playing" || state === "fast forwarding" || state === "rewinding";
+
+export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript = OSASCRIPT, now = Date.now, fetchImpl = globalThis.fetch, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   if (typeof exec !== "function") throw new Error("macos provider requires exec");
   const dirs = Object.freeze([...appDirs].filter((d) => typeof d === "string" && d.startsWith("/")));
   const jxa = (script, args = [], options) => exec(osascript, osascriptArgv(script, args), ...(options ? [options] : []));
@@ -687,7 +691,7 @@ export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript 
       }
       remember(player.appId, "granted");
       const state = String(row.state || "").toLowerCase();
-      const playing = state === "playing" || state === "fast forwarding" || state === "rewinding";
+      const playing = isPlayingState(state);
       if (playing) lastPlayingAt.set(player.id, now());
       reads.push({ player, row, playing, paused: state === "paused" });
     }
@@ -753,6 +757,24 @@ export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript 
     };
   }
 
+  /**
+   * Right after playpause, Spotify and Music can still report the old player
+   * state for a few hundred ms, which made the phone's play/pause glyph flicker.
+   * Re-read the player (every 100 ms, at most 800 ms) until it shows the change.
+   */
+  async function settlePlaying(player, expected) {
+    const script = player.id === "spotify" ? SPOTIFY_STATE_JXA : MUSIC_STATE_JXA;
+    const deadline = now() + SETTLE_MAX_MS;
+    for (;;) {
+      let row = null;
+      try { row = jsonObject((await jxa(script, [], { timeout: PLAYER_READ_TIMEOUT_MS })).stdout); } catch { return; }
+      if (!row || row.running !== true || row.permission !== 0) return;
+      if (isPlayingState(String(row.state || "").toLowerCase()) === expected) return;
+      if (now() + SETTLE_STEP_MS > deadline) return;
+      await sleep(SETTLE_STEP_MS);
+    }
+  }
+
   async function mediaCommand(action, value, sessionId) {
     if (!["play", "pause", "toggle", "next", "previous", "seek", "shuffle", "repeat"].includes(action)) {
       throw hostError(501, { error: "action unavailable" });
@@ -772,6 +794,8 @@ export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript 
       remember(target.player.appId, status);
       throw hostError(409, { error: "permission needed", player: target.player.id, status: status === "denied" ? "denied" : "needed" });
     }
+    const expected = action === "play" ? true : action === "pause" ? false : action === "toggle" ? !target.playing : null;
+    if (expected !== null) await settlePlaying(target.player, expected);
   }
 
   async function ensureTempDir() {

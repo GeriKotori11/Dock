@@ -425,15 +425,19 @@ export async function createApp({
 
   let mediaCache = null;
   let mediaInflight = null;
+  // Bumped by every media command: a read that started before it may carry the
+  // old state and must not become the cached answer (it caused a play/pause flicker).
+  let mediaGeneration = 0;
   const mediaAvailable = () => Boolean(features.media) && typeof provider.media === "function";
   function readMedia({ fresh = false } = {}) {
     if (!fresh && mediaCache && Date.now() - mediaCache.at < mediaCacheMs) return Promise.resolve(mediaCache.value);
     if (!fresh && mediaInflight) return mediaInflight;
+    const generation = mediaGeneration;
     const pending = Promise.resolve()
       .then(() => provider.media())
       .then((raw) => {
         const value = normalizeMediaState(raw, Date.now());
-        mediaCache = { at: Date.now(), value };
+        if (generation === mediaGeneration) mediaCache = { at: Date.now(), value };
         return value;
       })
       .finally(() => {
@@ -1046,6 +1050,8 @@ export async function createApp({
           return;
         }
         await provider.control(checked.verb, checked.value);
+        // Transport through the old verbs changes media too: drop the cached state.
+        if (checked.verb.startsWith("media-")) { mediaGeneration += 1; mediaCache = null; mediaInflight = null; }
         return sendJson(res, 200, { ok: true, verb: checked.verb });
       }
 
@@ -1086,7 +1092,9 @@ export async function createApp({
           if (typeof provider.mediaCommand !== "function") return sendJson(res, 501, { error: "action unavailable" });
           await provider.mediaCommand(checked.action, checked.value, checked.sessionId);
         }
+        mediaGeneration += 1;
         mediaCache = null;
+        mediaInflight = null;
         const media = await readMedia({ fresh: true }).catch(() => null);
         return sendJson(res, 200, media ?? normalizeMediaState(null));
       }
