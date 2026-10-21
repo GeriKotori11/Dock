@@ -327,3 +327,8 @@ Open items carried forward:
 - Scanning the QR with a real phone camera.
 - The Mac app as the user's everyday host.
 - Anything on Windows.
+
+### 2026-10-21: real-device results reported by the user
+- macOS host + real Android phone (Galaxy A40): the update kept the existing pairing and opened straight into the dock.
+- macOS host + real iPhone: the user signed it with their Personal Team, installed it from Xcode, and reports it "worked ok". The detailed checklist results were not recorded.
+- Still never run: the Windows host with any phone.
