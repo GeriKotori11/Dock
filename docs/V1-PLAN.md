@@ -345,3 +345,33 @@ Open follow-ups:
 - The Windows tray "Check for updates" still points at upstream releases (`native/tray/UpdateChecker.cs`). Disable it or repoint it before using Windows.
 - Phone copy for Windows hosts that predate the control page still mentions the removed "Show connection info" tray item.
 - The Windows host has not been run on Windows.
+
+### 2026-10-21: dock controls (close, media, power, Spotify local), built
+- **Design:** `docs/design/DOCK-CONTROLS.md`. User decisions:
+  - only shut down asks for confirmation, and Restart sits inside that dialog;
+  - a pinned Sleep tile needs two taps;
+  - × closes every window of an app;
+  - the mini player is on by default;
+  - Spotify is local control now, account features later.
+- **Host:**
+  - capability map;
+  - running list refreshed every 3 s;
+  - close by app;
+  - `/api/media` with an artwork proxy;
+  - `/api/volume`;
+  - macOS permission routes;
+  - power commands reply before they run;
+  - lock is no longer counted as destructive.
+- **macOS:** Spotify and Music through AppleScript (a player is never launched), volume, sleep, lock, restart, shut down, and lock state.
+- **Windows:** the helper gains media sessions, artwork, timeline, shuffle/repeat, mute, close-all-windows and lock state. Compile-checked only.
+- **Dock UI:**
+  - × with two-tap arming;
+  - mini player and media sheet;
+  - drawer Media button and power group;
+  - shut-down dialog;
+  - asleep, off, restarting and locked pills.
+- **Verification:**
+  - `npm test` passes 25/25.
+  - The user reports it works on their real setup: Mac host, phone dock.
+  - Windows has not been run.
+- **Later:** Spotify account (Phase B, design §12); Wake-on-LAN.
