@@ -277,8 +277,16 @@ it. Example (148 bytes, version 8):
 | PUT | `/api/tiles` | `{ tiles: [...] }` | Saved (sanitised) tiles; broadcasts a snapshot | 400 / 413 |
 | POST | `/api/apps/launch` | `{ id }` | `{ ok: true, id }` | 404 `unknown app` (after one rescan), 502 `launch failed` (native detail stays on the host) |
 | POST | `/api/apps/focus`, `/api/apps/close` | `{ pid }` | `{ ok: true, pid }` | 400 bad pid, 404 `process not running` |
-| POST | `/api/control` | `{ verb, value? }` | `{ ok: true, verb }` | 400 unknown verb / bad value, 403 `power actions disabled`, 501 `controls unavailable`, 503 with an actionable message |
-| GET | `/api/nowplaying` | — | `{ nowPlaying: {...} \| null }` (null when the host lacks the feature) | |
+| POST | `/api/apps/close` | `{ id }` | `{ ok: true, id, requested, closed, stillOpen: [{ pid, title }] }` after up to 5 s; broadcasts a snapshot | 400 bad id, 403 `not closable`, 404 `not running`, 501 `close unavailable` |
+| POST | `/api/control` | `{ verb, value? }` | `{ ok: true, verb }`; sleep/restart/shutdown reply `{ ok: true, verb, expectDisconnect: true }` first and run 500 ms later | 400 unknown verb / bad value, 403 `power actions disabled` (sleep, restart, shutdown only), 409 `permission needed` (below), 501 `controls unavailable` / `control unavailable`, 503 with an actionable message |
+| GET | `/api/nowplaying` | — | `{ nowPlaying: {...} \| null }` (null when the host lacks the feature; derived from `/api/media` when the host has media) | |
+| GET | `/api/media` | — | Media state (below) | 501 `media unavailable`, 503 |
+| POST | `/api/media` | `{ action, value?, sessionId? }` | The new media state | 400 bad action/value, 404 `no media session` / `player not installed`, 409 `permission needed`, 501 `action unavailable` |
+| GET | `/api/media/artwork` | `?key=<32 hex>` | JPEG or PNG, at most 512 px, `cache-control: private, max-age=86400, immutable` | 400 `invalid key`, 404 `no artwork`, 501 `artwork unavailable` |
+| GET | `/api/volume` | — | `{ level: 0..100 \| null, muted: bool \| null }` | 501 `volume unavailable` |
+| POST | `/api/volume` | `{ level?, muted? }` (at least one) | The new `{ level, muted }` | 400, 501 `volume unavailable` / `mute unavailable` |
+| POST | `/api/permissions/request` | `{ scope: "spotify" \| "music" \| "system-events" }`, JSON | `{ scope, status: "granted" \| "needed" \| "denied" }` when answered or after 60 s (`needed`); broadcasts when the capability map changed | 400 `unknown scope`, 409 `not running` (a player is never launched to ask), 415, 501 `permissions unavailable` |
+| POST | `/api/permissions/open-settings` | `{ scope }`, JSON | `{ ok: true, scope }`; opens System Settings › Privacy & Security › Automation on the Mac | 400, 415, 501 |
 | GET | `/api/stats` | — | CPU, memory, battery (fields may be missing) | |
 | GET | `/api/capture` | — | `{ available, phase, … }` | |
 | POST | `/api/capture/screenshot`, `/start`, `/stop` | `{}` | Capture status | 400 options given, 501 not on this host, 503 |
@@ -287,6 +295,61 @@ it. Example (148 bytes, version 8):
 
 Unknown `/api/*` routes are 404 `{ "error": "not found" }`; unexpected failures
 are 500 `{ "error": "internal error" }` with no detail.
+
+### Dock controls (DOCK-CONTROLS.md section 8)
+
+**Close by app.** `{ id }` politely closes every running instance with that
+app id (Windows: the helper's `close <pid>` per process; macOS: `terminate` per
+app), then polls up to 5 s. A 404 means it was already gone, which the dock
+treats as success. `closable: false` entries (File Explorer / the Windows shell,
+Finder, WinDock's own processes, shell hosts) are refused with 403.
+
+**Media state** (`GET /api/media`, and the reply to `POST /api/media`):
+
+```jsonc
+{
+  "source": { "id": "spotify", "name": "Spotify", "appId": "com.spotify.client", "sessionId": null } | null,
+  "title": "Houdini", "artist": "Dua Lipa", "album": "Radical Optimism",
+  "playing": true, "positionMs": 72000, "durationMs": 185000, "updatedAt": 1761043200000,
+  "artwork": "/api/media/artwork?key=9f2c…" | null,
+  "controls": { "previous": true, "next": true, "playPause": true, "seek": true, "shuffle": true, "repeat": true },
+  "shuffle": true, "repeat": "off" | "all" | "one" | null,
+  "repeatModes": ["off", "all"],          // additive: the repeat values this source accepts (Spotify has no "one")
+  "sessions": [],                         // Windows session list (empty until the helper reports sessions)
+  "permission": { "player": "spotify", "status": "needed" } | null
+}
+```
+
+`source: null` means nothing plays; `permission` is set only then, when a
+running player has not been allowed yet. The phone interpolates `positionMs`
+from `updatedAt`. Actions: `play | pause | toggle | next | previous | seek`
+(integer ms) `| shuffle` (bool) `| repeat` (`off`/`all`/`one`) `| select`
+(sessionId; 501 until the host lists sessions) `| open` (a player id from
+`features.media.players`; the host launches the installed app). A `409` body is
+`{ "error": "permission needed", "player": "spotify", "status": "needed" | "denied" }`.
+Reads are shared for 750 ms, so several polling phones cost one read.
+
+**Artwork** never comes from the internet on the phone: the host mints a key
+per track, fetches Spotify's `https://i.scdn.co/…` image itself (that host
+only, no redirects, 2 MB cap) or extracts Music's artwork, resizes anything
+over 512 px (macOS `sips`), and caches by key.
+
+**Power.** Lock is not a destructive verb: it works with `allowDestructive`
+false. On a Mac, restart and shut down go through System Events and need a
+one-time Automation permission: until granted the host answers
+`409 { "error": "permission needed", "scope": "system-events", "status": "needed" }`
+and still runs the action, so macOS shows its prompt and OK there carries it
+out; with `"status": "denied"` nothing runs (the phone offers
+`/api/permissions/open-settings`). macOS sleep is `pmset sleepnow`; lock is
+`SACLockScreenImmediate` (login.framework, no admin or Accessibility needed),
+falling back to `pmset displaysleepnow`, which locks only when "Require
+password" is set to immediately.
+
+**Permissions (macOS).** Reading media never prompts: each player script checks
+that the player is running and asks the system, without prompting
+(`AEDeterminePermissionToAutomateTarget`), whether it may send it Apple events.
+Only `/api/permissions/request` shows the prompt. macOS attributes the prompt to
+the app that started the host (WinDock, or Terminal when run by hand).
 
 ## WebSockets
 
@@ -306,17 +369,49 @@ Snapshot message:
   "platform": "windows",
   "platformName": "Windows",
   "hostName": "DESKTOP-1",
-  "features": { "controls": true, "nowPlaying": true, "capture": true, "input": true },
+  "features": {
+    "controls": true, "nowPlaying": true, "capture": true, "input": true,
+    "close": true,
+    "media": { "sources": "system", "players": [], "artwork": false, "sessions": false },
+    "volume": { "get": true, "set": true, "mute": false },
+    "power": { "lock": "ready", "sleep": "ready", "restart": "ready", "shutdown": "ready" },
+    "spotify": { "installed": false, "local": { "nowPlaying": true, "transport": true, "artwork": false, "seek": false, "shuffle": false, "repeat": false }, "account": { "available": false } }
+  },
+  "session": { "locked": false },
   "tiles": [{ "kind": "app", "id": "…", "label": "…", "running": false, "available": true }],
-  "running": [{ "id": "…", "pid": 4812, "title": "…" }],
+  "running": [{ "id": "…", "pid": 4812, "title": "…", "closable": true }],
   "verbs": ["volume-up", "…"],
   "allowDestructive": true
 }
 ```
 
 `features` says what the host offers; a missing `features` (older host) means
-everything is on. `verbs` is empty when `controls` is false. Control tiles carry
-`available: features.controls`.
+everything is on. `verbs` is empty when `controls` is false, and lists only the
+verbs this host maps (a Mac has no `brightness-set`). Control tiles carry
+`available: features.controls && verbs.includes(verb)`.
+
+The four legacy booleans keep "missing means on". Every newer key is
+**missing means not offered**:
+
+| Key | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| `close` | true | true | omitted |
+| `media.sources` | `"system"` (any app, via the system media session) | `"apps"` (Spotify and Music) | omitted |
+| `media.players` | Spotify, when installed (`permission: "not-required"`) | Spotify and Music, when installed, with `running` and `permission` (`granted`/`needed`/`denied`) | — |
+| `media.artwork`, `media.sessions` | false, false (until the helper reports thumbnails and sessions) | true, false | — |
+| `volume` | get, set; `mute: false` (the helper cannot read mute yet) | get, set, mute | omitted |
+| `power` | all `ready` | lock, sleep `ready`; restart, shutdown `needs-permission` until System Events is allowed, then `ready` (or `denied`) | omitted |
+| `spotify` | `installed` from the catalog; `local` nowPlaying + transport | `installed`; `local` all true | omitted |
+| `spotify.account` | `{ available: false }` (Phase B) | same | — |
+
+`session` is live: `{ locked }` where the host can tell (macOS, from
+`CGSessionCopyCurrentDictionary`); omitted otherwise. Each `running[]` entry
+carries `closable`.
+
+While at least one dock socket is open the host polls running apps every 3 s
+(one poll at a time) and broadcasts a snapshot when the set of `(id, pid)`
+pairs, the capability map or `session` changes; window-title changes alone do
+not broadcast. The poll stops when the last dock disconnects.
 
 ## Versioning
 

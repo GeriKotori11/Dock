@@ -14,7 +14,20 @@ import { readFileSync } from "node:fs";
 import { isIPv4 } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { createProvider } from "./src/platform/index.js";
-import { validateControl, isDestructiveVerb, CONTROL_VERBS, featuresOf } from "./src/platform/contract.js";
+import {
+  validateControl,
+  isDestructiveVerb,
+  featuresOf,
+  controlVerbsOf,
+  DEFERRED_POWER_VERBS,
+  PERMISSION_SCOPES,
+  validArtworkKey,
+  validateMediaCommand,
+  validateVolume,
+  normalizeMediaState,
+  nowPlayingFromMedia,
+} from "./src/platform/contract.js";
+import { imageInfo, ARTWORK_MAX_BYTES } from "./src/platform/artwork.js";
 import { createConfigStore, defaultDataDir } from "./src/config.js";
 import { loadHostIdentity } from "./src/identity.js";
 import { createSyncHub } from "./src/sync.js";
@@ -59,6 +72,16 @@ export const EVENTS_HEARTBEAT_MS = 15_000;
 export const EVENTS_CHECK_MS = 2_000;
 /** How often start() re-reads the LAN address. */
 export const ADDRESS_CHECK_MS = 5_000;
+/** Running-apps poll while at least one dock is connected (DOCK-CONTROLS 8.1). */
+export const RUNNING_POLL_MS = 3_000;
+/** Delay between acknowledging sleep/restart/shutdown and running it (8.6). */
+export const POWER_DELAY_MS = 500;
+/** How long a close-by-app request waits for the app to exit (8.2). */
+export const CLOSE_WAIT_MS = 5_000;
+export const CLOSE_POLL_MS = 250;
+/** Media reads are shared for this long, so several polling phones cost one read. */
+export const MEDIA_CACHE_MS = 750;
+const ARTWORK_CACHE_ENTRIES = 24;
 
 /**
  * Headers for the host page and every /api/host/* response (section 13.4 of
@@ -230,6 +253,14 @@ export async function createApp({
   interfaces = () => networkInterfaces(),
   eventsHeartbeatMs = EVENTS_HEARTBEAT_MS,
   eventsCheckMs = EVENTS_CHECK_MS,
+  // Dock controls; all injectable so the oracles can drive time.
+  runningPollMs = RUNNING_POLL_MS,
+  powerDelayMs = POWER_DELAY_MS,
+  closeWaitMs = CLOSE_WAIT_MS,
+  closePollMs = CLOSE_POLL_MS,
+  mediaCacheMs = MEDIA_CACHE_MS,
+  timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) },
+  log = (line) => process.stderr.write(`${line}\n`),
 } = {}) {
   // `endpoint` is the LAN URL the host advertises and `secureEndpoint` its
   // https form; start() fills them in once the listening port is known.
@@ -247,7 +278,10 @@ export async function createApp({
   const discoveryState = { bonjour: "off", udp: "off" };
   const shellName = typeof shell === "string" && /^[a-z0-9-]{1,32}$/.test(shell) ? shell : null;
   const appIcon = createIconCache(provider);
-  const features = featuresOf(provider);
+  // Static until the first snapshot; dockState() refreshes the live part
+  // (players, permissions) from the provider's featureState().
+  let features = featuresOf(provider);
+  const controlVerbs = Object.freeze(controlVerbsOf(provider));
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
   // successful scan; `scanning` is the single in-flight scan, so concurrent
   // callers share it and scans never overlap. A failed scan keeps the old list.
@@ -271,29 +305,217 @@ export async function createApp({
     return catalog.apps;
   }
 
-  async function dockState() {
+  /** Running apps, each with `closable` (false unless the host offers close). */
+  function withClosable(running) {
+    return running.map((entry) => ({
+      ...entry,
+      closable: features.close === true && entry.closable !== false && entry.pid !== process.pid,
+    }));
+  }
+
+  async function dockState({ refreshCatalog = true } = {}) {
     // Never wait on a catalog scan here: kick one off (or a stale refresh) and
-    // treat tiles as available until a successful scan says otherwise.
-    installedApps().catch(() => {});
-    const [config, running] = await Promise.all([
+    // treat tiles as available until a successful scan says otherwise. The
+    // running poll skips this, so a connected dock does not rescan every minute.
+    if (refreshCatalog) installedApps().catch(() => {});
+    const [config, listed] = await Promise.all([
       configStore.load(),
       provider.listRunningApps().catch(() => []),
     ]);
+    const [live, session] = await Promise.all([
+      typeof provider.featureState === "function"
+        ? provider.featureState({ installed: catalog?.apps ?? null, running: listed }).catch(() => undefined)
+        : undefined,
+      typeof provider.sessionState === "function" ? provider.sessionState().catch(() => null) : null,
+    ]);
+    if (live !== undefined) features = featuresOf(provider, live || {});
+    const running = withClosable(listed);
     const runningIds = new Set(running.map((r) => r.id));
+    const verbs = features.controls ? controlVerbs : [];
     return {
       platform: provider.id,
       platformName: provider.displayName,
       hostName: hostname(),
       features,
+      ...(typeof session?.locked === "boolean" ? { session: { locked: session.locked } } : {}),
       tiles: config.tiles.map((tile) =>
         tile.kind === "app"
           ? { ...tile, running: runningIds.has(tile.id), available: catalog ? catalog.ids.has(tile.id) : true }
-          : { ...tile, available: features.controls },
+          : { ...tile, available: features.controls && verbs.includes(tile.verb) },
       ),
       running,
-      verbs: features.controls ? CONTROL_VERBS : [],
+      verbs,
       allowDestructive,
     };
+  }
+
+  // ---- dock sync: what the docks were last sent, and the running poll ----
+
+  /** What a change worth broadcasting looks like: running (id, pid), features, session. */
+  function dockSignature(snapshot) {
+    return JSON.stringify([
+      snapshot.running.map((r) => `${r.id}\u0000${r.pid}\u0000${r.closable}`).sort(),
+      snapshot.features,
+      snapshot.session ?? null,
+    ]);
+  }
+  let lastSentSignature = null;
+  /** Snapshot for a newly connected dock. If it differs from what the others hold, they get it too. */
+  async function snapshotForConnect() {
+    const snapshot = await dockState();
+    const signature = dockSignature(snapshot);
+    const stale = lastSentSignature !== null && signature !== lastSentSignature;
+    lastSentSignature = signature;
+    if (stale && hub.clientCount > 1) setImmediate(() => hub.broadcast(snapshot).catch(() => {}));
+    return snapshot;
+  }
+  async function broadcastState(snapshot) {
+    if (hub.clientCount === 0) return 0;
+    const state = snapshot ?? await dockState();
+    lastSentSignature = dockSignature(state);
+    return hub.broadcast(state);
+  }
+  /** Broadcast only when something a dock shows has changed. */
+  async function broadcastIfChanged() {
+    if (hub.clientCount === 0) return 0;
+    const state = await dockState({ refreshCatalog: false });
+    return dockSignature(state) === lastSentSignature ? 0 : broadcastState(state);
+  }
+
+  let pollOn = false;
+  let pollBusy = false;
+  let pollTimer = null;
+  function stopPolling() {
+    pollOn = false;
+    if (pollTimer) timers.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  function schedulePoll() {
+    if (!pollOn || pollTimer || pollBusy) return;
+    pollTimer = timers.setTimeout(pollOnce, runningPollMs);
+    pollTimer?.unref?.();
+  }
+  /** One poll at a time: the next is scheduled only after this one finished. */
+  async function pollOnce() {
+    pollTimer = null;
+    if (!pollOn || hub.clientCount === 0) return stopPolling();
+    pollBusy = true;
+    try {
+      await broadcastIfChanged();
+    } catch {
+      /* the next tick tries again */
+    } finally {
+      pollBusy = false;
+      schedulePoll();
+    }
+  }
+  /** Poll running apps while at least one dock socket is open. */
+  function syncPolling() {
+    if (hub.clientCount > 0) {
+      if (!pollOn) {
+        pollOn = true;
+        schedulePoll();
+      }
+    } else {
+      stopPolling();
+    }
+  }
+
+  // ---- media: shared reads and the artwork cache ----
+
+  let mediaCache = null;
+  let mediaInflight = null;
+  const mediaAvailable = () => Boolean(features.media) && typeof provider.media === "function";
+  function readMedia({ fresh = false } = {}) {
+    if (!fresh && mediaCache && Date.now() - mediaCache.at < mediaCacheMs) return Promise.resolve(mediaCache.value);
+    if (!fresh && mediaInflight) return mediaInflight;
+    const pending = Promise.resolve()
+      .then(() => provider.media())
+      .then((raw) => {
+        const value = normalizeMediaState(raw, Date.now());
+        mediaCache = { at: Date.now(), value };
+        return value;
+      })
+      .finally(() => {
+        if (mediaInflight === pending) mediaInflight = null;
+      });
+    mediaInflight = pending;
+    return pending;
+  }
+  const artworkCache = new Map(); // key -> { mime, bytes }, oldest first
+  const artworkInflight = new Map();
+  function artworkFor(key) {
+    const hit = artworkCache.get(key);
+    if (hit) {
+      artworkCache.delete(key);
+      artworkCache.set(key, hit);
+      return Promise.resolve(hit);
+    }
+    if (artworkInflight.has(key)) return artworkInflight.get(key);
+    const pending = Promise.resolve()
+      .then(() => provider.mediaArtwork(key))
+      .then((art) => {
+        const bytes = Buffer.isBuffer(art?.bytes) ? art.bytes : null;
+        const info = bytes && bytes.length <= ARTWORK_MAX_BYTES ? imageInfo(bytes) : null;
+        if (!info) return null;
+        const value = { mime: info.mime, bytes };
+        artworkCache.set(key, value);
+        while (artworkCache.size > ARTWORK_CACHE_ENTRIES) artworkCache.delete(artworkCache.keys().next().value);
+        return value;
+      })
+      .catch(() => null)
+      .finally(() => artworkInflight.delete(key));
+    artworkInflight.set(key, pending);
+    return pending;
+  }
+
+  const permissionRequests = new Map(); // scope -> pending request
+
+  const sleepMs = (ms) => new Promise((resolve) => { timers.setTimeout(resolve, ms); });
+  /** POST /api/apps/close { id }: every instance, politely, then wait for the exits. */
+  async function closeAppById(res, id) {
+    if (!features.close) return sendJson(res, 501, { error: "close unavailable" });
+    if (typeof id !== "string" || !id || id.length > 2048) return sendJson(res, 400, { error: "id must be a non-empty string" });
+    const matches = withClosable(await provider.listRunningApps()).filter((r) => r.id === id);
+    if (!matches.length) return sendJson(res, 404, { error: "not running" });
+    if (matches.some((r) => !r.closable)) return sendJson(res, 403, { error: "not closable" });
+    for (const entry of matches) {
+      try {
+        await provider.closeApp(entry);
+      } catch {
+        /* counted by the exit check below */
+      }
+    }
+    let still = matches;
+    for (let waited = 0; still.length && waited < closeWaitMs; waited += closePollMs) {
+      await sleepMs(closePollMs);
+      const now = await provider.listRunningApps().catch(() => null);
+      if (now) {
+        const pids = new Set(now.map((r) => r.pid));
+        still = still.filter((r) => pids.has(r.pid));
+      }
+    }
+    await broadcastState().catch(() => {});
+    return sendJson(res, 200, {
+      ok: true,
+      id,
+      requested: matches.length,
+      closed: matches.length - still.length,
+      stillOpen: still.map((r) => ({ pid: r.pid, title: r.title || r.name || "" })),
+    });
+  }
+
+  /** Run a deferred power verb; failures stay on the host (the phone already has its answer). */
+  function runPowerLater(verb) {
+    const t = timers.setTimeout(() => {
+      Promise.resolve()
+        .then(() => provider.control(verb, null))
+        .catch((err) => {
+          log(`WinDock: ${verb} did not run (${err?.body?.error || err?.message || "error"})`);
+          broadcastIfChanged().catch(() => {});
+        });
+    }, powerDelayMs);
+    return t;
   }
 
   // ---- host control page: status, pairing body, live events ----
@@ -754,7 +976,7 @@ export async function createApp({
       if (path === "/api/tiles" && req.method === "PUT") {
         const body = await readJsonBody(req);
         const saved = await configStore.save({ tiles: body.tiles });
-        await hub.broadcast();
+        await broadcastState();
         return sendJson(res, 200, saved);
       }
 
@@ -774,12 +996,14 @@ export async function createApp({
           // Native error text stays on the host.
           return sendJson(res, 502, { error: "launch failed" });
         }
-        await hub.broadcast();
+        await broadcastState();
         return sendJson(res, 200, { ok: true, id: app.id });
       }
 
       if ((path === "/api/apps/focus" || path === "/api/apps/close") && req.method === "POST") {
         const body = await readJsonBody(req);
+        // Close by app id: every instance, with the outcome (DOCK-CONTROLS 8.2).
+        if (path === "/api/apps/close" && body.id !== undefined) return await closeAppById(res, body.id);
         const pid = Number(body.pid);
         if (!Number.isInteger(pid) || pid <= 0) {
           return sendJson(res, 400, { error: "pid must be a positive integer" });
@@ -789,7 +1013,7 @@ export async function createApp({
         if (!match) return sendJson(res, 404, { error: "process not running" });
         if (path.endsWith("focus")) await provider.focusApp(match);
         else await provider.closeApp(match);
-        await hub.broadcast();
+        await broadcastState();
         return sendJson(res, 200, { ok: true, pid });
       }
 
@@ -798,8 +1022,28 @@ export async function createApp({
         const checked = validateControl(body.verb, body.value ?? null);
         if (!features.controls) return sendJson(res, 501, { error: "controls unavailable" });
         if (!checked.ok) return sendJson(res, 400, { error: checked.error });
+        if (!controlVerbs.includes(checked.verb)) return sendJson(res, 501, { error: "control unavailable" });
         if (isDestructiveVerb(checked.verb) && !allowDestructive) {
           return sendJson(res, 403, { error: "power actions disabled" });
+        }
+        if (DEFERRED_POWER_VERBS.includes(checked.verb)) {
+          // Ask before acknowledging: a Mac may still need the one-time
+          // System Events permission (DOCK-CONTROLS 5.6, 8.6).
+          const status = typeof provider.powerStatus === "function"
+            ? await provider.powerStatus(checked.verb).catch(() => "ready")
+            : "ready";
+          if (status !== "ready") {
+            const denied = status === "denied";
+            // Needs permission: run it anyway, which shows the computer's own
+            // prompt; OK there carries the action out at once.
+            if (!denied) runPowerLater(checked.verb);
+            broadcastIfChanged().catch(() => {});
+            return sendJson(res, 409, { error: "permission needed", scope: "system-events", status: denied ? "denied" : "needed" });
+          }
+          // Reply first, act after a beat, so the phone gets its answer.
+          sendJson(res, 200, { ok: true, verb: checked.verb, expectDisconnect: true });
+          runPowerLater(checked.verb);
+          return;
         }
         await provider.control(checked.verb, checked.value);
         return sendJson(res, 200, { ok: true, verb: checked.verb });
@@ -807,7 +1051,103 @@ export async function createApp({
 
       if (path === "/api/nowplaying" && req.method === "GET") {
         if (!features.nowPlaying) return sendJson(res, 200, { nowPlaying: null });
+        if (mediaAvailable()) {
+          return sendJson(res, 200, { nowPlaying: nowPlayingFromMedia(await readMedia().catch(() => null)) });
+        }
         return sendJson(res, 200, { nowPlaying: await provider.nowPlaying().catch(() => null) });
+      }
+
+      if (path === "/api/media" && req.method === "GET") {
+        if (!mediaAvailable()) return sendJson(res, 501, { error: "media unavailable" });
+        const media = await readMedia().catch(() => null);
+        if (!media) return sendJson(res, 503, { error: "media unavailable" });
+        return sendJson(res, 200, media);
+      }
+      if (path === "/api/media" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        if (!mediaAvailable()) return sendJson(res, 501, { error: "media unavailable" });
+        const checked = validateMediaCommand(body);
+        if (!checked.ok) return sendJson(res, 400, { error: checked.error });
+        if (checked.action === "open") {
+          // The host opens a known, installed player itself (never a URL).
+          const player = features.media.players.find((p) => p.id === checked.value);
+          const app = player?.installed && player.appId
+            ? (await installedApps()).find((a) => a.id === player.appId)
+            : null;
+          if (!app) return sendJson(res, 404, { error: "player not installed" });
+          try {
+            await provider.launchApp(app);
+          } catch (err) {
+            if (err?.status) throw err;
+            return sendJson(res, 502, { error: "launch failed" });
+          }
+        } else {
+          if (checked.action === "select" && !features.media.sessions) return sendJson(res, 501, { error: "action unavailable" });
+          if (typeof provider.mediaCommand !== "function") return sendJson(res, 501, { error: "action unavailable" });
+          await provider.mediaCommand(checked.action, checked.value, checked.sessionId);
+        }
+        mediaCache = null;
+        const media = await readMedia({ fresh: true }).catch(() => null);
+        return sendJson(res, 200, media ?? normalizeMediaState(null));
+      }
+      if (path === "/api/media/artwork" && req.method === "GET") {
+        const key = url.searchParams.get("key");
+        if (!validArtworkKey(key)) return sendJson(res, 400, { error: "invalid key" });
+        if (!features.media?.artwork || typeof provider.mediaArtwork !== "function") {
+          return sendJson(res, 501, { error: "artwork unavailable" });
+        }
+        const art = await artworkFor(key);
+        if (!art) return sendJson(res, 404, { error: "no artwork" });
+        res.writeHead(200, {
+          "content-type": art.mime,
+          "content-length": art.bytes.length,
+          // A key names one track's image, so it never changes.
+          "cache-control": "private, max-age=86400, immutable",
+          "x-content-type-options": "nosniff",
+        });
+        return res.end(art.bytes);
+      }
+
+      if (path === "/api/volume" && req.method === "GET") {
+        if (!features.volume?.get || typeof provider.volume !== "function") return sendJson(res, 501, { error: "volume unavailable" });
+        const v = await provider.volume();
+        return sendJson(res, 200, { level: Number.isInteger(v?.level) ? v.level : null, muted: typeof v?.muted === "boolean" ? v.muted : null });
+      }
+      if (path === "/api/volume" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        if (!features.volume || typeof provider.setVolume !== "function") return sendJson(res, 501, { error: "volume unavailable" });
+        const checked = validateVolume(body);
+        if (!checked.ok) return sendJson(res, 400, { error: checked.error });
+        if (checked.level !== undefined && !features.volume.set) return sendJson(res, 501, { error: "volume unavailable" });
+        if (checked.muted !== undefined && !features.volume.mute) return sendJson(res, 501, { error: "mute unavailable" });
+        const v = await provider.setVolume({ level: checked.level, muted: checked.muted });
+        return sendJson(res, 200, { level: Number.isInteger(v?.level) ? v.level : null, muted: typeof v?.muted === "boolean" ? v.muted : null });
+      }
+
+      if ((path === "/api/permissions/request" || path === "/api/permissions/open-settings") && req.method === "POST") {
+        // These act on the computer (a prompt, System Settings): JSON only,
+        // which a cross-site page cannot send without a refused preflight.
+        if (!isJsonRequest(req)) return sendJson(res, 415, { error: "content-type must be application/json" });
+        const body = await readJsonBody(req);
+        if (!PERMISSION_SCOPES.includes(body.scope)) return sendJson(res, 400, { error: "unknown scope" });
+        if (path.endsWith("/open-settings")) {
+          if (typeof provider.openPermissionSettings !== "function") return sendJson(res, 501, { error: "permissions unavailable" });
+          await provider.openPermissionSettings(body.scope);
+          return sendJson(res, 200, { ok: true, scope: body.scope });
+        }
+        if (typeof provider.requestPermission !== "function") return sendJson(res, 501, { error: "permissions unavailable" });
+        let pending = permissionRequests.get(body.scope);
+        if (!pending) {
+          pending = Promise.resolve()
+            .then(() => provider.requestPermission(body.scope))
+            .finally(() => permissionRequests.delete(body.scope));
+          permissionRequests.set(body.scope, pending);
+        }
+        const status = await pending;
+        mediaCache = null;
+        await broadcastIfChanged().catch(() => {});
+        if (status === "not-running") return sendJson(res, 409, { error: "not running", scope: body.scope });
+        return sendJson(res, 200, { scope: body.scope, status: ["granted", "needed", "denied"].includes(status) ? status : "needed" });
       }
 
       if (path === "/api/capture" && req.method === "GET") {
@@ -837,6 +1177,9 @@ export async function createApp({
       return sendJson(res, 404, { error: "not found" });
     } catch (err) {
       const status = err?.status || 500;
+      // A provider's hostError carries the exact body (e.g. 409 permission needed).
+      if (err?.body && status !== 500 && !res.headersSent) return sendJson(res, status, err.body);
+      if (res.headersSent) return;
       sendJson(res, status, { error: status === 500 ? "internal error" : err.message });
     }
   };
@@ -860,12 +1203,13 @@ export async function createApp({
     servers,
     isAuthorized: (req) => authorizeSocket(req).ok,
     sessionOf,
-    getState: dockState,
+    getState: snapshotForConnect,
     onSessionsChange: devicesChanged,
+    onClientsChange: () => syncPolling(),
   });
 
   const inputHub = createInputHub({ servers, input: provider.input, isAuthorized: (req) => authorizeSocket(req).ok, sessionOf });
-  server.on("close", () => { provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
+  server.on("close", () => { stopPolling(); provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
   // Event streams never go idle, so closing a server ends them first;
   // otherwise close() would wait for them forever.
   for (const target of new Set([server, secureServer, listener].filter(Boolean))) {
@@ -878,6 +1222,9 @@ export async function createApp({
   return {
     server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, pairing, sessions, lockout, identity,
     hostStatus, pairingBody, discoveryState, notifyChanged: changed, endEvents,
+    get features() { return features; },
+    broadcastIfChanged,
+    get polling() { return pollOn; },
   };
 }
 

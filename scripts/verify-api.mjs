@@ -127,8 +127,9 @@ t.equal(state.json.platform, "windows", "state names the provider");
 t.ok(Array.isArray(state.json.tiles), "state carries a tiles array");
 t.ok(Array.isArray(state.json.running), "state carries a running array");
 t.ok(Array.isArray(state.json.verbs), "state advertises the control verbs");
-t.deepEqual(state.json.features, { controls: true, nowPlaying: true, capture: true, input: true },
-  "the Windows provider keeps every feature");
+t.deepEqual({ ...state.json.features, close: undefined, media: undefined, volume: undefined, power: undefined, spotify: undefined },
+  { controls: true, nowPlaying: true, capture: true, input: true },
+  "the Windows provider keeps every legacy feature (dock-controls keys: verify-dock-controls)");
 t.equal(state.json.verbs.length, CONTROL_VERBS.length, "the Windows provider advertises every control verb");
 
 const installed = await call("/api/apps/installed");

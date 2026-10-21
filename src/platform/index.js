@@ -18,7 +18,12 @@ export const EXEC_MAX_BUFFER = 8 * 1024 * 1024;
 export const EXEC_TIMEOUT_MS = 20_000;
 
 export function createExec({ timeout = EXEC_TIMEOUT_MS, maxBuffer = EXEC_MAX_BUFFER } = {}) {
-  return function exec(file, args = []) {
+  /**
+   * `options.timeout` lets one call wait longer than the default (a consent
+   * prompt the person at the computer has to answer); nothing else is
+   * overridable, so `shell` stays false.
+   */
+  return function exec(file, args = [], options = {}) {
     if (typeof file !== "string" || !file) {
       return Promise.reject(new Error("exec requires a file"));
     }
@@ -29,7 +34,12 @@ export function createExec({ timeout = EXEC_TIMEOUT_MS, maxBuffer = EXEC_MAX_BUF
       execFile(
         file,
         args,
-        { timeout, maxBuffer, windowsHide: true, shell: false },
+        {
+          timeout: Number.isInteger(options?.timeout) && options.timeout > 0 ? options.timeout : timeout,
+          maxBuffer,
+          windowsHide: true,
+          shell: false,
+        },
         (err, stdout, stderr) => {
           if (err) {
             err.stdout = String(stdout ?? "");

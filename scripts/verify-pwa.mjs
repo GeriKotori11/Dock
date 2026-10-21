@@ -76,7 +76,7 @@ t.ok(html2.includes('data-key="mute-toggle"'), "control tiles carry their verb a
 t.ok(html2.includes('data-key="c:/a.exe"'), "app tiles carry their id as the key");
 t.equal((html2.match(/is-running/g) || []).length, 1, "only the running app is marked running");
 t.equal((html2.match(/aria-pressed="true"/g) || []).length, 1, "the running tile is exposed to assistive tech");
-t.ok(html2.includes('aria-label="Alpha"'), "tiles carry an accessible label");
+t.ok(html2.includes('aria-label="Alpha, running"') && html2.includes('aria-label="Beta"'), "tiles carry an accessible label that says when the app is running");
 
 // ---- escaping (the dock renders host-controlled app names) ----
 const XSS = '<img src=x onerror="alert(1)">';
@@ -110,10 +110,12 @@ t.ok(!/\.drawer-actions \{[^}]*repeat\(7/.test(css) && /\.drawer-actions \{[^}]*
 
 // ---- per-host features and platform-neutral copy ----
 t.ok(appJs.includes('state.features?.[name] !== false'), "a host without features is treated as fully featured");
-for (const [id, name] of [["drawer-controls", "controls"], ["tab-controls", "controls"], ["drawer-capture", "capture"], ["drawer-input", "input"]]) {
+t.ok(appJs.includes('const controls = feature("controls") && controlsSheetHtml() !== "";') && appJs.includes('$("drawer-controls").hidden = !controls;'), "#drawer-controls hides when the host lacks controls or the sheet would be empty");
+for (const [id, name] of [["tab-controls", "controls"], ["drawer-capture", "capture"], ["drawer-input", "input"]]) {
   t.ok(appJs.includes(`$("${id}").hidden = !feature("${name}")`), `#${id} hides when the host lacks ${name}`);
 }
-t.ok(appJs.includes('isActive: () => paired && online && !document.hidden && feature("nowPlaying")'), "now playing polls only when the host offers it");
+t.ok(appJs.includes("isActive: () => paired && online && !document.hidden && mediaWanted()"), "media polls only while paired, online, visible and wanted");
+t.ok(/function mediaWanted\(\) \{\n  if \(!mediaCaps\(caps\(\)\)\.available\) return false;/.test(appJs), "media polls only when the host offers media (or legacy now playing)");
 t.ok(appJs.includes('if (paired && !document.hidden && feature("capture")) refreshCapture()'), "capture polls only when the host offers it");
 t.ok(appJs.includes(`" isn't available on " + (state.hostName || "this computer") + " anymore. Hold to arrange, then remove it."`), "tapping an unavailable tile explains how to remove it");
 for (const text of [
@@ -125,7 +127,7 @@ for (const text of [
   "Finding apps on this computer…",
   '" on this computer"',
   '{ macos: "Mac", windows: "Windows" }[state.platform]',
-  "Your computer is disconnected. Waiting for it to reconnect.",
+  '" is disconnected. Waiting for it to reconnect."',
 ]) t.ok(appJs.includes(text), `app.js carries the copy: ${text}`);
 for (const old of ["Windows app", '" on your PC"', "this PC", "Your PC is disconnected"]) t.ok(!appJs.includes(old), `app.js no longer says "${old}"`);
 t.ok(html.includes("Enter the PIN shown by WinDock on your computer."), "the pair hint is platform neutral");
@@ -179,12 +181,12 @@ const pill = html.match(/<div id="reconnect"[^>]*>/)?.[0] || "";
 t.ok(pill.includes('role="status"') && pill.includes('aria-live="polite"'), "the reconnect pill is a polite live region");
 t.ok(pill.includes('data-visible="false"'), "the reconnect pill starts hidden");
 t.ok(html.indexOf('id="reconnect"') < html.indexOf('id="dock"') && html.includes('id="reconnect-text"'), "the pill sits at the top of the dock with its own text");
-t.ok(appJs.includes('"Reconnecting to " + displayName(readNative(), state.hostName, "your computer") + "…"'), "the pill names the computer (the phone's nickname inside a native shell)");
+t.ok(appJs.includes('const computerName = (fallback = "your computer") => displayName(readNative(), state.hostName, fallback);') && appJs.includes('pillContent(variant, variant === "reconnecting" ? name : sentenceName())'), "the pill names the computer (the phone's nickname inside a native shell)");
 t.ok(/offlineTimer = setTimeout\(\(\) => setOffline\(!online && paired\), 1500\)/.test(appJs), "the pill waits 1.5 s and rechecks before showing");
 t.ok(/function syncOffline\(\) \{\n  if \(online \|\| !paired\) return setOffline\(false\);/.test(appJs), "reconnecting or unpairing hides the pill at once");
 t.ok(/function setConn\(on\) \{[\s\S]*?syncOffline\(\);\n\}/.test(appJs), "every connection change updates the pill");
-t.ok(appJs.includes('$("dock").classList.toggle("is-offline", visible)'), "the dock dims with the pill");
-t.ok(appJs.includes('if (!online) return notify("Your computer is disconnected. Waiting for it to reconnect.", true);'), "tapping while offline keeps the toast");
+t.ok(appJs.includes('$("dock").classList.toggle("is-offline", Boolean(content?.dim));'), "the dock dims with the offline pills (not the locked one)");
+t.ok(appJs.includes("if (!online) return notify(offlineMessage(), true);") && appJs.includes('function offlineMessage() { return sentenceName() + " is disconnected. Waiting for it to reconnect."; }'), "tapping while offline keeps the toast, with the computer's name");
 t.ok(/\.dock\.is-offline \.dock-page \{ opacity: \.55; \}/.test(css) && /\.dock-page \{ transition: opacity \.2s; \}/.test(css), "offline pages dim to .55 over 200 ms");
 t.ok(/\.reconnect \{[^}]*var\(--glass-bg\)[^}]*var\(--glass-border\)/.test(css), "the pill uses the glass tokens");
 t.ok(/@media \(prefers-reduced-motion: reduce\) \{ \.reconnect__dot \{ animation: none; \} \}/.test(css), "the pill's dot does not pulse with reduced motion");

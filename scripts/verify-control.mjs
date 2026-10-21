@@ -58,8 +58,9 @@ for (const bad of ["reboot-now", "", "VOLUME-UP", "lock; rm -rf /", null, 42, {}
   t.throws(() => controlArgv(bad, null), `controlArgv throws for ${JSON.stringify(bad)}`);
 }
 
-t.deepEqual([...DESTRUCTIVE_VERBS], ["lock", "sleep", "shutdown", "restart"], "destructive set is exact");
+t.deepEqual([...DESTRUCTIVE_VERBS], ["sleep", "shutdown", "restart"], "destructive set is exact (lock is not destructive)");
 t.ok(isDestructiveVerb("shutdown"), "shutdown is destructive");
+t.ok(!isDestructiveVerb("lock"), "lock is not destructive");
 t.ok(!isDestructiveVerb("volume-up"), "volume-up is not destructive");
 
 // Providers must dispatch the mapped argv and nothing else.

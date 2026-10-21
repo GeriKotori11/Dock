@@ -48,8 +48,10 @@ export function originAllowed(req) {
  *   revoked session's sockets can be closed with disconnect()/disconnectAll().
  * @param {()=>void} [opts.onSessionsChange] called whenever a socket opened
  *   under a session connects or closes (the host page's "Connected now").
+ * @param {()=>void} [opts.onClientsChange] called whenever any dock socket
+ *   connects or closes, so the host can poll only while someone is watching.
  */
-export function createSyncHub({ server, servers = [server], isAuthorized, getState, sessionOf = () => null, heartbeatMs = HEARTBEAT_MS, onSessionsChange = () => {} }) {
+export function createSyncHub({ server, servers = [server], isAuthorized, getState, sessionOf = () => null, heartbeatMs = HEARTBEAT_MS, onSessionsChange = () => {}, onClientsChange = () => {} }) {
   const wss = new WebSocketServer({ noServer: true });
   const alive = new WeakMap();
   /** ws -> session hash, for sockets opened under a session. */
@@ -81,6 +83,9 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
     alive.set(ws, true);
     ws.on("pong", () => alive.set(ws, true));
     ws.on("error", () => {});
+    // ws removes a closed client from wss.clients before this listener runs.
+    ws.once("close", () => onClientsChange());
+    onClientsChange();
     try {
       ws.send(snapshotMessage(await getState()));
     } catch {
@@ -133,9 +138,10 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
     get clientCount() {
       return wss.clients.size;
     },
-    async broadcast() {
+    /** Send a snapshot to every client: `state` when given, else a fresh getState(). */
+    async broadcast(state) {
       if (wss.clients.size === 0) return 0;
-      const payload = snapshotMessage(await getState());
+      const payload = snapshotMessage(state ?? await getState());
       let sent = 0;
       for (const ws of wss.clients) {
         if (ws.readyState !== ws.OPEN) continue;

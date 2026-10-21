@@ -50,7 +50,15 @@ const registered = createProvider({ os: "darwin", exec: recorder().exec });
 t.deepEqual(contractViolations(registered), [], "macOS provider satisfies the contract");
 t.equal(registered.id, "macos", "provider id");
 t.equal(registered.displayName, "macOS", "provider display name");
-t.deepEqual(registered.features, { controls: false, nowPlaying: false }, "features declared");
+t.deepEqual(registered.features, {
+  controls: true,
+  nowPlaying: true,
+  close: true,
+  media: { sources: "apps", artwork: true, sessions: false },
+  volume: { get: true, set: true, mute: true },
+  power: { lock: "ready", sleep: "ready", restart: "needs-permission", shutdown: "needs-permission" },
+  spotify: { local: { nowPlaying: true, transport: true, artwork: true, seek: true, shuffle: true, repeat: true } },
+}, "features declared (dock controls on macOS)");
 t.ok(Object.isFrozen(registered.features), "features is frozen");
 t.equal(registered.control.length, 2, "control keeps arity 2");
 t.throws(() => createMacProvider({ exec: null }), "provider without exec throws");
@@ -236,13 +244,13 @@ t.equal(await iconFail.appIcon({ target: "/Applications/X.app" }), null, "icon s
 // ---- out-of-scope surfaces ----
 let controlError = null;
 try {
-  await mac.control("volume-up", null);
+  await mac.control("brightness-set", 50);
 } catch (error) {
   controlError = error;
 }
-t.equal(controlError?.status, 501, "control throws status 501");
-t.equal(controlError?.message, "Controls aren't available on the macOS host yet.", "control message");
-t.equal(await mac.nowPlaying(), null, "nowPlaying is null");
+t.equal(controlError?.status, 501, "brightness (not mapped on a Mac) throws status 501");
+t.ok(!mac.controlVerbs.includes("brightness-set"), "brightness is not advertised on a Mac");
+t.equal(await mac.nowPlaying(), null, "nowPlaying is null when no player is running");
 const stats = await mac.systemStats();
 t.equal(stats.cpu, null, "cpu is null");
 t.equal(stats.battery, null, "battery is null");

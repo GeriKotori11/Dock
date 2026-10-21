@@ -18,7 +18,7 @@
  * any OS, which is what the inventory and launch gates exercise.
  */
 
-import { CONTROL_VERBS, validateControl } from "./contract.js";
+import { CONTROL_VERBS, hostError, validateControl } from "./contract.js";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createWindowsCapture } from "./capture.js";
@@ -245,6 +245,49 @@ export function unmappedVerbs() {
 }
 
 /**
+ * Process names (lowercase, no .exe) a phone must never be offered to close
+ * (DOCK-CONTROLS 5.1): the shell that owns the desktop, taskbar and File
+ * Explorer windows, WinDock's own tray and helper, and shell hosts whose
+ * windows belong to other apps.
+ */
+export const WINDOWS_NOT_CLOSABLE = Object.freeze([
+  "explorer",
+  "windocktray",
+  "windockhelper",
+  "applicationframehost",
+  "shellexperiencehost",
+  "startmenuexperiencehost",
+  "searchhost",
+  "searchapp",
+  "textinputhost",
+  "lockapp",
+  "dwm",
+  "csrss",
+  "winlogon",
+]);
+
+/** Whether a running Windows app may be closed from the dock. */
+export function windowsClosable(entry) {
+  const name = typeof entry?.name === "string" ? entry.name.toLowerCase().replace(/\.exe$/, "") : "";
+  if (WINDOWS_NOT_CLOSABLE.includes(name)) return false;
+  const path = typeof entry?.path === "string" ? entry.path.toLowerCase().replace(/\//g, "\\") : "";
+  return !/\\(explorer|windocktray|windockhelper)\.exe$/.test(path);
+}
+
+/**
+ * The installed Spotify app in a Windows catalog: the classic installer
+ * (`...\Spotify\Spotify.exe`) or the Microsoft Store package. Null when absent.
+ */
+export function findSpotify(apps) {
+  if (!Array.isArray(apps)) return null;
+  return apps.find((app) => typeof app?.id === "string"
+    && (/(^|\/)spotify\.exe$/.test(app.id) || /spotifyab\.spotifymusic_[a-z0-9]+!/.test(app.id))) || null;
+}
+
+/** Media actions the system media keys can do. */
+const WINDOWS_MEDIA_KEYS = Object.freeze({ toggle: "media-play-pause", next: "media-next", previous: "media-previous" });
+
+/**
  * Create the Windows provider.
  * @param {object} opts
  * @param {(file:string,args:string[])=>Promise<{stdout:string}>} opts.exec
@@ -258,11 +301,43 @@ export function createWindowsProvider({ exec, helperPath = process.env.WINDOCK_H
   // DDC/CI monitor firmware can reject overlapping requests.
   let brightnessQueue = Promise.resolve();
 
+  async function nowPlaying() {
+    const { stdout } = await helper(["nowplaying"]);
+    const [row] = jsonArray(stdout);
+    if (!row) return null;
+    const title = typeof row.title === "string" ? row.title.trim() : "";
+    if (!title) return null;
+    return {
+      title,
+      artist: typeof row.artist === "string" ? row.artist.trim() : "",
+      playing: row.playing === true,
+    };
+  }
+
+  async function volume() {
+    const { stdout } = await helper(["volume"]);
+    const [row] = jsonArray(stdout);
+    const scalar = Number(row?.volume);
+    // The helper reads the level only; mute state is not reported yet.
+    return { level: Number.isFinite(scalar) && scalar >= 0 && scalar <= 1 ? Math.round(scalar * 100) : null, muted: null };
+  }
+
   return {
     id: "windows",
     displayName: "Windows",
     capture: createWindowsCapture({ helperPath }),
     input: createWindowsInput({ helperPath }),
+    // Media comes from the system media session through the existing helper
+    // verbs (title, artist, play state; media keys for transport). Artwork,
+    // timeline and session switching need a helper update, so they are not
+    // offered yet; neither is mute (the helper cannot read it).
+    features: Object.freeze({
+      close: true,
+      media: Object.freeze({ sources: "system", artwork: false, sessions: false }),
+      volume: Object.freeze({ get: true, set: true, mute: false }),
+      power: Object.freeze({ lock: "ready", sleep: "ready", restart: "ready", shutdown: "ready" }),
+      spotify: Object.freeze({ local: Object.freeze({ nowPlaying: true, transport: true, artwork: false, seek: false, shuffle: false, repeat: false }) }),
+    }),
 
     async appIcon(app) {
       const aumid = packagedAppId(app.target);
@@ -280,7 +355,7 @@ export function createWindowsProvider({ exec, helperPath = process.env.WINDOCK_H
 
     async listRunningApps() {
       const { stdout } = await ps(RUNNING_PS);
-      return parseRunning(stdout);
+      return parseRunning(stdout).map((entry) => ({ ...entry, closable: windowsClosable(entry) }));
     },
 
     async launchApp(app) {
@@ -337,17 +412,63 @@ export function createWindowsProvider({ exec, helperPath = process.env.WINDOCK_H
       return { ok: true, verb };
     },
 
-    async nowPlaying() {
-      const { stdout } = await helper(["nowplaying"]);
-      const [row] = jsonArray(stdout);
-      if (!row) return null;
-      const title = typeof row.title === "string" ? row.title.trim() : "";
-      if (!title) return null;
+    nowPlaying,
+
+    // ---- dock controls ----
+
+    async featureState({ installed = null, running = [] } = {}) {
+      const spotify = findSpotify(installed);
+      if (!spotify) return { players: [], spotify: { installed: false } };
+      const isRunning = (running || []).some((r) => r.id === spotify.id || String(r.name || "").toLowerCase() === "spotify");
       return {
-        title,
-        artist: typeof row.artist === "string" ? row.artist.trim() : "",
-        playing: row.playing === true,
+        players: [{ id: "spotify", name: "Spotify", appId: spotify.id, installed: true, running: isRunning, permission: "not-required" }],
+        spotify: { installed: true },
       };
+    },
+
+    async media() {
+      const np = await nowPlaying().catch(() => null);
+      // Media keys reach whichever session Windows considers current, so
+      // play/pause works even with nothing listed ("Resume last player").
+      const controls = { previous: true, next: true, playPause: true, seek: false, shuffle: false, repeat: false };
+      if (!np) return { source: null, controls, sessions: [], permission: null };
+      return {
+        source: { id: "system", name: null, appId: null, sessionId: null },
+        title: np.title,
+        artist: np.artist,
+        album: null,
+        playing: np.playing,
+        positionMs: null,
+        durationMs: null,
+        artwork: null,
+        controls,
+        shuffle: null,
+        repeat: null,
+        sessions: [],
+        permission: null,
+      };
+    },
+
+    async mediaCommand(action, value, sessionId) {
+      let verb = WINDOWS_MEDIA_KEYS[action];
+      if (action === "play" || action === "pause") {
+        // One key toggles: only press it when it moves toward the request.
+        const np = await nowPlaying().catch(() => null);
+        const playing = np?.playing === true;
+        verb = (action === "play" ? !playing : playing) ? "media-play-pause" : null;
+        if (!verb) return;
+      }
+      if (!verb) throw hostError(501, { error: "action unavailable" });
+      await helper(controlArgv(verb, null));
+    },
+
+    volume,
+
+    async setVolume({ level, muted } = {}) {
+      if (typeof muted === "boolean") throw hostError(501, { error: "mute unavailable" });
+      if (!Number.isInteger(level)) throw new Error("setVolume needs a level");
+      await helper(controlArgv("volume-set", level));
+      return volume();
     },
 
     async systemStats() {
