@@ -423,7 +423,7 @@ function renderNothingPlaying({ media, caps, computer, online }) {
   ].join("");
 }
 
-function renderPlayer(media, { online, like = "", aside = "" }) {
+function renderPlayer(media, { online, like = "", aside = "", upNext = "" }) {
   const c = media.controls || {};
   const off = (enabled) => (enabled && online ? "" : " disabled");
   const toggle = (name, on, label, glyph) => `<button class="media-btn media-btn--toggle" type="button" data-media="${name}" aria-label="${label}" aria-pressed="${on ? "true" : "false"}"${off(true)}>${icon(glyph)}</button>`;
@@ -447,8 +447,10 @@ function renderPlayer(media, { online, like = "", aside = "" }) {
     `<div class="media-art" aria-hidden="true">${renderArt(media)}</div>`,
     '<div class="media-info">',
     like ? `<div class="media-title-row"><h3 class="media-title">${escapeHtml(title)}</h3>${like}</div>` : `<h3 class="media-title">${escapeHtml(title)}</h3>`,
+    upNext ? '<div class="media-meta"><div class="media-meta__text">' : "",
     media.title ? (media.artist ? `<p class="media-artist">${escapeHtml(media.artist)}</p>` : "") : '<p class="media-artist">No track details</p>',
     media.album ? `<p class="media-album">${escapeHtml(media.album)}</p>` : "",
+    upNext ? `</div>${upNext}</div>` : "",
     progress,
     '<div class="media-transport">',
     c.shuffle ? toggle("shuffle", media.shuffle, "Shuffle", "shuffle") : ghost,
@@ -469,7 +471,7 @@ function renderPlayer(media, { online, like = "", aside = "" }) {
  * drag is never interrupted by a re-render. Progress values are filled in by
  * the page after rendering, so the markup only changes when the state does.
  */
-export function renderMediaSheet({ media = null, caps = null, permission = null, online = true, computer = "your computer", kind = "PC", showOn = false, sourcesOpen = false, tabs = "", brand = "", like = "", aside = "", body = null } = {}) {
+export function renderMediaSheet({ media = null, caps = null, permission = null, online = true, computer = "your computer", kind = "PC", showOn = false, sourcesOpen = false, tabs = "", brand = "", like = "", aside = "", upNext = "", body = null } = {}) {
   // Phase B: with tabs, the body sits in the Now playing tab panel; `body`
   // replaces it (another tab's panel lives outside, so it is "" there).
   const panel = (html) => (tabs ? `<div class="sp-tabpanel" id="sp-tabpanel" role="tabpanel" aria-labelledby="sp-tab-now">${html}</div>` : html);
@@ -482,7 +484,7 @@ export function renderMediaSheet({ media = null, caps = null, permission = null,
     return plainHeader() + panel(renderPermissionCard(permission, { computer, online }));
   }
   if (media?.active) {
-    return renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, tabs }) + panel(renderPlayer(media, { online, like, aside }));
+    return renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, tabs }) + panel(renderPlayer(media, { online, like, aside, upNext }));
   }
   return plainHeader() + panel(renderNothingPlaying({ media, caps, computer, online }));
 }

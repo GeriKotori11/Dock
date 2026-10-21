@@ -18,6 +18,7 @@ import {
   spotifyTab, nextTab, spotifyImageUrl, normalizePage, mergePage, normalizeSearch, normalizeQueue, normalizeDevices, isLikedContext, deviceIcon, deviceSubtitle,
   normalizeSpotifyStatus, playBody, spotifyTile, spotifyError, createSearch, spotifyBrand, renderSpTabs, renderSpEntry, renderSpWaiting, renderSpLibrary,
   renderSpSearchPanel, renderSpResults, renderSpDevices, renderSpFooter, renderSpUpNext, renderLikeButton, spotifyMenuActions, renderSpMenuActions,
+  upNextButton, renderUpNextButton, renderSpQueuePanel, mediaBackStep, createQueueLoader, formatDuration, QUEUE_REFRESH_MS, UP_NEXT_WIDE_MIN,
 } from "../public/spotify.js";
 
 const t = createChecker("pwa");
@@ -935,6 +936,122 @@ t.ok(appJs.includes("syncPinnedPlay(before);"), "the pinned tile glyph follows o
   t.ok(foot.includes('data-sp-goto="devices" aria-label="Playing on Studio PC. Choose a device."'), "footer: device chip opens Devices");
   t.ok(renderSpFooter({}).includes("Nothing playing") && renderSpFooter({}).includes('aria-label="Play" disabled'), "footer with nothing playing");
   t.ok(renderSpUpNext([]) === "" && renderSpUpNext(normalizeQueue({ queue: Array.from({ length: 7 }, (_, i) => ({ id: String(i).repeat(22), name: "T" + i })) })).match(/<li>/g).length === 5, "Up next: at most five, absent when empty");
+
+  // Up next on narrower screens: a button in Now playing opens a queue panel (see + add only).
+  {
+    const on = { mode: "tabs", supported: true, wide: false, spotifyNow: true };
+    t.deepEqual(upNextButton({ ...on, loaded: true, count: 8 }), { label: "Up next · 8" }, "Up next button: label with the count");
+    t.deepEqual(upNextButton({ ...on, loaded: false }), { label: "Up next" }, "Up next button: no count while loading");
+    t.equal(upNextButton({ ...on, supported: false, loaded: true, count: 3 }), null, "Up next button hidden when the queue route 404s");
+    t.equal(upNextButton({ ...on, mode: "entry" }), null, "Up next button hidden when Spotify isn't connected (entry row)");
+    t.equal(upNextButton({ ...on, mode: "hidden" }), null, "Up next button hidden without a Spotify account");
+    t.equal(upNextButton({ ...on, wide: true }), null, "wide screens keep the side list instead of the button");
+    t.equal(upNextButton({ ...on, spotifyNow: false }), null, "Up next button hidden when Spotify isn't the source");
+    t.deepEqual(upNextButton({ ...on, loaded: true, count: 0 }), { label: "Up next · 0" }, "an empty queue still opens the panel (empty state)");
+    t.equal(UP_NEXT_WIDE_MIN, 1000, "the side list starts at 1000 px");
+    t.equal(renderUpNextButton(null), "", "hidden button renders nothing");
+    const btn = renderUpNextButton({ label: "Up next · 8" });
+    t.ok(btn.includes('class="media-link sp-upnext-button" type="button" data-sp-queue-open>Up next · 8</button>'), "the button uses the sheet's chip style");
+    t.ok(renderUpNextButton({ label: "Up next" }, { online: false }).includes("data-sp-queue-open disabled"), "offline: the button is disabled");
+    const withBtn = renderMediaSheet({ media: spMedia, online: true, computer: "Studio PC", tabs, brand: spotifyBrand(), upNext: btn });
+    t.ok(withBtn.includes('<div class="media-meta"><div class="media-meta__text"><p class="media-artist">Dua Lipa</p></div><button class="media-link sp-upnext-button"'), "Now playing: the button sits beside the artist line (no extra row)");
+    t.ok(!renderMediaSheet({ media: spMedia, online: true, computer: "Studio PC", tabs, brand: spotifyBrand() }).includes("media-meta"), "without the button the player markup is unchanged");
+
+    const raw = { currentlyPlaying: null, queue: [
+      { type: "track", id: "d".repeat(22), uri: "spotify:track:" + "d".repeat(22), name: "Illusion", artists: [{ name: "Dua Lipa" }], durationMs: 188000, image: "0123456789abcdef0123456789abcdef" },
+      { type: "track", id: "e".repeat(22), uri: "spotify:track:" + "e".repeat(22), name: "Kënga <ime>", artists: [{ name: "Elvana Gjata" }, { name: "Ledri Vula" }], durationMs: 196000, image: null },
+      { type: "episode", id: "f".repeat(22), uri: "spotify:episode:" + "f".repeat(22), name: "Ep. 12", show: "The Pod", durationMs: 3600000, image: null },
+      { type: "track", uri: "spotify:local:x:y:z:1", name: "Local file" },
+    ] };
+    const q = normalizeQueue(raw);
+    t.equal(q.length, 3, "queue: malformed and local items dropped");
+    t.equal(q[1].artists, "Elvana Gjata, Ledri Vula", "queue: artist arrays joined");
+    t.equal(q[2].artists, "The Pod", "queue: an episode names its show");
+    t.equal(normalizeQueue({ items: raw.queue }).length, 3, "queue also reads { items }");
+    t.deepEqual([formatDuration(188000), formatDuration(3600000), formatDuration(5000), formatDuration(null)], ["3:08", "60:00", "0:05", ""], "durations m:ss");
+
+    const qp = renderSpQueuePanel({ items: q, loaded: true });
+    t.ok(qp.includes('role="tabpanel" aria-labelledby="sp-tab-now"') && qp.includes('<h3 class="sp-queue__title" id="sp-queue-title">Up next</h3>'), "queue panel: inside Now playing, with a heading");
+    t.ok(qp.includes('<ol class="sp-queue__list" aria-labelledby="sp-queue-title">') && (qp.match(/<li class="sp-queue__row">/g) || []).length === 3, "queue panel: an ordered list, one item per song");
+    t.ok(qp.includes('data-sp-queue-back><svg') && qp.includes("<span>Now playing</span></button>"), "queue panel: back arrow labelled Now playing");
+    t.ok(qp.includes("data-sp-add-songs") && qp.includes("<span>Add songs</span>"), "queue panel: Add songs in the header");
+    t.equal((qp.match(/sp-queue__next/g) || []).length, 1, "only the first row is labelled Next");
+    t.ok(qp.indexOf("sp-queue__next") < qp.indexOf("Illusion") && qp.indexOf("Illusion") < qp.indexOf("Kënga"), "Next labels the first row; order kept");
+    t.ok(qp.includes('<span class="sp-queue__time">3:08</span>') && qp.includes("Elvana Gjata, Ledri Vula") && qp.includes("Kënga &lt;ime&gt;"), "rows: duration, artists, escaped title");
+    t.ok(qp.includes('src="/api/spotify/image?key=0123456789abcdef0123456789abcdef"'), "rows: artwork through the image route");
+    const rowsOnly = qp.slice(qp.indexOf("<ol"));
+    t.ok(!rowsOnly.includes("<button") && !rowsOnly.includes("data-sp-uri") && !rowsOnly.includes("draggable"), "rows are informational: no buttons, no tap action, no drag or remove");
+    const empty = renderSpQueuePanel({ items: [], loaded: true });
+    t.ok(empty.includes("Nothing queued. Long-press a song in Search or Library to add it.") && (empty.match(/data-sp-add-songs/g) || []).length === 2, "empty state: the copy and Add songs");
+    t.ok(renderSpQueuePanel({ items: [], loaded: false }).includes("Loading the queue…"), "first load: loading line");
+    const errPanel = renderSpQueuePanel({ items: [], loaded: false, error: "Spotify is busy, try again in a moment" });
+    t.ok(errPanel.includes("Spotify is busy, try again in a moment") && errPanel.includes('data-sp-retry="queue">Try again</button>') && !errPanel.includes("Loading the queue"), "error/429: short message with Try again");
+    t.ok(renderSpQueuePanel({ items: q, loaded: true, error: "Couldn't load the queue." }).includes('<li class="sp-queue__row">'), "a failed refresh keeps the list on screen");
+    t.ok(renderSpQueuePanel({ items: q, loaded: true, online: false }).includes("data-sp-add-songs disabled"), "offline: Add songs disabled");
+
+    // Back order: panel first, then the sheet.
+    t.equal(mediaBackStep({ queueOpen: true }), "queue", "Back with the queue panel open returns to Now playing");
+    t.equal(mediaBackStep({ queueOpen: false }), "sheet", "Back from Now playing closes the sheet");
+
+    // The loader: single-flight, stale answers ignored, 15 s refresh while visible.
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const clock = fakeClock();
+    const loads = [], states = [];
+    let polling = true;
+    const loader = createQueueLoader({ setTimer: clock.setTimer, clearTimer: clock.clearTimer, isPolling: () => polling, onState: (st) => states.push(st),
+      load: () => new Promise((resolve, reject) => loads.push({ resolve, reject })) });
+    const answer = (n) => ({ queue: Array.from({ length: n }, (_, i) => ({ id: String.fromCharCode(97 + i).repeat(22), name: "T" + i })) });
+    loader.refresh(); loader.refresh();
+    await flush();
+    t.equal(loads.length, 1, "queue loader is single-flight");
+    loads[0].resolve(answer(2)); await flush();
+    t.equal(states.at(-1).items.length, 2, "an answer lands");
+    loader.refresh(); await flush();
+    loader.refresh({ invalidate: true }); await flush();
+    t.equal(loads.length, 2, "a track change while a request is in flight waits for it");
+    loads[1].resolve(answer(5)); await flush(); await flush();
+    t.ok(!states.some((st) => st.items?.length === 5), "the stale answer (started before the track change) is ignored");
+    t.equal(loads.length, 3, "then the queue is asked again");
+    loads[2].resolve(answer(3)); await flush();
+    t.equal(states.at(-1).items.length, 3, "the fresh answer lands");
+    loader.poll(true);
+    clock.advance(QUEUE_REFRESH_MS - 1); await flush();
+    t.equal(loads.length, 3, "no refresh before 15 s");
+    clock.advance(1); await flush();
+    t.equal(loads.length, 4, "refresh every 15 s while the panel is visible");
+    loads[3].resolve(answer(3)); await flush();
+    polling = false; clock.advance(QUEUE_REFRESH_MS); await flush();
+    t.equal(loads.length, 4, "no refresh while hidden or offline");
+    polling = true; clock.advance(QUEUE_REFRESH_MS); await flush();
+    t.equal(loads.length, 5, "the rhythm resumes when visible again");
+    loads[4].resolve(answer(3)); await flush();
+    loader.poll(false); clock.advance(QUEUE_REFRESH_MS * 3); await flush();
+    t.equal(loads.length, 5, "closing the panel stops the refresh");
+    loader.refresh(); await flush();
+    loads[5].reject(Object.assign(new Error("not found"), { status: 404 })); await flush();
+    t.deepEqual([states.at(-1).unsupported, states.at(-1).error?.status], [true, 404], "a 404 marks the queue route unsupported");
+    loader.refresh(); await flush();
+    loads[6].reject(Object.assign(new Error("rate limited"), { status: 429, detail: "rate limited" })); await flush();
+    t.deepEqual([states.at(-1).unsupported, states.at(-1).error?.status], [false, 429], "a 429 is an error, not unsupported");
+    loader.refresh(); await flush(); loader.cancel();
+    loads[7].resolve(answer(9)); await flush();
+    t.ok(!states.some((st) => st.items?.length === 9), "cancel (account gone) discards the answer in flight");
+    t.equal(QUEUE_REFRESH_MS, 15_000, "queue refresh every 15 s");
+
+    // Wiring in app.js.
+    t.ok(appJs.includes("$(\"media\").close = function close(value) {") && appJs.includes('mediaBackStep({ queueOpen: sp.queueOpen && this.open }) === "queue") return spCloseQueue();'), "Android Back (close() on the top dialog) leaves the queue panel first");
+    t.ok(appJs.includes('$("media").addEventListener("cancel", (event) => {') && appJs.includes('if (event.key !== "Escape" || mediaBackStep({ queueOpen: sp.queueOpen }) !== "queue"'), "Escape leaves the queue panel first");
+    t.ok(appJs.includes("function closeDialog(dialog, value) { HTMLDialogElement.prototype.close.call(dialog, value); }") && appJs.includes("if (close) closeDialog($(close.dataset.close));") && appJs.includes('$("media-grip").addEventListener("click", () => closeDialog($("media")));'), "the ×, the grip and a tap outside close the sheet outright");
+    t.ok(appJs.includes('spLoadStatus(); spLoadQueue({ invalidate: true }); }'), "a track change refreshes the queue (older answers dropped)");
+    t.ok(/notify\(SP_COPY\.queued\);\s*spLoadQueue\(\{ invalidate: true \}\);/.test(appJs), "an add-to-queue refreshes the queue");
+    t.ok(appJs.includes("spLoadQueue();\n  spQueueLoader.poll(true);") && appJs.includes('isPolling: () => sp.queueOpen && $("media").open && !document.hidden && online'), "opening the panel fetches and starts the 15 s refresh while it is visible");
+    t.ok(appJs.includes('$("sp-panel").querySelector("[data-sp-queue-back]")?.focus(') && appJs.includes('$("media-content").querySelector("[data-sp-queue-open]")?.focus('), "focus: back button on open, Up next button on close");
+    t.ok(appJs.includes('else if ("spAddSongs" in data) spSelectTab("search", { focus: "search" });'), "Add songs opens Search with the field focused");
+    t.ok(appJs.includes("const spWide = () => window.innerWidth >= UP_NEXT_WIDE_MIN;"), "one breakpoint for the side list and the button");
+    t.ok(/\.sp-queue\.is-entering \{ animation: sp-queue-in/.test(css) && css.includes("@media (prefers-reduced-motion: reduce) { .sp-queue.is-entering { animation: none; } }"), "the swap eases in, and not with reduced motion");
+    t.ok(/\.sp-queue__list \{[^}]*overflow-y: auto/.test(css) && css.includes(".media-sheet.is-queue { overflow: hidden; }"), "the list scrolls inside the panel");
+    t.ok(Number(/windock-v(\d+)-/.exec(read("sw.js"))?.[1]) >= 22, "the service worker cache version is bumped for Up next");
+  }
 
   // Errors: the JSON error string decides (src/spotify/routes.js, account.js).
   const err = (status, detail, message = detail) => Object.assign(new Error(message), { status, detail });

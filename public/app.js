@@ -13,12 +13,14 @@ import {
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow } from "./native-bridge.js";
 import {
   SP_COPY, PAGE_SIZE, LONG_PRESS_MS, WAIT_STOP_MS, MAX_TILES, spotifyAccount, spotifyInstalled, isSpotifySource, spotifyMode, spotifyTab, nextTab,
-  normalizePage, mergePage, normalizeDevices, normalizeQueue, normalizeSpotifyStatus, activeDevice, playBody, spotifyTile, isTileUri, spotifyError, createSearch, LIKED_CONTEXT,
+  normalizePage, mergePage, normalizeDevices, normalizeSpotifyStatus, activeDevice, playBody, spotifyTile, isTileUri, spotifyError, createSearch, LIKED_CONTEXT,
   spotifyBrand, spotifyCover, renderSpTabs, renderSpEntry, renderSpWaiting, renderSpLibrary, renderSpSearchPanel, renderSpResults, renderSpDevices, renderSpFooter,
-  renderSpUpNext, renderLikeButton, renderSpMenuActions,
+  renderSpUpNext, renderLikeButton, renderSpMenuActions, renderUpNextButton, renderSpQueuePanel, upNextButton, mediaBackStep, createQueueLoader, UP_NEXT_WIDE_MIN,
 } from "./spotify.js";
 
 const $ = (id) => document.getElementById(id);
+// Close a <dialog> outright, past the Media sheet's Back step (its close() is overridden below).
+function closeDialog(dialog, value) { HTMLDialogElement.prototype.close.call(dialog, value); }
 const pluralize = (count, word, plural = word + "s") => count + " " + (count === 1 ? word : plural);
 let state = { tiles: [], running: [], verbs: [] };
 let editing = false, paired = false, online = false, saving = false;
@@ -52,7 +54,7 @@ const miniStepper = createVolumeStepper({
 const sp = {
   tab: "now", account: null, flow: null, disconnected: false, notConnected: false, status: null, liked: null, likeBusy: false,
   library: null, likedTotal: null, likedFirst: null, devices: null, devicesLoading: false, devicesError: null,
-  queue: [], queueSupported: true, lastContext: null, menuItem: null,
+  queue: [], queueSupported: true, queueLoaded: false, queueError: null, queueOpen: false, lastContext: null, menuItem: null,
   search: { text: "", query: "", resultsQuery: "", results: null, loading: false, error: null },
 };
 // Volume up while muted unmutes and raises, as the computer's own volume keys do.
@@ -194,7 +196,7 @@ function showPair(message = "", unauthorized = false) {
   syncLayout();
   clearTimeout(reconnectTimer);
   if (socket) { socket.onclose = null; socket.close(); socket = null; }
-  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  for (const dialog of document.querySelectorAll("dialog[open]")) closeDialog(dialog);
   // Inside a native shell, native asks for the new PIN (spec 4.13): keep the
   // dock dimmed behind it rather than showing the web PIN page.
   if (shouldHandOff(readNative(), unauthorized)) {
@@ -694,7 +696,7 @@ function applyMedia(next) {
   mediaReceivedAt = Date.now();
   if (permissionUi.asking && pendingPermission(mediaCaps(caps()), media)?.status !== "needed") resetPermissionUi();
   // A new Spotify track: its liked state and the queue come from the account.
-  if ($("media").open && isSpotifySource(media) && (before?.title !== media.title || !isSpotifySource(before))) { spLoadStatus(); spLoadQueue(); }
+  if ($("media").open && isSpotifySource(media) && (before?.title !== media.title || !isSpotifySource(before))) { spLoadStatus(); spLoadQueue({ invalidate: true }); }
   renderMedia(before);
   syncPinnedPlay(before);
 }
@@ -811,11 +813,18 @@ function renderSheet() {
     volumeShown = false;
   } else if (mode === "tabs") {
     const tabs = renderSpTabs({ tab, online });
-    if (tab === "now") {
+    const button = tab === "now" ? spUpNextButton() : null;
+    // The queue panel only stands while its button would: a wider screen or another source closes it.
+    if (sp.queueOpen && !button) { sp.queueOpen = false; spQueueLoader.poll(false); }
+    if (tab === "now" && sp.queueOpen) {
+      content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), body: "" });
+      panel = renderSpQueuePanel({ items: sp.queue, loaded: sp.queueLoaded, error: sp.queueError, online });
+      volumeShown = false;
+    } else if (tab === "now") {
       const spotifyNow = isSpotifySource(media);
       const like = spotifyNow && sp.status?.track ? renderLikeButton({ liked: spTrackLiked(), online, busy: sp.likeBusy }) : "";
       const aside = spotifyNow && spWide() ? renderSpUpNext(sp.queue) : "";
-      content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), like, aside });
+      content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), like, aside, upNext: renderUpNextButton(button, { online }) });
     } else {
       content = renderMediaSheet({ ...base, tabs, brand: spotifyBrand(), body: "" });
       panel = spPanelHtml(tab);
@@ -828,6 +837,7 @@ function renderSheet() {
   }
   const dialog = $("media");
   dialog.classList.toggle("has-tabs", mode === "tabs");
+  dialog.classList.toggle("is-queue", mode === "tabs" && tab === "now" && sp.queueOpen);
   dialog.dataset.spTab = mode === "tabs" ? tab : mode;
   swapHtml($("media-content"), content);
   dialog.dataset.playing = String(media?.active === true && media.playing === true);
@@ -1025,7 +1035,7 @@ async function mediaCommand(action, value) {
 // ---- Spotify account (DOCK-CONTROLS 6.4, 12): tabs, login on the computer, playlist tiles ----
 const spAccount = () => spotifyAccount(state.features);
 const spPremium = () => spAccount()?.premium !== false;
-const spWide = () => window.innerWidth >= 1000;
+const spWide = () => window.innerWidth >= UP_NEXT_WIDE_MIN;
 function spMode() {
   return spotifyMode({ account: spAccount(), media, installed: spotifyInstalled(state.features), disconnected: sp.disconnected || sp.notConnected, waiting: Boolean(sp.flow) });
 }
@@ -1035,7 +1045,9 @@ function spIsPlaying() { return isSpotifySource(media) ? media.playing === true 
 // The context playing now ("Playing" row): the account's answer, else the last one this phone started.
 function spPlayingUri() { return spIsPlaying() ? sp.status?.contextUri || sp.lastContext : null; }
 function spResetData() {
-  sp.status = null; sp.liked = null; sp.library = null; sp.likedTotal = null; sp.likedFirst = null; sp.devices = null; sp.devicesError = null; sp.queue = [];
+  sp.status = null; sp.liked = null; sp.library = null; sp.likedTotal = null; sp.likedFirst = null; sp.devices = null; sp.devicesError = null;
+  sp.queue = []; sp.queueLoaded = false; sp.queueError = null; sp.queueOpen = false;
+  spQueueLoader.poll(false); spQueueLoader.cancel();
   sp.lastContext = null; sp.search = { text: "", query: "", resultsQuery: "", results: null, loading: false, error: null };
   spSearch.cancel();
 }
@@ -1115,12 +1127,50 @@ async function spLoadDevices() {
   finally { sp.devicesLoading = false; }
   renderSheetIfOpen();
 }
-// Up next shows on wide screens only, and only when the host has the queue route.
-async function spLoadQueue() {
-  if (!sp.queueSupported || !spWide() || spMode() !== "tabs" || !online) return;
-  try { sp.queue = normalizeQueue(await api("/api/spotify/queue")); }
-  catch (error) { sp.queue = []; if (error.status === 404) sp.queueSupported = false; else spHandleError(error, true); }
+// Up next (GET /api/spotify/queue): a list beside the player on wide screens; on
+// narrower ones an "Up next · n" button opens it as a panel in place of the
+// player. See + add only: Spotify's Web API can't remove or reorder.
+// Single-flight; a track change or an add discards older answers; 15 s refresh
+// while the panel is on screen. A 404 (older host) hides Up next for good.
+const spQueueLoader = createQueueLoader({
+  load: () => api("/api/spotify/queue"),
+  isPolling: () => sp.queueOpen && $("media").open && !document.hidden && online && spMode() === "tabs",
+  onState: (next) => {
+    if (next.loading) return; // what is on screen stays until the answer lands
+    if (next.unsupported) { sp.queueSupported = false; sp.queue = []; sp.queueOpen = false; spQueueLoader.poll(false); }
+    else if (next.error) {
+      const info = spHandleError(next.error, true);
+      if (info.kind === "quiet") return;
+      sp.queueError = info.kind === "busy" ? SP_COPY.busy : SP_COPY.queueError;
+    } else { sp.queue = next.items; sp.queueLoaded = true; sp.queueError = null; }
+    renderSheetIfOpen();
+  },
+});
+function spLoadQueue({ invalidate = false } = {}) {
+  if (!sp.queueSupported || spMode() !== "tabs" || !online) return;
+  spQueueLoader.refresh({ invalidate }).catch(() => {});
+}
+function spUpNextButton() {
+  return upNextButton({ mode: spMode(), supported: sp.queueSupported, wide: spWide(), spotifyNow: isSpotifySource(media), loaded: sp.queueLoaded, count: sp.queue.length });
+}
+// The panel swaps in for the player in the same sheet; Back returns from it first.
+function spOpenQueue() {
+  if (sp.tab !== "now" || !spUpNextButton()) return;
+  sp.queueOpen = true;
+  renderSheet();
+  $("sp-panel").scrollTop = 0;
+  // The swap eases in once, on opening; later refreshes of the list don't replay it.
+  $("sp-panel").querySelector(".sp-queue")?.classList.add("is-entering");
+  $("sp-panel").querySelector("[data-sp-queue-back]")?.focus({ preventScroll: true });
+  spLoadQueue();
+  spQueueLoader.poll(true);
+}
+function spCloseQueue({ focus = true } = {}) {
+  if (!sp.queueOpen) return;
+  sp.queueOpen = false;
+  spQueueLoader.poll(false);
   renderSheetIfOpen();
+  if (focus) $("media-content").querySelector("[data-sp-queue-open]")?.focus({ preventScroll: true });
 }
 // Library: Liked Songs (its count) and the first page of playlists, then a page more near the end.
 async function spLoadLibrary(more = false) {
@@ -1198,6 +1248,7 @@ const spSearch = createSearch({
 });
 function spSelectTab(tab, { focus = "tab" } = {}) {
   if (spMode() !== "tabs") return;
+  if (sp.queueOpen) { sp.queueOpen = false; spQueueLoader.poll(false); }
   sp.tab = spotifyTab(tab);
   renderSheet();
   $("sp-panel").scrollTop = 0;
@@ -1247,7 +1298,7 @@ async function spQueue(item) {
   try {
     await api("/api/spotify/queue", { method: "POST", body: JSON.stringify({ uri: item.uri }) });
     notify(SP_COPY.queued);
-    spLoadQueue();
+    spLoadQueue({ invalidate: true });
   } catch (error) { spHandleError(error); }
 }
 async function spTransfer(id) {
@@ -1331,6 +1382,9 @@ function handleSpotifyClick(el) {
   else if ("spConnect" in data || "spReopen" in data) spConnect();
   else if ("spCancel" in data) { spStopFlow(); $("media-spotify").querySelector("[data-sp-connect]")?.focus({ preventScroll: true }); }
   else if ("spLike" in data) spToggleLike();
+  else if ("spQueueOpen" in data) spOpenQueue();
+  else if ("spQueueBack" in data) spCloseQueue();
+  else if ("spAddSongs" in data) spSelectTab("search", { focus: "search" });
   else if (data.spUri) {
     if (el.getAttribute("aria-disabled") === "true") notify(SP_COPY.premium, true);
     else spPlay(spItemFrom(el));
@@ -1340,6 +1394,7 @@ function handleSpotifyClick(el) {
   } else if ("spDisconnect" in data) spDisconnect();
   else if (data.spRetry === "library") spLoadLibrary(Boolean(sp.library?.loaded));
   else if (data.spRetry === "devices") spLoadDevices();
+  else if (data.spRetry === "queue") spLoadQueue();
   else if (data.spRetry === "search") spSearch.input(sp.search.text);
   else if (data.spMenu) {
     const item = sp.menuItem;
@@ -1580,13 +1635,13 @@ $("page-dots").addEventListener("click", (event) => {
   const button = event.target.closest("[data-page]");
   if (button) pageTo(Number(button.dataset.page));
 });
-window.addEventListener("resize", () => { syncLayout(); requestAnimationFrame(() => pageTo(currentPage, false)); });
+window.addEventListener("resize", () => { syncLayout(); requestAnimationFrame(() => pageTo(currentPage, false)); renderSheetIfOpen(); });
 document.addEventListener("click", (event) => {
   // A gesture can open a dialog before the browser emits its follow-up click.
   // Suppress that click globally, even when it is retargeted to the new dialog.
   if (Date.now() < suppressClickUntil && event.detail !== 0) { event.preventDefault(); event.stopImmediatePropagation(); return; }
   const close = event.target.closest("[data-close]");
-  if (close) $(close.dataset.close).close();
+  if (close) closeDialog($(close.dataset.close));
   if (event.target.closest("[data-open-picker]")) openPicker();
   const closeButton = event.target.closest("button.tile__close");
   if (closeButton) {
@@ -1702,9 +1757,9 @@ document.addEventListener("pointercancel", () => { edgeGesture = null; });
 let drawerGesture = null;
 $("drawer-close").addEventListener("pointerdown", (event) => { drawerGesture = { id: event.pointerId, y: event.clientY, dialog: "drawer" }; });
 $("media-grip").addEventListener("pointerdown", (event) => { drawerGesture = { id: event.pointerId, y: event.clientY, dialog: "media" }; });
-$("media-grip").addEventListener("click", () => $("media").close());
+$("media-grip").addEventListener("click", () => closeDialog($("media")));
 document.addEventListener("pointerup", (event) => {
-  if (drawerGesture?.id === event.pointerId && event.clientY - drawerGesture.y > 30) { suppressClickUntil = Date.now() + 500; $(drawerGesture.dialog).close(); }
+  if (drawerGesture?.id === event.pointerId && event.clientY - drawerGesture.y > 30) { suppressClickUntil = Date.now() + 500; closeDialog($(drawerGesture.dialog)); }
   drawerGesture = null;
 });
 // Swipe up on the mini player opens the Media sheet, not the drawer; sideways does nothing (9.3).
@@ -1842,7 +1897,28 @@ $("media-volume").addEventListener("change", (event) => {
   volumeThrottle.commit(volume.level);
 });
 document.addEventListener("pointerup", () => { if (volume.dragging) setTimeout(() => { volume.dragging = false; }, 0); });
-$("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; spCancelPress(); });
+$("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; spCancelPress(); sp.queueOpen = false; spQueueLoader.poll(false); });
+// Back steps out of the queue panel before it closes the sheet. Android Back
+// calls close() on the top open <dialog>; Escape fires keydown, then cancel.
+// The ×, the grip, a swipe down and a tap outside close the sheet outright
+// (closeDialog).
+let spBackSwallow = false;
+$("media").close = function close(value) {
+  if (mediaBackStep({ queueOpen: sp.queueOpen && this.open }) === "queue") return spCloseQueue();
+  return closeDialog(this, value);
+};
+$("media").addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || mediaBackStep({ queueOpen: sp.queueOpen }) !== "queue" || document.querySelector("dialog[open]:not(#media)")) return;
+  event.preventDefault();
+  spBackSwallow = true;
+  setTimeout(() => { spBackSwallow = false; }, 0);
+  spCloseQueue();
+}, true);
+$("media").addEventListener("cancel", (event) => {
+  if (!spBackSwallow && mediaBackStep({ queueOpen: sp.queueOpen }) !== "queue") return;
+  event.preventDefault();
+  if (!spBackSwallow) spCloseQueue();
+});
 setInterval(() => { if ($("media").open && !document.hidden) tickProgress(); }, 1000);
 setInterval(() => { if (!document.hidden) tickMini(); }, 1000);
 $("refresh").addEventListener("click", async () => {
@@ -1861,7 +1937,7 @@ for (const dialog of document.querySelectorAll("dialog")) {
   dialog.addEventListener("click", (event) => {
     if (event.target !== dialog) return;
     const rect = dialog.getBoundingClientRect();
-    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeDialog(dialog);
   });
 }
 /** A neutral name the computer lists this device under (npm run devices). */

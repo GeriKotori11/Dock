@@ -53,6 +53,14 @@ export const SP_COPY = Object.freeze({
   alreadyOnDock: "Already on your dock",
   playingName: (name) => `Playing ${name}`,
   connectFirst: (computer) => `Connect Spotify on ${computer} to play this`,
+  upNext: "Up next",
+  upNextCount: (n) => `Up next · ${n}`,
+  queueBack: "Now playing",
+  addSongs: "Add songs",
+  queueNext: "Next",
+  queueEmpty: "Nothing queued. Long-press a song in Search or Library to add it.",
+  queueError: "Couldn't load the queue.",
+  queueLoading: "Loading the queue…",
 });
 
 /** The tabs, in order (sp.tabs). */
@@ -73,6 +81,10 @@ export const PAGE_SIZE = 30;
 export const LONG_PRESS_MS = 500;
 export const WAIT_STOP_MS = 60_000;
 export const MAX_TILES = 64;
+/** Up next refreshes this often while its panel is on screen (narrow screens). */
+export const QUEUE_REFRESH_MS = 15_000;
+/** Below this width Up next is a button and a panel; at or above it, a list beside the player. */
+export const UP_NEXT_WIDE_MIN = 1000;
 
 /** 1284 → "1,284". */
 export function formatCount(n) {
@@ -211,9 +223,88 @@ export function normalizeSearch(raw) {
   };
 }
 
-/** The Up next list (`{ currentlyPlaying, queue }`); anything malformed is dropped. */
+/**
+ * The Up next list (`{ currentlyPlaying, queue }`, or `{ items }`); anything
+ * malformed is dropped. Spotify's queue includes the rest of the playing
+ * playlist or album, not only songs queued by hand. An episode names its show.
+ */
 export function normalizeQueue(raw) {
-  return list(raw?.queue ?? raw?.items).map((item) => normalizeItem(item, "track")).filter(Boolean);
+  return list(raw?.queue ?? raw?.items)
+    .map((item) => normalizeItem(isObject(item) && item.artists === undefined && item.show ? { ...item, artists: isObject(item.show) ? item.show.name : item.show } : item, "track"))
+    .filter(Boolean);
+}
+
+/** 209000 → "3:29"; "" when unknown. */
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The "Up next" button in Now playing (narrow screens): null when hidden
+ * (not connected, the host has no queue route, a wide screen shows the list
+ * instead, or Spotify isn't what plays), else its label. No count until the
+ * first answer lands.
+ */
+export function upNextButton({ mode = "hidden", supported = true, wide = false, spotifyNow = false, loaded = false, count = 0 } = {}) {
+  if (mode !== "tabs" || !supported || wide || !spotifyNow) return null;
+  return { label: loaded ? SP_COPY.upNextCount(Math.max(0, count | 0)) : SP_COPY.upNext };
+}
+
+/**
+ * What Back (Android Back, Escape) does in the Media sheet: with the queue
+ * panel open it returns to Now playing ("queue"); otherwise it closes the
+ * sheet ("sheet").
+ */
+export function mediaBackStep({ queueOpen = false } = {}) {
+  return queueOpen ? "queue" : "sheet";
+}
+
+/**
+ * Up next, loaded on demand: single-flight (a refresh while one is in flight
+ * shares it), and `refresh({ invalidate: true })` (the track changed, a song
+ * was added) discards any answer to a request that started before it and asks
+ * again once the one in flight settles, the same ordering as the media
+ * poller. `poll(true)` refreshes every `intervalMs` while `isPolling()`.
+ * `onState` gets `{ loading }`, then `{ items, error: null, loaded: true }`
+ * or `{ error, unsupported }` (404: the host has no queue route).
+ */
+export function createQueueLoader({ load, onState, isPolling = () => true, intervalMs = QUEUE_REFRESH_MS, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let tick = 0, invalidTick = 0, pending = null, pendingTick = 0, timer = null;
+  function refresh({ invalidate = false } = {}) {
+    if (invalidate) invalidTick = ++tick;
+    if (pending) return pendingTick < invalidTick ? pending.then(() => refresh()) : pending;
+    const start = pendingTick = ++tick;
+    onState({ loading: true });
+    pending = Promise.resolve()
+      .then(() => load())
+      .then(
+        (raw) => { if (start >= invalidTick) onState({ loading: false, items: normalizeQueue(raw), error: null, loaded: true }); },
+        (error) => { if (start >= invalidTick) onState({ loading: false, error, unsupported: error?.status === 404 }); },
+      )
+      .finally(() => { pending = null; });
+    return pending;
+  }
+  function schedule() {
+    timer = setTimer(() => {
+      timer = null;
+      // Hidden page or offline: skip this round, keep the rhythm.
+      if (isPolling()) refresh().catch(() => {});
+      schedule();
+    }, intervalMs);
+  }
+  return {
+    refresh,
+    /** Start (true) or stop (false) the 15 s refresh. */
+    poll(on) {
+      if (timer !== null) { clearTimer(timer); timer = null; }
+      if (on) schedule();
+    },
+    /** Forget anything in flight (the account went away). */
+    cancel() { invalidTick = ++tick; if (timer !== null) { clearTimer(timer); timer = null; } },
+    get pending() { return pending !== null; },
+  };
 }
 
 /** True when a playing context is the account's Liked Songs (`spotify:user:<id>:collection`). */
@@ -592,6 +683,51 @@ export function renderSpUpNext(items) {
     '<ol class="sp-upnext__list">',
     ...next.map((item) => `<li>${art(item.image)}<span class="sp-row__text"><span class="sp-row__title">${esc(item.name)}</span>${item.artists ? `<span class="sp-row__sub">${esc(item.artists)}</span>` : ""}</span></li>`),
     "</ol></aside>",
+  ].join("");
+}
+
+/** The "Up next · 8" chip in Now playing (narrow screens); "" when hidden. */
+export function renderUpNextButton(button, { online = true } = {}) {
+  if (!button) return "";
+  return `<button class="media-link sp-upnext-button" type="button" data-sp-queue-open${online ? "" : " disabled"}>${esc(button.label)}</button>`;
+}
+
+function queueRow(item, first) {
+  const duration = formatDuration(item.durationMs);
+  return [
+    "<li class=\"sp-queue__row\">",
+    art(item.image),
+    `<span class="sp-row__text"><span class="sp-row__title">${first ? `<span class="sp-queue__next">${esc(SP_COPY.queueNext)}</span>` : ""}${esc(item.name)}</span>${item.artists ? `<span class="sp-row__sub">${esc(item.artists)}</span>` : ""}</span>`,
+    duration ? `<span class="sp-queue__time">${esc(duration)}</span>` : "",
+    "</li>",
+  ].join("");
+}
+
+/**
+ * The queue panel that replaces the Now playing body on narrow screens: a
+ * back button, the heading, Add songs, and the list (informational rows: no
+ * tap action, no reordering, no removing: Spotify's Web API has neither).
+ * `error` is the message to show; a list already loaded stays under it.
+ */
+export function renderSpQueuePanel({ items = [], loaded = false, error = null, online = true } = {}) {
+  const rows = list(items);
+  const off = online ? "" : " disabled";
+  const add = (extra = "") => `<button class="media-link sp-queue__add${extra}" type="button" data-sp-add-songs${off}>${icon("plus")}<span>${esc(SP_COPY.addSongs)}</span></button>`;
+  let body;
+  if (rows.length) body = `<ol class="sp-queue__list" aria-labelledby="sp-queue-title">${rows.map((item, i) => queueRow(item, i === 0)).join("")}</ol>`;
+  else if (error) body = "";
+  else if (!loaded) body = statusLine({ loading: true, loadingText: SP_COPY.queueLoading });
+  else body = `<div class="sp-queue__empty"><p>${esc(SP_COPY.queueEmpty)}</p>${add(" sp-queue__add--empty")}</div>`;
+  return [
+    '<div class="sp-panel sp-queue" id="sp-tabpanel" role="tabpanel" aria-labelledby="sp-tab-now">',
+    '<div class="sp-queue__head">',
+    `<button class="sp-queue__back" type="button" data-sp-queue-back>${icon("left")}<span>${esc(SP_COPY.queueBack)}</span></button>`,
+    `<h3 class="sp-queue__title" id="sp-queue-title">${esc(SP_COPY.upNext)}</h3>`,
+    add(),
+    "</div>",
+    error ? statusLine({ error, retry: "queue" }) : "",
+    body,
+    "</div>",
   ].join("");
 }
 

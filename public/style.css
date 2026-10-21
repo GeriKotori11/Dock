@@ -813,6 +813,29 @@ body.is-immersive.has-mini.has-mini-seek > .toast { bottom: calc(106px + env(saf
   .sp-upnext__list li { display: flex; align-items: center; gap: 10px; min-height: 44px; }
   .sp-upnext__list .sp-art { width: 36px; height: 36px; border-radius: 6px; }
 }
+/* Narrower screens: an "Up next · n" chip beside the artist line opens the queue panel in place of the player. */
+.media-meta { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.media-meta__text { flex: 1; min-width: 0; }
+.sp-upnext-button { flex-shrink: 0; }
+.media-sheet.is-queue { overflow: hidden; }
+.media-sheet.is-queue > .sp-host { display: flex; flex-direction: column; overflow: hidden; }
+.sp-queue { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding-top: 0; }
+.sp-queue.is-entering { animation: sp-queue-in .2s var(--ease-out); }
+@keyframes sp-queue-in { from { opacity: 0; transform: translateX(12px); } }
+.sp-queue__head { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 0 22px 4px 12px; }
+.sp-queue__back { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 12px 0 6px; border: 0; border-radius: 12px; background: none; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.sp-queue__back .icon { width: 18px; height: 18px; }
+.sp-queue__back:focus-visible, .sp-queue__head .media-link:focus-visible { outline-offset: -2px; }
+.sp-queue__title { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 600; }
+.sp-queue__list { flex: 1 1 auto; min-height: 0; margin: 0; padding: 0 14px 10px; list-style: none; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.sp-queue__list::-webkit-scrollbar { display: none; }
+.sp-queue__row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 10px; }
+.sp-queue__row .sp-art { width: 40px; height: 40px; border-radius: 7px; }
+.sp-queue__next { display: inline-block; margin-right: 7px; padding: 0 6px; border-radius: 6px; background: #b4edcc1a; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .06em; line-height: 17px; text-transform: uppercase; vertical-align: 1px; }
+.sp-queue__time { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sp-queue__empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 6px 24px 16px; font-size: 13px; color: var(--muted); }
+.sp-queue__empty p { margin: 0; }
+@media (prefers-reduced-motion: reduce) { .sp-queue.is-entering { animation: none; } }
 /* Pinned playlist or album tile: the cover, rounded like an app icon, with a small Spotify badge. */
 .tile--spotify .tile__glyph { --icon-pad: 0; }
 :root[data-platform="macos"] .tile--spotify .tile__glyph { --icon-pad: .098; }
