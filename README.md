@@ -11,6 +11,11 @@ extended from "Windows PC + Android phone" to a macOS or Windows host with an
 Android or iPhone client. The current plan and an honest status log are in
 [docs/V1-PLAN.md](docs/V1-PLAN.md).
 
+
+https://github.com/user-attachments/assets/b09a69a9-3dd9-4f4e-be36-1648a9d133a4
+
+
+
 ## Status
 
 | Host | Phone | Status |
