@@ -20,6 +20,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         self.root = root
         keepScreenAwake()
+        // Cold start from a scanned `windock://pair` link: held until launch finishes.
+        if let url = connectionOptions.urlContexts.first?.url { coordinator.handleOpenURL(url) }
+    }
+
+    /// A `windock://pair` link while running (system Camera, another app). Never logged: it holds a PIN.
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        currentCoordinator?.handleOpenURL(url)
     }
 
     // The phone screen must never sleep while WinDock is open (every screen, not only the dock).

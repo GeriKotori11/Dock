@@ -27,6 +27,8 @@ final class PairingViewController: ScreenViewController, UITextFieldDelegate, Fo
     private var leftWidth: NSLayoutConstraint?
     let matchButton = ThemedButton("Codes match", kind: .primary)
     let noMatchButton = ThemedButton("They don't match", kind: .secondary)
+    /// Section 10.1: the computer shows the QR code right next to the security code.
+    let scanInsteadButton = ThemedButton("Scan the QR code instead", kind: .ghost)
     private let closedStatus = Theme.label("Waiting for pairing to open", font: Theme.body, color: Theme.text2)
     private let closedSpinner = makeSpinner()
     private let closedBody = Theme.label(font: Theme.body, color: Theme.text2)
@@ -148,6 +150,8 @@ final class PairingViewController: ScreenViewController, UITextFieldDelegate, Fo
         noMatchButton.accessibilityIdentifier = "codes-differ"
         matchButton.addTarget(self, action: #selector(codesMatch), for: .touchUpInside)
         noMatchButton.addTarget(self, action: #selector(codesDiffer), for: .touchUpInside)
+        scanInsteadButton.accessibilityIdentifier = "scan-instead"
+        scanInsteadButton.addTarget(self, action: #selector(scanInstead), for: .touchUpInside)
         updateColumns()
     }
 
@@ -248,15 +252,23 @@ final class PairingViewController: ScreenViewController, UITextFieldDelegate, Fo
         let card = InstructionCard(symbol: Theme.Icon.monitor, text: Theme.rich(codeInstruction, font: Theme.font(14), lineHeight: 1.4))
         let buttons = UIStackView(arrangedSubviews: [matchButton, noMatchButton])
         buttons.spacing = 12
-        for view in [headingLabel, codeLabel, card, buttons] as [UIView] { rightColumn.addArrangedSubview(view) }
+        for view in [headingLabel, codeLabel, card, buttons, scanInsteadButton] as [UIView] { rightColumn.addArrangedSubview(view) }
         rightColumn.setCustomSpacing(8, after: headingLabel)
         rightColumn.setCustomSpacing(18, after: codeLabel)
         rightColumn.setCustomSpacing(20, after: card)
+        rightColumn.setCustomSpacing(8, after: buttons)
         card.widthAnchor.constraint(equalTo: rightColumn.widthAnchor).isActive = true
         stepper.configure(step1: .current, step2: .upcoming)
     }
 
     private var codeInstruction: String {
+        if context.hostUi {
+            switch context.platform {
+            case "windows": return "On \(name), click the WinDock icon in the taskbar tray, by the clock, and choose Pair a new phone."
+            case "macos": return "On the Mac, click the WinDock icon in the menu bar and choose Pair a new phone."
+            default: break
+            }
+        }
         switch context.platform {
         case "windows": return "On \(name), click the WinDock icon in the taskbar tray, by the clock, and choose **Show connection info**."
         case "macos": return "On the Mac, open Terminal in the WinDock folder and run `npm run info`."
@@ -265,6 +277,13 @@ final class PairingViewController: ScreenViewController, UITextFieldDelegate, Fo
     }
 
     private var closedInstruction: String {
+        if context.hostUi {
+            switch context.platform {
+            case "windows": return "Click the WinDock icon in the taskbar tray and choose Pair a new phone. That opens pairing for 10 minutes, and this screen continues by itself."
+            case "macos": return "Click the WinDock icon in the Mac's menu bar and choose Pair a new phone. That opens pairing for 10 minutes, and this screen continues by itself."
+            default: break
+            }
+        }
         switch context.platform {
         case "windows": return "Choose **Show connection info** from the WinDock tray icon. That opens pairing for 10 minutes, and this screen continues by itself."
         case "macos": return "Run `npm run info` on the Mac. That opens pairing for 10 minutes, and this screen continues by itself."
@@ -300,6 +319,8 @@ final class PairingViewController: ScreenViewController, UITextFieldDelegate, Fo
     }
 
     @objc private func backToComputers() { coordinator.pairingRejected() }
+
+    @objc private func scanInstead() { coordinator.presentScanner() }
 
     private func showClosed(animated: Bool) {
         phase = .closed

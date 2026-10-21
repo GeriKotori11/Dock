@@ -77,7 +77,7 @@ final class PinnedClient: NSObject, URLSessionTaskDelegate {
         }
         guard endpoint.scheme == "https", let fingerprint,
               space.host.lowercased() == endpoint.host, space.port == EndpointPolicy.effectivePort(endpoint),
-              let trust = space.serverTrust, CertificatePin.leafFingerprint(trust) == fingerprint else {
+              let trust = space.serverTrust, CertificatePin.matches(CertificatePin.leafFingerprint(trust), fingerprint) else {
             completionHandler(.cancelAuthenticationChallenge, nil); return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))

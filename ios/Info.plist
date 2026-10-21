@@ -29,6 +29,16 @@
   <key>UILaunchScreen</key><dict>
     <key>UIColorName</key><string>LaunchBackground</string>
   </dict>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>dev.ali-saad.windock.pair</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>CFBundleURLSchemes</key><array><string>windock</string></array>
+    </dict>
+  </array>
+  <key>NSCameraUsageDescription</key>
+  <string>WinDock uses the camera to scan the pairing code on your computer.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>WinDock finds and connects to your computers on this Wi-Fi.</string>
   <key>NSBonjourServices</key>

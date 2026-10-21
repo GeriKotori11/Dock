@@ -8,6 +8,8 @@ struct HealthInfo: Equatable {
     let tlsFingerprint: String?
     var platform: String? = nil
     var pairingOpen: Bool? = nil
+    /// The host has its own UI with "Pair a new phone" (section 13.2); picks the instructions.
+    var hostUi: Bool? = nil
 }
 
 /// Why a probe got no WinDock answer, which orders the checks on the "Can't reach" screen.
@@ -85,7 +87,8 @@ final class HealthProbe: NSObject, URLSessionDataDelegate {
                           hostName: object["hostName"] as? String ?? "",
                           tlsFingerprint: tls?["fingerprint"] as? String,
                           platform: object["platform"] as? String,
-                          pairingOpen: object["pairingOpen"] as? Bool)
+                          pairingOpen: object["pairingOpen"] as? Bool,
+                          hostUi: object["hostUi"] as? Bool)
     }
 
     static func isWinDock(_ body: Data) -> Bool { parse(body) != nil }
@@ -114,7 +117,7 @@ final class HealthProbe: NSObject, URLSessionDataDelegate {
             completionHandler(.cancelAuthenticationChallenge, nil); return
         }
         presented = fingerprint
-        if pinned == nil || pinned == fingerprint {
+        if pinned == nil || CertificatePin.matches(pinned, fingerprint) {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)

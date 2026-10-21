@@ -143,6 +143,12 @@ final class AddAddressViewController: ScreenViewController, UITextFieldDelegate,
 
     private func hintText() -> NSAttributedString {
         let font = Theme.font(13)
+        // Section 10.9: the new wording once a computer has reported its own UI (`/health.hostUi`);
+        // nothing is known about the computer being added before it answers.
+        if coordinator.store.computers.contains(where: { $0.hostUi == true }) {
+            return NSAttributedString(string: "The address is under Pair a new phone in WinDock on the computer. The port is usually 8620.",
+                                      attributes: [.font: font, .foregroundColor: Theme.text3])
+        }
         let result = NSMutableAttributedString(string: "The address is in Show connection info (Windows tray) or ",
                                                attributes: [.font: font, .foregroundColor: Theme.text3])
         result.append(NSAttributedString(string: "\u{2009}npm run info\u{2009}", attributes: [

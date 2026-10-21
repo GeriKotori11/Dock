@@ -200,7 +200,7 @@ final class DockViewController: UIViewController, WKNavigationDelegate, WKScript
         guard let trustedFingerprint else {
             completionHandler(.performDefaultHandling, nil); return
         }
-        guard let trust = space.serverTrust, CertificatePin.leafFingerprint(trust) == trustedFingerprint else {
+        guard let trust = space.serverTrust, CertificatePin.matches(CertificatePin.leafFingerprint(trust), trustedFingerprint) else {
             completionHandler(.cancelAuthenticationChallenge, nil); return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))

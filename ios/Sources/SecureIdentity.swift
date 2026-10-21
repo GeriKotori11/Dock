@@ -16,6 +16,16 @@ enum CertificatePin {
         return fingerprint(der: SecCertificateCopyData(leaf) as Data)
     }
 
+    /// Constant-time comparison of two fingerprints (no early exit on the first differing byte).
+    static func matches(_ a: String?, _ b: String?) -> Bool {
+        guard let a, let b else { return false }
+        let left = Array(a.utf8), right = Array(b.utf8)
+        guard left.count == right.count, !left.isEmpty else { return false }
+        var difference: UInt8 = 0
+        for index in left.indices { difference |= left[index] ^ right[index] }
+        return difference == 0
+    }
+
     static func isValid(_ fingerprint: String) -> Bool {
         fingerprint.count == 64 && fingerprint.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
     }

@@ -41,11 +41,15 @@ struct PairingContext {
     /// Step 1 is already done (session revoked, or "Needs a new PIN").
     var revoked: Bool
     var existing: Computer?
+    /// `/health.hostUi`: the computer has "Pair a new phone" in its own UI (section 10.9 copy).
+    var hostUi: Bool = false
+    /// `presented` came from a scanned QR code, an out-of-band check: no security-code step.
+    var verifiedByCode: Bool = false
 
     var displayName: String {
         existing?.displayName ?? Computer.displayName(nickname: nil, hostName: hostName)
     }
-    var hasSecurityStep: Bool { presented != nil && !revoked }
+    var hasSecurityStep: Bool { presented != nil && !revoked && !verifiedByCode }
 }
 
 /// The state machine of spec section 3: launch, connecting, dock, hub, problems, pairing.
@@ -109,6 +113,11 @@ final class ConnectionCoordinator {
     var deviceName = PairingAPI.deviceName(isPad: UIDevice.current.userInterfaceIdiom == .pad)
     /// Test hosts and older code paths may turn discovery off.
     var discoveryEnabled = true
+    /// Launch finished (migration done, first screen chosen); links before that wait.
+    private(set) var launched = false
+    /// A `windock:` link that arrived before launch finished, or while Local Network was off.
+    /// Memory only: it carries a one-time PIN.
+    private(set) var pendingLinkRoute: PairingLinkRoute?
 
     init(store: ComputerStore, pins: PinStore, discovery: DiscoverySource = BonjourDiscovery(),
          network: NetworkStatus = NetworkStatus(), cookieStore: WKHTTPCookieStore = WKWebsiteDataStore.default().httpCookieStore) {
@@ -165,6 +174,22 @@ final class ConnectionCoordinator {
     }
 
     private func proceedAfterLaunch() {
+        launched = true
+        if let route = pendingLinkRoute {
+            pendingLinkRoute = nil
+            if case .pair = route {
+                // A scanned code was what opened the app: its confirmation goes over the hub.
+                showHub(overDock: false)
+            } else if let last = store.last {
+                startDiscovery()
+                open(last, switching: false)
+            } else {
+                if store.localNetworkPrimed { startDiscovery() }
+                showHub(overDock: false)
+            }
+            perform(route)
+            return
+        }
         if let last = store.last {
             startDiscovery()
             open(last, switching: false)
@@ -431,6 +456,7 @@ final class ConnectionCoordinator {
         store.update(attempt.computer.hostId) { computer in
             if !info.hostName.isEmpty { computer.hostName = info.hostName }
             if !platform.isEmpty { computer.platform = platform }
+            computer.hostUi = info.hostUi
         }
         if let updated = store.computer(attempt.computer.hostId) {
             attempt.computer = updated
@@ -537,7 +563,7 @@ final class ConnectionCoordinator {
     private func enterUnreachable(_ attempt: Attempt) {
         attempt.failing = true
         attempt.retryCount = 0
-        showProblem(problemForFailure(attempt))
+        showProblem(problemForFailure(attempt), hostUi: attempt.computer.hostUi == true)
         scheduleRetry(attempt)
     }
 
@@ -592,11 +618,12 @@ final class ConnectionCoordinator {
             lastProblem = next
             return
         }
-        showProblem(next)
+        showProblem(next, hostUi: attempt.computer.hostUi == true)
     }
 
-    func showProblem(_ problem: ProblemViewController.Problem) {
+    func showProblem(_ problem: ProblemViewController.Problem, hostUi: Bool = false) {
         let screen = ProblemViewController(problem: problem)
+        screen.hostUi = hostUi
         screen.onPrimary = { [weak self] in self?.problemPrimary() }
         screen.onSecondary = { [weak self] in self?.problemSecondary() }
         self.problem = screen
@@ -667,7 +694,8 @@ final class ConnectionCoordinator {
         statuses[computer.hostId] = .securityChanged
         let old = pins.pin(for: computer.hostId).flatMap(CertificatePin.securityCode) ?? "—"
         let now = CertificatePin.securityCode(presented) ?? "—"
-        showProblem(.securityChanged(hostId: computer.hostId, name: computer.displayName, then: old, now: now))
+        showProblem(.securityChanged(hostId: computer.hostId, name: computer.displayName, then: old, now: now),
+                    hostUi: store.computer(computer.hostId)?.hostUi == true)
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
@@ -695,6 +723,8 @@ final class ConnectionCoordinator {
         guard lastProblem != .localNetworkOff else { return }
         // Only on connection screens (S1, S8, hub, pairing); never over a working dock.
         guard dock?.isReady != true else { return }
+        // A scanned code being confirmed continues once Local Network is back (section 10.4).
+        if let qr = root?.topModal as? QRPairingViewController { pendingLinkRoute = .pair(qr.link) }
         showProblem(.localNetworkOff)
     }
 
@@ -705,6 +735,12 @@ final class ConnectionCoordinator {
 
     private func resumeAfterLocalNetwork() {
         lastProblem = nil
+        if case .pair(let link)? = pendingLinkRoute {
+            pendingLinkRoute = nil
+            showHub(overDock: false)
+            presentPairingLink(link)
+            return
+        }
         if let attempt { open(attempt.computer, switching: true) } else { showHub(overDock: false) }
     }
 
@@ -745,7 +781,7 @@ final class ConnectionCoordinator {
         guard let current, let dock, root?.topModal is PairingViewController == false else { return }
         let context = PairingContext(hostId: current.hostId, hostName: current.hostName, platform: current.platform,
                                      endpoint: dock.endpoint, presented: dock.trustedFingerprint, pairingOpen: true,
-                                     revoked: true, existing: current)
+                                     revoked: true, existing: current, hostUi: current.hostUi == true)
         actionProbes.probeSecureFirst(dock.endpoint, timeout: 4, allowPlain: dock.trustedFingerprint == nil) { [weak self] result in
             guard let self else { return }
             var context = context
@@ -844,7 +880,8 @@ final class ConnectionCoordinator {
             beginPairing(PairingContext(hostId: hostId.flatMap { PinStore.isValidHostId($0) ? $0 : nil }, hostName: info.hostName,
                                         platform: Computer.normalizedPlatform(info.platform), endpoint: endpoint,
                                         presented: endpoint.scheme == "https" ? result.presentedFingerprint : nil,
-                                        pairingOpen: info.pairingOpen ?? true, revoked: false, existing: nil))
+                                        pairingOpen: info.pairingOpen ?? true, revoked: false, existing: nil,
+                                        hostUi: info.hostUi == true))
         }
     }
 
@@ -865,7 +902,8 @@ final class ConnectionCoordinator {
         PairingContext(hostId: computer.isLegacy ? nil : computer.hostId, hostName: result.info?.hostName ?? computer.hostName,
                        platform: Computer.normalizedPlatform(result.info?.platform).isEmpty ? computer.platform : Computer.normalizedPlatform(result.info?.platform),
                        endpoint: result.endpoint ?? computer.endpoint, presented: presented,
-                       pairingOpen: result.info?.pairingOpen ?? true, revoked: revoked, existing: computer)
+                       pairingOpen: result.info?.pairingOpen ?? true, revoked: revoked, existing: computer,
+                       hostUi: result.info?.hostUi ?? computer.hostUi ?? false)
     }
 
     func beginPairing(_ context: PairingContext) {
@@ -907,6 +945,7 @@ final class ConnectionCoordinator {
             if !context.platform.isEmpty { computer.platform = context.platform }
             computer.endpoint = context.endpoint
             computer.lastConnectedAt = now
+            computer.hostUi = context.hostUi
             self.store.upsert(computer)
             self.needsPin.remove(hostId)
             self.changedCertificates[hostId] = nil
@@ -984,6 +1023,127 @@ final class ConnectionCoordinator {
                 guard let self else { completion(removed); return }
                 self.forgetLocally(computer) { completion(removed) }
             }
+        }
+    }
+
+    // MARK: QR pairing (HOST-CONTROL-PAGE section 10)
+
+    /// A `windock:` URL from the system Camera, another app or the in-app scanner. Nothing touches
+    /// the network here: a valid link only ever leads to the confirmation (or Q11). Never logged.
+    func handleOpenURL(_ url: URL) {
+        let route = PairingLinkParser.route(url)
+        guard route != .notALink else { return }
+        guard launched else { pendingLinkRoute = route; return }
+        perform(route)
+    }
+
+    private func perform(_ route: PairingLinkRoute) {
+        switch route {
+        case .notALink: break
+        case .invalid: showLinkAlert("This isn't a WinDock pairing code")
+        case .newer: showLinkAlert("This code needs a newer WinDock app. Update the app, or pair with the PIN instead.")
+        case .pair(let link): presentPairingLink(link)
+        }
+    }
+
+    private func showLinkAlert(_ title: String) {
+        guard let root else { return }
+        let alert = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+        alert.view.tintColor = Theme.accent
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        let presenter = root.topModal ?? root
+        if presenter.isBeingPresented || presenter.isBeingDismissed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.showLinkAlert(title) }
+            return
+        }
+        presenter.present(alert, animated: true)
+    }
+
+    /// Q5 (or Q11) over the live dock, or over the hub when no dock is showing. A link that
+    /// arrives during another pairing or scan replaces it.
+    func presentPairingLink(_ link: PairingLink) {
+        guard let root else { return }
+        if discoveryState == .denied {
+            pendingLinkRoute = .pair(link)
+            showProblem(.localNetworkOff)
+            return
+        }
+        let overDock = dock?.isReady == true && attempt == nil
+        if !overDock, attempt != nil || !(root.currentScreen is ComputersViewController) {
+            showHub(overDock: false)
+        }
+        let saved = store.computer(link.hostId)
+        let pinned = pins.pin(for: link.hostId)
+        let present: (Bool) -> Void = { [weak self] sessionValid in
+            guard let self, let root = self.root else { return }
+            let plan = QRPairingRules.plan(link: link, saved: saved, pinned: pinned, sessionValid: sessionValid)
+            let screen = QRPairingViewController(link: link, plan: plan, coordinator: self)
+            if let presented = root.presentedViewController, !presented.isBeingDismissed {
+                root.dismissModals(animated: false) { root.presentModal(screen, style: .fadeScale) }
+            } else {
+                root.presentModal(screen, style: .fadeScale)
+            }
+        }
+        if let saved, pinned != nil, !needsPin.contains(saved.hostId) {
+            SessionCookies.session(for: saved.endpoint.host ?? "", in: cookieStore) { present($0 != nil) }
+        } else {
+            present(false)
+        }
+    }
+
+    /// The in-app scanner (or its "Use your Camera app" fallback) over whatever is showing.
+    func presentScanner() {
+        root?.presentModal(ScannerViewController(coordinator: self), style: .fade)
+    }
+
+    /// Q8 "Scan again": the scanner replaces the QR flow.
+    func scanAgain() {
+        guard let root else { return }
+        root.dismissModals(animated: false) { [weak self] in
+            guard let self else { return }
+            if self.root?.hasScreen != true && self.dock == nil { self.showHub(overDock: false) }
+            self.presentScanner()
+        }
+    }
+
+    /// The QR flow ended without pairing (Cancel, close, Not now).
+    func pairingLinkClosed() {
+        root?.dismissModals(animated: true)
+        if root?.hasScreen != true && dock == nil { showHub(overDock: false) }
+    }
+
+    /// Already paired with the scanned certificate and a session: open its dock, moving the saved
+    /// endpoint (and session cookie) when the scanned code found it at a new address.
+    func openPairedFromLink(_ hostId: String, at endpoint: URL?) {
+        guard let computer = store.computer(hostId) else { pairingLinkClosed(); return }
+        let go: () -> Void = { [weak self] in
+            guard let self, let current = self.store.computer(hostId) else { return }
+            self.root?.dismissModals(animated: false)
+            self.open(current, switching: true)
+        }
+        guard let endpoint, ConnectionRules.moved(computer, to: endpoint) else { go(); return }
+        SessionCookies.copySession(from: computer.endpoint.host ?? "", to: endpoint.host ?? "", in: cookieStore) { [weak self] _ in
+            self?.store.update(hostId) { $0.endpoint = endpoint }
+            go()
+        }
+    }
+
+    /// The context for pairing at a host the scanned code verified (its certificate is pinned).
+    func pairingContext(for link: PairingLink, found: QRPairingSession.Found) -> PairingContext {
+        let info = found.info
+        return PairingContext(hostId: link.hostId, hostName: info.hostName.isEmpty ? link.name : info.hostName,
+                              platform: Computer.normalizedPlatform(info.platform), endpoint: found.endpoint,
+                              presented: link.fingerprint, pairingOpen: info.pairingOpen ?? true, revoked: false,
+                              existing: store.computer(link.hostId), hostUi: info.hostUi == true, verifiedByCode: true)
+    }
+
+    /// Q8 "Enter the PIN instead": step 2 only, the scanned certificate already pinned.
+    func enterPinInstead(_ context: PairingContext) {
+        guard let root else { return }
+        root.dismissModals(animated: false) { [weak self] in
+            guard let self else { return }
+            if self.root?.hasScreen != true && self.dock == nil { self.showHub(overDock: false) }
+            self.beginPairing(context)
         }
     }
 

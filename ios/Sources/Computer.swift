@@ -13,6 +13,8 @@ struct Computer: Codable, Equatable {
     var addedAt: Date
     /// A very old host whose `/health` has no `hostId`; the key was generated on this phone.
     var localId: Bool?
+    /// The host reported `/health.hostUi` on the last verified contact (picks instructions only).
+    var hostUi: Bool? = nil
 
     static let nicknameLimit = 40
     static let displayLimit = 60

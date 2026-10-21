@@ -14,6 +14,8 @@ final class ProblemViewController: ScreenViewController, FocusProviding {
 
     private(set) var problem: Problem
     var onPrimary: (() -> Void)?
+    /// `/health.hostUi` of this computer: "Pair a new phone" instructions (section 10.9).
+    var hostUi = false
     var onSecondary: (() -> Void)?
 
     let titleLabel = Theme.label(font: Theme.title)
@@ -251,7 +253,8 @@ final class ProblemViewController: ScreenViewController, FocusProviding {
                 body = Theme.rich("This phone is at `\(phoneIp)`, but \(name) was at `\(hostIp)`. Join the same Wi-Fi as the computer.", font: Theme.font(13), lineHeight: 1.4)
             case .notRunning:
                 title = "WinDock is running on \(name)"
-                body = Theme.rich(platform == "macos" ? "On the Mac, run `npm run mac:status` to check."
+                let mac = hostUi ? "Its icon should be in the Mac's menu bar." : "On the Mac, run `npm run mac:status` to check."
+                body = Theme.rich(platform == "macos" ? mac
                                     : "Look for the WinDock icon in the taskbar tray, by the clock.", font: Theme.font(13), lineHeight: 1.4)
             case .isolation:
                 title = "The network lets devices see each other"
@@ -281,7 +284,9 @@ final class ProblemViewController: ScreenViewController, FocusProviding {
         let thenCard = CodeCard(key: "When you paired", code: then, current: false)
         let nowCard = CodeCard(key: "Now", code: now, current: true)
         let caption = Theme.label(font: Theme.caption, color: Theme.text3)
-        caption.attributedText = Theme.paragraph("To check, open Show connection info on \(name). If it shows the new code, pair again.",
+        let howTo = hostUi ? "To check, open WinDock on \(name) and choose Pair a new phone. If it shows the new code, pair again."
+                           : "To check, open Show connection info on \(name). If it shows the new code, pair again."
+        caption.attributedText = Theme.paragraph(howTo,
                                                  font: Theme.font(12), color: Theme.text3, lineHeight: 1.4)
         right.addArrangedSubview(thenCard)
         right.setCustomSpacing(8, after: thenCard)

@@ -15,6 +15,8 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
     private let railHeading = Theme.label(font: Theme.display)
     private let railBody = Theme.label(font: Theme.body, color: Theme.text2)
     let addLink = RailLink("Add by address", symbol: Theme.Icon.plus)
+    /// "Scan QR code" (or "Use your Camera app" without the in-app scanner), first in the rail.
+    let scanLink = RailLink(QRScanCapability.entryTitle, symbol: Theme.Icon.qrCode)
     private let railContainer = UIView()
     private let content = UIView()
     private let panelScroll = UIScrollView()
@@ -100,6 +102,10 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
         spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
         spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: 16).isActive = true
         rail.addArrangedSubview(spacer)
+        scanLink.accessibilityIdentifier = "scan-qr"
+        scanLink.addTarget(self, action: #selector(scanTapped), for: .touchUpInside)
+        scanLink.contentHorizontalAlignment = .leading
+        rail.addArrangedSubview(scanLink)
         addLink.accessibilityIdentifier = "add-by-address"
         addLink.addTarget(self, action: #selector(addTapped), for: .touchUpInside)
         rail.addArrangedSubview(addLink)
@@ -303,6 +309,7 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
         let nextPanel: Panel = needsPriming ? .priming : (firstLaunch && discoveredOrder.isEmpty && stillLooking ? .empty : .none)
         if nextPanel != panel || railInHeader != (panelStack.arrangedSubviews.first === rail) { showPanel(nextPanel) }
         addLink.isHidden = nextPanel != .none
+        scanLink.isHidden = nextPanel != .none
         collectionView.isHidden = nextPanel != .none
         fade.isHidden = nextPanel != .none
         panelScroll.isHidden = nextPanel == .none
@@ -331,6 +338,7 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
         var order: [Any] = []
         if let close = rail.arrangedSubviews.first?.subviews.first(where: { $0 is IconButton }) { order.append(close) }
         order += [railHeading, railBody, nextPanel == .none ? collectionView! : panelScroll]
+        if !scanLink.isHidden { order.append(scanLink) }
         if !addLink.isHidden { order.append(addLink) }
         view.accessibilityElements = railInHeader ? nil : order
     }
@@ -396,11 +404,15 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
             panelStack.addArrangedSubview(header)
             header.widthAnchor.constraint(equalTo: panelStack.widthAnchor).isActive = true
             panelStack.addArrangedSubview(top)
-            let enter = ThemedButton("Enter an address", kind: .secondary)
-            enter.addTarget(self, action: #selector(addTapped), for: .touchUpInside)
-            addPanelContent(symbol: Theme.Icon.search, tone: .neutral, title: "No computers found yet",
-                            body: "Make sure WinDock is running on your computer and both devices are on the same Wi-Fi. Guest networks often keep devices from seeing each other.",
-                            buttons: [enter])
+            // Q1: nothing found yet, so scanning (which pairs even without discovery) leads.
+            let scan = ThemedButton(QRScanCapability.entryTitle, kind: .primary, image: Theme.Icon.camera)
+            scan.accessibilityIdentifier = "empty-scan-qr"
+            scan.addTarget(self, action: #selector(scanTapped), for: .touchUpInside)
+            let enter = ghostButton("Enter an address", #selector(addTapped))
+            enter.accessibilityIdentifier = "empty-enter-address"
+            addPanelContent(symbol: Theme.Icon.qrCode, tone: .accent, title: "Scan the code on your computer",
+                            body: "On the computer, open WinDock and choose Pair a new phone. Scanning pairs in one step, even if this phone can't find the computer.",
+                            buttons: [scan, enter])
             panelStack.addArrangedSubview(bottom)
         }
         top.heightAnchor.constraint(equalTo: bottom.heightAnchor).isActive = true
@@ -571,6 +583,8 @@ final class ComputersViewController: ScreenViewController, UICollectionViewDeleg
     // MARK: Actions
 
     @objc private func addTapped() { coordinator.presentAddByAddress() }
+
+    @objc private func scanTapped() { coordinator.presentScanner() }
 
     @objc private func primeTapped() {
         coordinator.primeLocalNetwork()

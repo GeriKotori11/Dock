@@ -118,6 +118,12 @@ enum Theme {
         static let close = "xmark"
         static let wifiOff = "wifi.slash"
         static let warning = "exclamationmark.circle"
+        static let qrCode = "qrcode"
+        static let camera = "camera"
+        static let info = "info.circle"
+        static let wifi = "wifi"
+        static let torchOff = "flashlight.off.fill"
+        static let torchOn = "flashlight.on.fill"
     }
 }
 
