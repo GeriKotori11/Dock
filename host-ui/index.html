@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-os="macos">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<title>WinDock</title>
+<link rel="stylesheet" href="/host/host.css">
+<script type="module" src="/host/host.js"></script>
+</head>
+<body>
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="M6.5 9.5l5.5 5.5 5.5-5.5"/></symbol>
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 19.5V20M20 14v.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v7"/><path d="M7.2 6.6a7.5 7.5 0 1 0 9.6 0"/></symbol>
+  <symbol id="i-net" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M10.9 7.5l-4.3 8.5M13.1 7.5l4.3 8.5M7.7 18h8.6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.2c0 4.6-3.1 8.4-7.5 9.8-4.4-1.4-7.5-5.2-7.5-9.8V6z"/><path d="M12 8v4.5"/><circle cx="12" cy="15.8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M2.5 8.8a14 14 0 0 1 4.3-2.7M10.5 4.6a14 14 0 0 1 11 4.2M5.5 12.2a9.5 9.5 0 0 1 4-2.2M8.7 15.5a5 5 0 0 1 6.6 0M3.5 3.5l17 17"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4.5 19.5l3.8-.9L19 7.9a1.9 1.9 0 0 0-2.7-2.7L5.6 15.9z"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></symbol>
+  <symbol id="i-logs" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9h17"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></symbol>
+</svg>
+
+<div class="hp" id="root">
+  <div class="h-frame" id="frame">
+    <p class="vh" id="live" aria-live="polite"></p>
+    <p class="vh" id="alert-live" aria-live="assertive"></p>
+
+    <!-- Header: brand (Home, first run, wide) -->
+    <header class="h-head h-head-main" id="head-main">
+      <div class="h-brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>WinDock</div>
+      <span class="h-chip" id="chip" role="status"><span class="dot" aria-hidden="true"></span><span class="h-spin" aria-hidden="true"></span><span class="vh" id="chip-a11y">WinDock is running</span><span aria-hidden="true" id="chip-text">Running</span></span>
+      <button type="button" class="h-ib" id="more-btn" aria-label="More" aria-haspopup="menu" aria-expanded="false" hidden><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
+    </header>
+    <!-- Header: Pair view (compact only) -->
+    <header class="h-head h-head-pair" id="head-pair">
+      <button type="button" class="h-ib" id="back-btn" aria-label="Back"><svg class="i" aria-hidden="true"><use href="#i-chev-l"/></svg></button>
+      <h1 class="h-title-c" id="pair-heading" tabindex="-1">Pair a new phone</h1>
+    </header>
+
+    <main class="h-main" id="main" data-view="home">
+      <div class="h-cols">
+        <!-- Pairing column: Pair view (compact), first run, left card (wide) -->
+        <section class="col-pair" id="col-pair" aria-labelledby="pair-title">
+          <div class="h-card h-pair-card">
+            <div class="pair-intro" id="pair-intro">
+              <h2 class="h-t h-pair-title" id="pair-title" tabindex="-1">Pair a new phone</h2>
+              <p class="h-p h-first-body" id="first-body">In WinDock on your phone, tap <b>Scan QR code</b>, or point the phone’s camera at this code.</p>
+            </div>
+            <div id="pair-banner-slot"></div>
+            <div id="pair-body"></div>
+          </div>
+        </section>
+
+        <!-- Home column -->
+        <section class="col-home" id="col-home">
+          <div class="h-ident home-only" id="ident">
+            <div class="h-ident-text">
+              <h1 class="h-t h-ident-name" id="home-heading" tabindex="-1"></h1>
+              <div class="meta" id="ident-meta"></div>
+              <dl class="h-dl" id="details" hidden></dl>
+            </div>
+          </div>
+          <div id="banner-slot" class="home-only"></div>
+          <button type="button" class="h-btn primary block home-only h-pair-btn" id="pair-btn"><svg class="i" aria-hidden="true"><use href="#i-qr"/></svg>Pair a new phone</button>
+          <div id="phones" class="home-only"></div>
+          <h2 class="h-sec" id="computer-title">This computer</h2>
+          <div class="h-group" id="computer"></div>
+          <div id="note-slot"></div>
+        </section>
+      </div>
+    </main>
+    <div class="h-fade" aria-hidden="true"></div>
+  </div>
+
+  <div class="h-menu" id="menu" role="menu" hidden></div>
+
+  <dialog class="h-dialog" id="remove-all" role="alertdialog" aria-labelledby="ra-title" aria-describedby="ra-body">
+    <h2 class="h-t" id="ra-title">Remove all phones?</h2>
+    <p class="h-p" id="ra-body">They disconnect now, and each one needs a new PIN to connect again. Your dock and apps stay as they are.</p>
+    <p class="h-err" id="ra-error" hidden></p>
+    <div class="h-btns end">
+      <button type="button" class="h-btn" id="ra-cancel">Cancel</button>
+      <button type="button" class="h-btn danger" id="ra-confirm">Remove all</button>
+    </div>
+  </dialog>
+</div>
+</body>
+</html>

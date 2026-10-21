@@ -69,6 +69,7 @@ PIN, tokens or paths.
 | `api` | `1` | API version (see Versioning) |
 | `tls` | `{ fingerprint, code }` \| null | Hint only (unauthenticated over plain HTTP) |
 | `pairingOpen` | boolean | Whether `POST /api/auth` would currently accept a PIN |
+| `hostUi` | `true` \| missing | The host serves the control page (`/host`), so phones can say "choose Pair a new phone in WinDock on the computer". Missing on older hosts: keep the `npm run info` wording |
 
 ## Pairing
 
@@ -77,11 +78,17 @@ PIN, tokens or paths.
 - **PIN:** exactly 6 ASCII digits, uniformly random.
 - **Window:** pairing is open for 10 minutes after the host starts and for 10
   minutes after every local `GET /api/pairing` (`npm run info`, macOS installer,
-  Windows tray *Show connection info*). Each reopen grants a full 10 minutes.
+  Windows tray *Show connection info*) or `POST /api/host/pairing/open` (the
+  control page). Each reopen grants a full 10 minutes. A host with no LAN
+  address keeps pairing closed and reopens it when an address appears.
+- **Stop pairing** (`POST /api/host/pairing/close`) closes the window and
+  rotates the PIN, so a photographed code no longer works. Running out of time
+  keeps the PIN: a phone holding a scanned code can finish once pairing
+  reopens.
 - **Single use:** a new PIN is generated after every successful pairing.
 - **Budget:** wrong PINs from all clients share a budget of 10 per window. The
-  tenth rotates the PIN and closes the window until the next local
-  `GET /api/pairing`, which also resets the count.
+  tenth rotates the PIN and closes the window until the next local reopen,
+  which also resets the count.
 - **Per-client lockout:** 5 failed attempts (wrong or malformed) from one
   address lock it out for 60 seconds.
 - **`deviceName`** (optional): control/format characters removed, trimmed, at
@@ -150,13 +157,114 @@ session gets 403 `{ "error": "local only" }`; a request with neither gets 401.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/api/pairing` | `{ endpoint, pin, hostName, hostId, secureEndpoint, securityCode, pairingOpenForMs }`; reopens the pairing window |
-| GET | `/api/devices` | `{ devices: [{ id, name, issuedAt, lastSeenAt }] }`, newest first. `id` is 16 hex characters, never derived from the token. Times are ms since epoch |
+| GET | `/api/pairing` | `{ endpoint, pin, hostName, hostId, secureEndpoint, securityCode, pairingOpenForMs }`; reopens the pairing window (CLI and older trays) |
+| GET | `/api/devices` | `{ devices: [{ id, name, label, issuedAt, lastSeenAt, connected }] }`, newest first. `id` is 16 hex characters, never derived from the token. `label` is the host-side name (string or null); `connected` is true while the session has an open dock (`/`) WebSocket. Times are ms since epoch |
+| PATCH | `/api/devices/<id>` | Body `{ "label": string \| null }` with `Content-Type: application/json`. The label is cleaned like `deviceName` (control/format characters removed, trimmed) and cut to 40 characters; null or empty clears it. `{ ok: true, id, label }`; 404 `unknown device`; 400 `label must be a string or null`; 415 without a JSON content type. The phone never sees the label |
 | DELETE | `/api/devices/<id>` | `{ ok: true, id }`, or 404 `{ "error": "unknown device" }` |
 | DELETE | `/api/devices` | `{ ok: true, revoked: n }` |
 
 Revoking a device makes its cookie get 401 and closes its open WebSockets
 (sync and input) at once with close code `1008`, reason `session revoked`.
+
+### Cross-site guard
+
+A web page open in a browser on the computer can make that browser send
+requests to `127.0.0.1` (an `<img>`, a form, a `fetch`), and those requests
+pass the loopback check. So every local-only route (`/api/pairing`,
+`/api/devices*`, `/host*`, `/api/host/*`) answers 403
+`{ "error": "cross-site request" }` when:
+
+- `Sec-Fetch-Site` is `cross-site` or `same-site`, or
+- an `Origin` header is present and is not the request's own origin (scheme,
+  host and port; `Origin: null` never matches).
+
+Requests without these headers (the CLI, the trays, native shells) are
+unaffected. Without the guard, an `<img src="http://127.0.0.1:8620/api/pairing">`
+on any web page reopened pairing and reset the wrong-PIN budget on every load.
+
+## Host control page (local only)
+
+The computer's own interface: one page shown in a browser, the macOS menu-bar
+popover or the Windows tray flyout. Same local-only rule and cross-site guard
+as above; a LAN client gets 404 for `/host` (it is not advertised) and 403
+`{ "error": "local only" }` for `/api/host/*`. Mutating `/api/host/*` calls
+need `Content-Type: application/json` (415 otherwise), which forces a CORS
+preflight from any other origin.
+
+Every `/host` and `/api/host/*` response carries
+`Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+`X-Frame-Options: DENY`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`
+and `X-Content-Type-Options: nosniff`.
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/host`, `/host/*` | The page (`host-ui/` in the repository; never under `public/`, which phones load) |
+| GET | `/api/host/status` | Status snapshot (below). Never carries the PIN; never reopens pairing |
+| GET | `/api/host/events` | Server-sent events: `event: status` with a full snapshot on every change (pairing opened, closed, timed out or rotated; a device paired, renamed, removed, connected or disconnected; address, discovery or capture changes) and a `: heartbeat` comment every 15 s. Ends when the host stops. Clients fall back to polling `/api/host/status` |
+| GET | `/api/host/pairing` | Open: `{ open: true, pin, securityCode, address, endpoint, secureEndpoint, hostName, remainingMs, generation, qr }` with `qr` = `{ text, size, version, path }` (null when TLS is off). Closed: `{ open: false, closedReason, generation }`, no PIN. Never reopens |
+| POST | `/api/host/pairing/open` | Opens pairing for a full 10 minutes (resets the budget; keeps the PIN); returns the body above. With no LAN address it stays closed (`closedReason: "no-address"`) |
+| POST | `/api/host/pairing/close` | Stop pairing: closes now and rotates the PIN; returns the closed body (`closedReason: "stopped"`) |
+
+`closedReason` is `"timeout"`, `"budget"` (10 wrong PINs), `"stopped"`,
+`"no-address"`, or null while open. `generation` grows on every change a QR
+code depends on: opened, PIN rotated (after a pairing or by the budget),
+stopped, timed out, LAN address changed. A page refetches `/api/host/pairing`
+when `status.pairing.generation` changes and `/api/devices` when
+`status.devices.generation` changes.
+
+Status snapshot:
+
+```json
+{
+  "app": "windock", "version": "0.2.2",
+  "hostId": "5b0e8f3a-2c41-4d7e-9a16-73c2be4d91f0", "hostName": "Geris-MacBook-Air",
+  "platform": "macos", "platformName": "macOS",
+  "shell": null,
+  "network": { "address": "192.168.1.34", "port": 8620,
+    "endpoint": "http://192.168.1.34:8620", "secureEndpoint": "https://192.168.1.34:8620",
+    "others": [{ "address": "10.0.0.12", "interface": "en5", "kind": "ethernet" }] },
+  "tls": { "code": "6E21-B4F0-93AD" },
+  "plainHttp": true,
+  "discovery": { "bonjour": "on", "udp": "on" },
+  "firewall": "unknown",
+  "pairing": { "open": true, "remainingMs": 540000, "closedReason": null, "generation": 7 },
+  "devices": { "count": 3, "generation": 12 },
+  "capture": null
+}
+```
+
+- `shell`: `WINDOCK_SHELL` from the shell that spawned the host
+  (`macos-menubar`, `windows-tray`), null from a terminal or the LaunchAgent.
+- `discovery.*`: `"on"`, `"off"` (`WINDOCK_BONJOUR=0`) or `"failed"`. `tls` is
+  null with TLS off. `firewall` is `"ok"`, `"blocked"` or `"unknown"` (the host
+  reports `"unknown"`; the macOS shell checks the firewall itself). `capture` is
+  null on hosts without screen capture, else `{ phase }`.
+- `hostName` drops macOS's `.local` suffix.
+
+### QR pairing payload
+
+The page shows a QR code (byte mode, error correction M, version 8 for typical
+names, never above 9) encoding:
+
+```
+windock://pair?v=1&id=<hostId>&addr=<ipv4>:<port>&fp=<fingerprint>&pin=<pin>&name=<name>
+```
+
+| Field | Encoding |
+| --- | --- |
+| `v` | `1`. A phone refuses `v > 1` ("needs a newer WinDock app") |
+| `id` | The host ID UUID as 16 raw bytes, base64url without padding (22 characters); must equal `/health.hostId` |
+| `addr` | The advertised LAN IPv4 address and port (the same address as Bonjour TXT `addr`) |
+| `fp` | SHA-256 of the leaf certificate DER, 32 bytes, base64url without padding (43 characters). The phone pins it and sends the PIN only over a TLS connection presenting it |
+| `pin` | The current 6-digit PIN |
+| `name` | The computer name, control characters removed, percent-encoded (RFC 3986 unreserved characters kept), cut on a character boundary to at most 32 encoded bytes. Display only |
+
+Fields are written in this order; parsers accept any order, ignore unknown
+keys and reject duplicate known keys. QR pairing needs TLS: with
+`WINDOCK_TLS=0` there is no QR. The link carries the PIN, so neither side logs
+it. Example (148 bytes, version 8):
+`windock://pair?v=1&id=Ww6POixBTX6aFnPCvk2R8A&addr=192.168.1.34:8620&fp=biG08JOtXwx6EunUs4bxoMJefZtPYwGKLOV7lNPg9qE&pin=482913&name=Geris-MacBook-Air`.
 
 ## Dock endpoints (session required)
 

@@ -46,8 +46,10 @@ export function originAllowed(req) {
  * @param {(req:import('node:http').IncomingMessage)=>string|null} [opts.sessionOf]
  *   the session hash a socket is opened under (null for loopback trust), so a
  *   revoked session's sockets can be closed with disconnect()/disconnectAll().
+ * @param {()=>void} [opts.onSessionsChange] called whenever a socket opened
+ *   under a session connects or closes (the host page's "Connected now").
  */
-export function createSyncHub({ server, servers = [server], isAuthorized, getState, sessionOf = () => null, heartbeatMs = HEARTBEAT_MS }) {
+export function createSyncHub({ server, servers = [server], isAuthorized, getState, sessionOf = () => null, heartbeatMs = HEARTBEAT_MS, onSessionsChange = () => {} }) {
   const wss = new WebSocketServer({ noServer: true });
   const alive = new WeakMap();
   /** ws -> session hash, for sockets opened under a session. */
@@ -64,7 +66,11 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
     wss.handleUpgrade(req, socket, head, (ws) => {
       if (hash) {
         sessionsBySocket.set(ws, hash);
-        ws.once("close", () => sessionsBySocket.delete(ws));
+        ws.once("close", () => {
+          sessionsBySocket.delete(ws);
+          onSessionsChange();
+        });
+        onSessionsChange();
       }
       wss.emit("connection", ws, req);
     });
@@ -118,6 +124,12 @@ export function createSyncHub({ server, servers = [server], isAuthorized, getSta
     wss,
     disconnect: (hash) => disconnectWhere((h) => h === hash),
     disconnectAll: () => disconnectWhere(() => true),
+    /** Session hashes that have at least one open sync socket. */
+    connectedSessions() {
+      const hashes = new Set();
+      for (const [ws, hash] of sessionsBySocket) if (ws.readyState === ws.OPEN) hashes.add(hash);
+      return hashes;
+    },
     get clientCount() {
       return wss.clients.size;
     },

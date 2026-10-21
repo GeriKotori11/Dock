@@ -202,7 +202,8 @@ t.ok(!revocable.verify(rtok), "regenerating the pin revokes every session");
   t.deepEqual(list.map((d) => d.name), ["Phone", "Android phone", "iPhone"], "devices are listed newest first with sanitized names");
   t.ok(list.every((d) => /^[0-9a-f]{16}$/.test(d.id)), "every device has a 16-hex public id");
   t.equal(new Set(list.map((d) => d.id)).size, 3, "device ids are distinct");
-  t.deepEqual(Object.keys(list[0]).sort(), ["id", "issuedAt", "lastSeenAt", "name"], "a device exposes only id, name, issuedAt and lastSeenAt");
+  t.deepEqual(Object.keys(list[0]).sort(), ["id", "issuedAt", "label", "lastSeenAt", "name"], "a device exposes only id, name, label, issuedAt and lastSeenAt");
+  t.ok(list.every((d) => d.label === null), "a freshly paired device has no host-side label");
   t.ok(list.every((d) => d.id !== hashToken(a).slice(0, 16) && d.id !== hashToken(b).slice(0, 16) && d.id !== hashToken(c).slice(0, 16)),
     "device ids are not derived from token hashes");
   t.ok(!JSON.stringify(list).includes(hashToken(a)), "the device list never carries a session hash");

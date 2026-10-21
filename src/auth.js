@@ -30,6 +30,8 @@ export const COOKIE_NAME = "windock_session";
 export const LAST_SEEN_INTERVAL_MS = 60 * 60 * 1000;
 export const DEVICE_NAME_MAX = 60;
 export const DEFAULT_DEVICE_NAME = "Phone";
+/** A host-side label for a paired device (renamed on this computer). */
+export const DEVICE_LABEL_MAX = 40;
 
 /** Cryptographically uniform PIN; avoids the modulo bias of randomBytes % 10. */
 export function newPin(length = PIN_LENGTH) {
@@ -144,14 +146,24 @@ export function createLockout({ maxFails = MAX_FAILS, lockMs = LOCK_MS, now = Da
   };
 }
 
+/** Why the pairing window is closed (`closedReason`); null while it is open. */
+export const CLOSED_REASONS = Object.freeze(["timeout", "budget", "stopped", "no-address"]);
+
 /**
  * The pairing code and its window.
  *
  * Pairing is open for `windowMs` after creation and again after each
- * `reopen()` (a local GET /api/pairing). A code works once: `recordSuccess()`
- * rotates it. Wrong guesses from every client share one budget; spending it
- * rotates the code and closes the window until the next `reopen()`, which also
- * resets the count. `now` is injectable for tests.
+ * `reopen()` (a local GET /api/pairing or POST /api/host/pairing/open). A code
+ * works once: `recordSuccess()` rotates it. Wrong guesses from every client
+ * share one budget; spending it rotates the code and closes the window until
+ * the next `reopen()`, which also resets the count. `close({ rotate, reason })`
+ * closes the window early: "Stop pairing" rotates the code so a photographed
+ * one is dead, while a timeout keeps it (so a phone holding a scanned code can
+ * finish once pairing reopens). `closedReason` says why the window is closed
+ * ("timeout" | "budget" | "stopped" | "no-address", null while open), and
+ * `generation` counts every change a QR code depends on: opened, code rotated
+ * (after a pairing or by the budget), stopped, timed out, address changed
+ * (`touch()`). `now` is injectable for tests.
  */
 export function createPairing({
   pin = newPin(),
@@ -163,6 +175,17 @@ export function createPairing({
   let code = pin;
   let openUntil = now() + windowMs;
   let fails = 0;
+  let reason = null;
+  let generation = 1;
+  // A window that runs out on its own is noticed lazily, on the next read:
+  // it then becomes a "timeout" close and counts as one change.
+  function settle() {
+    if (reason === null && now() >= openUntil) {
+      reason = "timeout";
+      openUntil = 0;
+      generation += 1;
+    }
+  }
   return {
     get pin() {
       return code;
@@ -170,18 +193,48 @@ export function createPairing({
     get failures() {
       return fails;
     },
+    get closedReason() {
+      settle();
+      return reason;
+    },
+    get generation() {
+      settle();
+      return generation;
+    },
     isOpen() {
-      return now() < openUntil;
+      settle();
+      return reason === null;
     },
     /** Milliseconds left in the window, 0 when closed. */
     remainingMs() {
-      return Math.max(0, openUntil - now());
+      settle();
+      return reason === null ? Math.max(0, openUntil - now()) : 0;
     },
     /** Open (or extend) the window for a full `windowMs`; resets the budget. */
     reopen() {
+      settle();
       openUntil = now() + windowMs;
       fails = 0;
+      reason = null;
+      generation += 1;
       return windowMs;
+    },
+    /**
+     * Close the window now. `rotate` replaces the code (Stop pairing);
+     * `reason` defaults to "stopped".
+     */
+    close({ rotate = false, reason: why = "stopped" } = {}) {
+      if (!CLOSED_REASONS.includes(why)) throw new TypeError(`unknown close reason: ${why}`);
+      settle();
+      if (rotate) code = nextPin();
+      openUntil = 0;
+      reason = why;
+      generation += 1;
+    },
+    /** Something a QR code carries changed (the LAN address): bump `generation`. */
+    touch() {
+      settle();
+      generation += 1;
     },
     /** Constant-time check of a candidate against the current code. */
     matches(candidate) {
@@ -189,14 +242,19 @@ export function createPairing({
     },
     /** A device paired: the code is spent. */
     recordSuccess() {
+      settle();
       code = nextPin();
+      generation += 1;
     },
     /** A wrong guess. @returns {{exhausted:boolean}} */
     recordFailure() {
       fails += 1;
       if (fails < budget) return { exhausted: false };
+      settle();
       code = nextPin();
       openUntil = 0;
+      reason = "budget";
+      generation += 1;
       return { exhausted: true };
     },
   };
@@ -212,6 +270,19 @@ export function sanitizeDeviceName(value) {
   const stripped = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim();
   const name = Array.from(stripped).slice(0, DEVICE_NAME_MAX).join("").trim();
   return name || DEFAULT_DEVICE_NAME;
+}
+
+/**
+ * A host-side label for a paired device, cleaned like a device name (control,
+ * format and line-separator characters removed, trimmed) and cut to
+ * DEVICE_LABEL_MAX code points. Anything else, or nothing left, is null, which
+ * means "use the phone's own name".
+ */
+export function sanitizeDeviceLabel(value) {
+  if (typeof value !== "string") return null;
+  const stripped = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim();
+  const label = Array.from(stripped).slice(0, DEVICE_LABEL_MAX).join("").trim();
+  return label || null;
 }
 
 /** A random public device id; never derived from the token. */
@@ -271,7 +342,9 @@ function readSessionFile(path, at, max) {
       lastSeenAt = issuedAt;
       filled = true;
     }
-    entries.push({ hash, id, name, issuedAt, expiresAt, lastSeenAt });
+    const label = sanitizeDeviceLabel(raw.label);
+    if (raw.label !== undefined && label !== raw.label) filled = true;
+    entries.push({ hash, id, name, label, issuedAt, expiresAt, lastSeenAt });
   }
   entries.sort((a, b) => a.issuedAt - b.issuedAt);
   const kept = entries.slice(-max);
@@ -314,6 +387,7 @@ export function createSessionStore({
         for (const [hash, s] of sessions) {
           snapshot.sessions.push({
             hash, id: s.id, name: s.name, issuedAt: s.issuedAt, expiresAt: s.expiresAt, lastSeenAt: s.lastSeenAt,
+            ...(s.label ? { label: s.label } : {}),
           });
         }
         return writeFileAtomic(path, `${JSON.stringify(snapshot)}\n`);
@@ -355,7 +429,7 @@ export function createSessionStore({
       prune(at);
       const token = randomBytes(32).toString("base64url");
       sessions.set(hashToken(token), {
-        id: unusedId(), name: sanitizeDeviceName(name), issuedAt: at, expiresAt: at + ttlMs, lastSeenAt: at,
+        id: unusedId(), name: sanitizeDeviceName(name), label: null, issuedAt: at, expiresAt: at + ttlMs, lastSeenAt: at,
       });
       if (path) {
         while (sessions.size > maxSessions) sessions.delete(sessions.keys().next().value);
@@ -384,9 +458,30 @@ export function createSessionStore({
     list() {
       if (prune(now())) persist();
       return [...sessions.values()]
-        .map(({ id, name, issuedAt, lastSeenAt }, order) => ({ id, name, issuedAt, lastSeenAt, order }))
+        .map(({ id, name, label, issuedAt, lastSeenAt }, order) => ({ id, name, label: label ?? null, issuedAt, lastSeenAt, order }))
         .sort((a, b) => b.issuedAt - a.issuedAt || b.order - a.order)
         .map(({ order, ...device }) => device);
+    },
+    /**
+     * Set (or clear, with null/empty) the host-side label of one device.
+     * @returns {{id:string, label:string|null} | null} null for an unknown id
+     */
+    setLabel(id, label) {
+      for (const s of sessions.values()) {
+        if (s.id !== id) continue;
+        if (s.expiresAt <= now()) return null;
+        const next = sanitizeDeviceLabel(label);
+        if (next !== (s.label ?? null)) {
+          s.label = next;
+          persist();
+        }
+        return { id, label: next };
+      }
+      return null;
+    },
+    /** The public device id of a session hash, or null. */
+    idOf(hash) {
+      return sessions.get(hash)?.id ?? null;
     },
     /** Revoke one device by its public id; returns the session hash, or null. */
     revoke(id) {

@@ -8,8 +8,10 @@
 
 import { createServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
-import { hostname } from "node:os";
+import { hostname, networkInterfaces } from "node:os";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { isIPv4 } from "node:net";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { createProvider } from "./src/platform/index.js";
 import { validateControl, isDestructiveVerb, CONTROL_VERBS, featuresOf } from "./src/platform/contract.js";
@@ -22,6 +24,7 @@ import { createIconCache, FALLBACK_ICON } from "./src/icons.js";
 import { startDiscovery, primaryAddress, DISCOVERY_PORT } from "./src/discovery.js";
 import { startBonjour, buildTxt } from "./src/bonjour.js";
 import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_MS } from "./src/tls.js";
+import { pairingQr } from "./src/qr.js";
 import {
   newPin,
   isValidPinShape,
@@ -31,6 +34,7 @@ import {
   sessionCookie,
   tokenFromRequest,
   authorize,
+  isTrustedLoopback,
   DEVICE_ID_RE,
 } from "./src/auth.js";
 
@@ -39,6 +43,38 @@ export const BODY_MAX_BYTES = 64 * 1024;
 /** Version of the host HTTP API advertised by /health. */
 export const API_VERSION = 1;
 const PUBLIC_DIR = resolve(import.meta.dirname, "public");
+/** The host control page: served only to this computer, never to phones. */
+const HOST_UI_DIR = resolve(import.meta.dirname, "host-ui");
+/** The package version, reported by /api/host/status. */
+export const HOST_VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(resolve(import.meta.dirname, "package.json"), "utf8")).version || null;
+  } catch {
+    return null;
+  }
+})();
+/** SSE comment heartbeat for /api/host/events. */
+export const EVENTS_HEARTBEAT_MS = 15_000;
+/** How often an open event stream re-checks status for changes nobody announced. */
+export const EVENTS_CHECK_MS = 2_000;
+/** How often start() re-reads the LAN address. */
+export const ADDRESS_CHECK_MS = 5_000;
+
+/**
+ * Headers for the host page and every /api/host/* response (section 13.4 of
+ * docs/design/HOST-CONTROL-PAGE.md): no framing, no caching, no referrer, no
+ * cross-origin embedding.
+ */
+export const HOST_SECURITY_HEADERS = Object.freeze({
+  "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
+    + "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+  "x-frame-options": "DENY",
+  "cache-control": "no-store",
+  "referrer-policy": "no-referrer",
+  "cross-origin-opener-policy": "same-origin",
+  "cross-origin-resource-policy": "same-origin",
+  "x-content-type-options": "nosniff",
+});
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -114,6 +150,52 @@ function sameOrigin(req) {
   }
 }
 
+/**
+ * Cross-site guard for local-only routes. A browser page on another site can
+ * still make this computer's browser send a request to 127.0.0.1 (an <img>,
+ * a form, a fetch), so a local-only route refuses any request a browser marks
+ * as cross-site or same-site, and any request whose Origin is not its own.
+ * Native clients (CLI, tray, shells) send neither header and pass.
+ */
+export function crossSiteBlocked(req) {
+  const site = String(req.headers["sec-fetch-site"] || "").toLowerCase();
+  if (site === "cross-site" || site === "same-site") return true;
+  return req.headers.origin !== undefined && !sameOrigin(req);
+}
+
+/** True when the request body is declared as JSON (forces a CORS preflight cross-origin). */
+export function isJsonRequest(req) {
+  return String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() === "application/json";
+}
+
+/** Interface name to a coarse link kind for "Also reachable at"; null when unknown. */
+export function interfaceKind(name) {
+  if (/wi-?fi|wlan|wireless|airport|^wl/i.test(name)) return "wifi";
+  if (/ethernet|^eth\d|^enp|^eno|^ens/i.test(name)) return "ethernet";
+  return null;
+}
+
+/** The computer name as people see it: macOS's ".local" suffix dropped (as Bonjour does). */
+export function displayHostName(name = hostname()) {
+  return String(name).replace(/\.local\.?$/i, "").slice(0, 255);
+}
+
+/** Other LAN IPv4 addresses of this computer (not `primary`), for the status snapshot. */
+export function otherAddresses(interfaces, primary) {
+  const out = [];
+  for (const [name, list] of Object.entries(interfaces || {})) {
+    for (const entry of list || []) {
+      const family = entry.family === 4 || entry.family === "IPv4";
+      if (!family || entry.internal || !isIPv4(entry.address || "") || entry.address === primary) continue;
+      const [a, b] = entry.address.split(".").map(Number);
+      const privateIp = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+      if (!privateIp || out.some((o) => o.address === entry.address)) continue;
+      out.push({ address: entry.address, interface: name, kind: interfaceKind(name) });
+    }
+  }
+  return out.slice(0, 8);
+}
+
 /** Resolve a static path, refusing anything that escapes the public dir. */
 export function resolveStatic(urlPath, root = PUBLIC_DIR) {
   const clean = decodeURIComponent(urlPath.split("?")[0]);
@@ -143,6 +225,11 @@ export async function createApp({
   tls = null,
   plainHttp = true,
   firstByteTimeoutMs = FIRST_BYTE_TIMEOUT_MS,
+  // Which native shell spawned the host (WINDOCK_SHELL), null from a terminal.
+  shell = null,
+  interfaces = () => networkInterfaces(),
+  eventsHeartbeatMs = EVENTS_HEARTBEAT_MS,
+  eventsCheckMs = EVENTS_CHECK_MS,
 } = {}) {
   // `endpoint` is the LAN URL the host advertises and `secureEndpoint` its
   // https form; start() fills them in once the listening port is known.
@@ -152,7 +239,13 @@ export async function createApp({
     get pin() { return pairing.pin; },
     endpoint,
     secureEndpoint,
+    // The advertised LAN IPv4 address; start() keeps it current. Undefined
+    // means "derive it from `endpoint`".
+    address: undefined,
   };
+  // Discovery health for the status snapshot; start() fills it in.
+  const discoveryState = { bonjour: "off", udp: "off" };
+  const shellName = typeof shell === "string" && /^[a-z0-9-]{1,32}$/.test(shell) ? shell : null;
   const appIcon = createIconCache(provider);
   const features = featuresOf(provider);
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
@@ -203,6 +296,270 @@ export async function createApp({
     };
   }
 
+  // ---- host control page: status, pairing body, live events ----
+
+  let devicesGeneration = 1;
+  const events = new Set(); // open /api/host/events responses
+  let emitQueued = false;
+  let lastSignature = "";
+  let timeoutTimer = null;
+  let checkTimer = null;
+
+  function endpointUrl() {
+    try {
+      return state.endpoint ? new URL(state.endpoint) : null;
+    } catch {
+      return null;
+    }
+  }
+  function currentAddress() {
+    if (state.address !== undefined) return state.address;
+    const url = endpointUrl();
+    return url && isIPv4(url.hostname) ? url.hostname : null;
+  }
+  function currentPort() {
+    const fromUrl = Number(endpointUrl()?.port);
+    if (Number.isInteger(fromUrl) && fromUrl > 0) return fromUrl;
+    const bound = listener.address?.();
+    return bound && typeof bound === "object" ? bound.port : null;
+  }
+  function connectedDeviceIds() {
+    const ids = new Set();
+    for (const hash of hub.connectedSessions()) {
+      const id = sessions.idOf?.(hash);
+      if (id) ids.add(id);
+    }
+    return ids;
+  }
+  function devicesWithPresence() {
+    const connected = connectedDeviceIds();
+    return sessions.list().map((d) => ({ ...d, label: d.label ?? null, connected: connected.has(d.id) }));
+  }
+
+  /** The status snapshot (section 13.2). Never carries the PIN. */
+  function hostStatus() {
+    const address = currentAddress();
+    const port = currentPort();
+    let others = [];
+    try {
+      others = otherAddresses(interfaces(), address);
+    } catch {
+      others = [];
+    }
+    const open = pairing.isOpen();
+    let capture = null;
+    try {
+      capture = provider.capture ? { phase: provider.capture.status()?.phase ?? "idle" } : null;
+    } catch {
+      capture = null;
+    }
+    return {
+      app: "windock",
+      version: HOST_VERSION,
+      hostId: identity?.hostId ?? null,
+      hostName: displayHostName(),
+      platform: provider.id,
+      platformName: provider.displayName ?? null,
+      shell: shellName,
+      network: {
+        address,
+        port,
+        endpoint: state.endpoint ?? null,
+        secureEndpoint: tls ? state.secureEndpoint ?? null : null,
+        others,
+      },
+      tls: tls ? { code: tls.code } : null,
+      plainHttp,
+      discovery: { ...discoveryState },
+      firewall: "unknown",
+      pairing: {
+        open,
+        remainingMs: pairing.remainingMs(),
+        closedReason: pairing.closedReason,
+        generation: pairing.generation,
+      },
+      devices: { count: sessions.size, generation: devicesGeneration },
+      capture,
+    };
+  }
+
+  /** GET /api/host/pairing: the PIN and QR while open, only the reason while closed. */
+  function pairingBody() {
+    if (!pairing.isOpen()) {
+      return { open: false, closedReason: pairing.closedReason, generation: pairing.generation };
+    }
+    const address = currentAddress();
+    const port = currentPort();
+    let qr = null;
+    // QR pairing pins the certificate fingerprint, so it needs TLS.
+    if (tls && identity?.hostId && address && port) {
+      try {
+        const code = pairingQr({
+          hostId: identity.hostId, address, port, fingerprint: tls.fingerprint, pin: pairing.pin, name: displayHostName(),
+        });
+        qr = { text: code.text, size: code.size, version: code.version, path: code.path };
+      } catch {
+        qr = null;
+      }
+    }
+    return {
+      open: true,
+      pin: pairing.pin,
+      securityCode: tls ? tls.code : null,
+      address: address && port ? `${address}:${port}` : null,
+      endpoint: state.endpoint ?? null,
+      secureEndpoint: tls ? state.secureEndpoint ?? null : null,
+      hostName: displayHostName(),
+      remainingMs: pairing.remainingMs(),
+      generation: pairing.generation,
+      qr,
+    };
+  }
+
+  function writeEvent(res, json) {
+    try {
+      res.write(`event: status\ndata: ${json}\n\n`);
+    } catch {
+      /* the close handler removes it */
+    }
+  }
+  function signatureOf(status) {
+    // Everything but the countdown, which changes every millisecond.
+    return JSON.stringify({ ...status, pairing: { ...status.pairing, remainingMs: undefined } });
+  }
+  function emitStatus() {
+    const status = hostStatus();
+    lastSignature = signatureOf(status);
+    const json = JSON.stringify(status);
+    for (const res of events) writeEvent(res, json);
+  }
+  function scheduleTimeoutNotice() {
+    clearTimeout(timeoutTimer);
+    timeoutTimer = null;
+    const left = pairing.remainingMs();
+    if (left > 0) {
+      timeoutTimer = setTimeout(changed, left + 25);
+      timeoutTimer.unref?.();
+    }
+  }
+  /** Something in the status snapshot changed: tell every open event stream (coalesced). */
+  function changed() {
+    scheduleTimeoutNotice();
+    if (emitQueued) return;
+    emitQueued = true;
+    setImmediate(() => {
+      emitQueued = false;
+      if (events.size) emitStatus();
+    });
+  }
+  function devicesChanged() {
+    devicesGeneration += 1;
+    changed();
+  }
+  scheduleTimeoutNotice();
+
+  function openEvents(req, res) {
+    res.writeHead(200, {
+      ...HOST_SECURITY_HEADERS,
+      "content-type": "text/event-stream; charset=utf-8",
+      // The socket closes with the stream, so a server shutdown never waits
+      // on a keep-alive connection.
+      connection: "close",
+    });
+    res.write("retry: 2000\n\n");
+    events.add(res);
+    const status = hostStatus();
+    lastSignature = signatureOf(status);
+    writeEvent(res, JSON.stringify(status));
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { /* closed */ }
+    }, eventsHeartbeatMs);
+    heartbeat.unref?.();
+    if (!checkTimer) {
+      // Catch changes nothing announces (capture phase, extra addresses).
+      checkTimer = setInterval(() => {
+        if (!events.size) return;
+        const now = hostStatus();
+        if (signatureOf(now) !== lastSignature) emitStatus();
+      }, eventsCheckMs);
+      checkTimer.unref?.();
+    }
+    const done = () => {
+      clearInterval(heartbeat);
+      events.delete(res);
+      if (!events.size && checkTimer) {
+        clearInterval(checkTimer);
+        checkTimer = null;
+      }
+    };
+    req.on("close", done);
+    res.on("close", done);
+  }
+  function endEvents() {
+    clearTimeout(timeoutTimer);
+    timeoutTimer = null;
+    if (checkTimer) clearInterval(checkTimer);
+    checkTimer = null;
+    for (const res of events) {
+      try { res.end(); } catch { /* gone */ }
+    }
+    events.clear();
+  }
+
+  const hostJson = (res, status, body) => sendJson(res, status, body, HOST_SECURITY_HEADERS);
+
+  /** /host and /host/*: the control page, for this computer only. */
+  async function serveHostUi(req, res, path, local) {
+    // Not advertised to anyone else: a LAN client sees a plain 404.
+    if (!local) return sendJson(res, 404, { error: "not found" });
+    if (crossSiteBlocked(req)) return hostJson(res, 403, { error: "cross-site request" });
+    if (req.method !== "GET" && req.method !== "HEAD") return hostJson(res, 405, { error: "method not allowed" });
+    const file = resolveStatic(path === "/host" ? "/" : path.slice("/host".length), HOST_UI_DIR);
+    if (!file) return hostJson(res, 403, { error: "forbidden" });
+    let body;
+    try {
+      body = await readFile(file);
+    } catch {
+      return hostJson(res, 404, { error: "not found" });
+    }
+    res.writeHead(200, {
+      ...HOST_SECURITY_HEADERS,
+      "content-type": MIME[extname(file)] || "application/octet-stream",
+      "content-length": body.length,
+    });
+    return res.end(req.method === "HEAD" ? undefined : body);
+  }
+
+  /** /api/host/*: status, events and the pairing window, for this computer only. */
+  async function serveHostApi(req, res, path, local) {
+    if (!local) return hostJson(res, 403, { error: "local only" });
+    if (crossSiteBlocked(req)) return hostJson(res, 403, { error: "cross-site request" });
+    const mutating = !["GET", "HEAD"].includes(req.method);
+    if (mutating && !isJsonRequest(req)) {
+      return hostJson(res, 415, { error: "content-type must be application/json" });
+    }
+    if (path === "/api/host/status" && req.method === "GET") return hostJson(res, 200, hostStatus());
+    if (path === "/api/host/events" && req.method === "GET") return openEvents(req, res);
+    if (path === "/api/host/pairing" && req.method === "GET") return hostJson(res, 200, pairingBody());
+    if (path === "/api/host/pairing/open" && req.method === "POST") {
+      await readJsonBody(req);
+      // No network address: nothing to pair with; it reopens by itself.
+      if (pairing.closedReason !== "no-address") {
+        pairing.reopen();
+        changed();
+      }
+      return hostJson(res, 200, pairingBody());
+    }
+    if (path === "/api/host/pairing/close" && req.method === "POST") {
+      await readJsonBody(req);
+      // Stop pairing: close now and rotate, so a photographed code is dead.
+      pairing.close({ rotate: true, reason: "stopped" });
+      changed();
+      return hostJson(res, 200, pairingBody());
+    }
+    return hostJson(res, 404, { error: "not found" });
+  }
+
   const handler = async (req, res) => {
     const remote = req.socket.remoteAddress || "";
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -225,6 +582,9 @@ export async function createApp({
           tls: tls ? { fingerprint: tls.fingerprint, code: tls.code } : null,
           // Not secret: lets the phone explain a "pairing closed" refusal.
           pairingOpen: pairing.isOpen(),
+          // This host serves the control page at /host, so phones can name
+          // "Pair a new phone" in their instructions.
+          hostUi: true,
         });
         return;
       }
@@ -247,16 +607,21 @@ export async function createApp({
           const fail = lockout.recordFailure(remote);
           // Wrong guesses from every client share one budget; spending it
           // rotates the code and closes the window.
-          pairing.recordFailure();
+          if (pairing.recordFailure().exhausted) changed();
           return sendJson(res, 401, { error: "wrong pin", locked: fail.locked });
         }
         lockout.recordSuccess(remote);
         pairing.recordSuccess(); // each code pairs exactly one device
         const token = sessions.issue({ name: body.deviceName });
+        devicesChanged();
         return sendJson(res, 200, { ok: true }, {
           "set-cookie": sessionCookie(token, { secure: Boolean(req.socket.encrypted) }),
         });
       }
+
+      const local = trustLoopback && isTrustedLoopback(req, remote);
+      if (path === "/host" || path.startsWith("/host/")) return await serveHostUi(req, res, path, local);
+      if (path.startsWith("/api/host/")) return await serveHostApi(req, res, path, local);
 
       if (!path.startsWith("/api/")) {
         const file = resolveStatic(path);
@@ -288,6 +653,7 @@ export async function createApp({
         if (!hash) return sendJson(res, 401, { error: "unauthorized" }, clear);
         hub.disconnect(hash);
         inputHub.disconnect(hash);
+        devicesChanged();
         return sendJson(res, 200, { ok: true }, clear);
       }
 
@@ -300,8 +666,12 @@ export async function createApp({
         // The PIN itself: only for software on this machine (`npm run info`),
         // never for a paired phone's session.
         if (auth.via !== "loopback") return sendJson(res, 403, { error: "local only" });
+        // A web page elsewhere must not reopen pairing (and reset the
+        // wrong-PIN budget) by pointing an <img> at this URL.
+        if (crossSiteBlocked(req)) return sendJson(res, 403, { error: "cross-site request" });
         // Showing the PIN on this computer is what (re)opens pairing.
         pairing.reopen();
+        changed();
         return sendJson(res, 200, {
           endpoint: state.endpoint ?? null,
           pin: state.pin,
@@ -319,13 +689,15 @@ export async function createApp({
       if (path === "/api/devices" || path.startsWith("/api/devices/")) {
         // Paired-device management: software on this machine only.
         if (auth.via !== "loopback") return sendJson(res, 403, { error: "local only" });
+        if (crossSiteBlocked(req)) return sendJson(res, 403, { error: "cross-site request" });
         if (path === "/api/devices" && req.method === "GET") {
-          return sendJson(res, 200, { devices: sessions.list() });
+          return sendJson(res, 200, { devices: devicesWithPresence() });
         }
         if (path === "/api/devices" && req.method === "DELETE") {
           const revoked = sessions.revokeAll().length;
           hub.disconnectAll();
           inputHub.disconnectAll();
+          devicesChanged();
           return sendJson(res, 200, { ok: true, revoked });
         }
         const id = path.slice("/api/devices/".length);
@@ -334,7 +706,21 @@ export async function createApp({
           if (!hash) return sendJson(res, 404, { error: "unknown device" });
           hub.disconnect(hash);
           inputHub.disconnect(hash);
+          devicesChanged();
           return sendJson(res, 200, { ok: true, id });
+        }
+        if (req.method === "PATCH" && path.startsWith("/api/devices/")) {
+          // A host-side label ("Rename…" on the control page); the phone
+          // keeps sending its own name.
+          if (!isJsonRequest(req)) return sendJson(res, 415, { error: "content-type must be application/json" });
+          const body = await readJsonBody(req);
+          if (!Object.hasOwn(body, "label") || (body.label !== null && typeof body.label !== "string")) {
+            return sendJson(res, 400, { error: "label must be a string or null" });
+          }
+          const saved = DEVICE_ID_RE.test(id) ? sessions.setLabel(id, body.label) : null;
+          if (!saved) return sendJson(res, 404, { error: "unknown device" });
+          devicesChanged();
+          return sendJson(res, 200, { ok: true, id, label: saved.label });
         }
         return sendJson(res, 404, { error: "not found" });
       }
@@ -475,11 +861,24 @@ export async function createApp({
     isAuthorized: (req) => authorizeSocket(req).ok,
     sessionOf,
     getState: dockState,
+    onSessionsChange: devicesChanged,
   });
 
   const inputHub = createInputHub({ servers, input: provider.input, isAuthorized: (req) => authorizeSocket(req).ok, sessionOf });
   server.on("close", () => { provider.capture?.dispose().catch(() => {}); provider.input?.dispose(); });
-  return { server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, pairing, sessions, lockout, identity };
+  // Event streams never go idle, so closing a server ends them first;
+  // otherwise close() would wait for them forever.
+  for (const target of new Set([server, secureServer, listener].filter(Boolean))) {
+    const close = target.close;
+    target.close = function closeWithEvents(...args) {
+      endEvents();
+      return close.apply(this, args);
+    };
+  }
+  return {
+    server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, pairing, sessions, lockout, identity,
+    hostStatus, pairingBody, discoveryState, notifyChanged: changed, endEvents,
+  };
 }
 
 /**
@@ -511,7 +910,7 @@ export async function start({
   const tls = transport.tls
     ? await loadOrCreateTlsIdentity({ dir: dataDir, commonName: `WinDock ${identity.hostId}` })
     : null;
-  const app = await createApp({ sessions, identity, tls, plainHttp: transport.plainHttp });
+  const app = await createApp({ sessions, identity, tls, plainHttp: transport.plainHttp, shell: env.WINDOCK_SHELL || null });
   await new Promise((resolve, reject) => {
     app.listener.once("error", reject);
     app.listener.listen(port, () => { app.listener.off("error", reject); resolve(); });
@@ -526,17 +925,62 @@ export async function start({
   const endpoint = transport.plainHttp ? `http://${base}:${port}` : secureEndpoint;
   app.state.endpoint = endpoint;
   app.state.secureEndpoint = secureEndpoint;
-  const discovery = startDiscovery({ endpoint, port: discoveryPort });
+  app.state.address = address;
+  // Without a LAN address no phone can reach the host: pairing stays closed
+  // ("no-address") until one appears.
+  if (!address) app.pairing.close({ reason: "no-address" });
+  app.discoveryState.udp = "on";
+  const discovery = startDiscovery({
+    endpoint: () => app.state.endpoint,
+    port: discoveryPort,
+    onError: () => { app.discoveryState.udp = "failed"; app.notifyChanged(); },
+  });
   // Bonjour `_windock._tcp` for phones that cannot broadcast (iPhones). The
   // TXT record is only a hint; phones still verify /health and the pin.
+  app.discoveryState.bonjour = env.WINDOCK_BONJOUR === "0" ? "off" : "on";
   const bonjour = env.WINDOCK_BONJOUR === "0"
     ? { kind: "none", stop: async () => {} }
     : advertise({
       name: hostname(),
       port,
       txt: buildTxt({ hostId: identity.hostId, tls: Boolean(tls), address, hostName: hostname() }),
+      // Every line the advertiser logs reports that advertising is off.
+      log: (line) => {
+        process.stderr.write(`WinDock bonjour: ${line}\n`);
+        app.discoveryState.bonjour = "failed";
+        app.notifyChanged();
+      },
     });
-  app.listener.once("close", () => { bonjour.stop().catch(() => {}); });
+  if (env.WINDOCK_BONJOUR !== "0" && bonjour.kind === "none") app.discoveryState.bonjour = "failed";
+
+  // Follow the LAN address: the status, the advertised endpoint, the UDP
+  // reply and the QR code all use the current one.
+  let current = address;
+  const addressTimer = setInterval(() => {
+    let next = null;
+    try {
+      next = primaryAddress(undefined, host);
+    } catch {
+      next = null; // WINDOCK_HOST no longer assigned
+    }
+    if (next === current) return;
+    current = next;
+    const nextBase = next || "localhost";
+    app.state.address = next;
+    app.state.secureEndpoint = tls ? `https://${nextBase}:${port}` : null;
+    app.state.endpoint = transport.plainHttp ? `http://${nextBase}:${port}` : app.state.secureEndpoint;
+    if (!next) {
+      if (app.pairing.isOpen()) app.pairing.close({ reason: "no-address" });
+      else app.pairing.touch();
+    } else if (app.pairing.closedReason === "no-address") {
+      app.pairing.reopen();
+    } else {
+      app.pairing.touch();
+    }
+    app.notifyChanged();
+  }, ADDRESS_CHECK_MS);
+  addressTimer.unref?.();
+  app.listener.once("close", () => { clearInterval(addressTimer); bonjour.stop().catch(() => {}); });
   return { ...app, endpoint, secureEndpoint, discovery, bonjour, port };
 }
 

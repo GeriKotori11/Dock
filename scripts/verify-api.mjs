@@ -88,8 +88,9 @@ t.ok(typeof health.json.hostName === "string" && health.json.hostName.length > 0
 t.equal(health.json.api, 1, "health advertises API version 1");
 t.ok(Buffer.byteLength(health.text) <= 4096, `the health body fits the 4096-byte probe limit (${Buffer.byteLength(health.text)} bytes)`);
 t.ok(!health.text.includes(PIN), "health never includes the PIN");
-t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "ok", "pairingOpen", "platform", "tls"],
+t.deepEqual(Object.keys(health.json).sort(), ["api", "app", "hostId", "hostName", "hostUi", "ok", "pairingOpen", "platform", "tls"],
   "health exposes only its documented fields");
+t.equal(health.json.hostUi, true, "health says this host serves the control page (hostUi)");
 t.equal(health.json.tls, null, "health reports tls: null without TLS");
 t.equal(health.json.pairingOpen, true, "health reports pairing open after the host starts");
 

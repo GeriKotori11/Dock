@@ -64,10 +64,12 @@ export function parseReply(message) {
 }
 
 /**
- * Start the responder.
+ * Start the responder. `endpoint` may be a function, read for every reply, so
+ * an address change needs no restart. `onError` hears a socket failure (the
+ * responder is then off; HTTP keeps working).
  * @returns {{close:()=>Promise<void>, port:number}}
  */
-export function startDiscovery({ port = DISCOVERY_PORT, endpoint, socket } = {}) {
+export function startDiscovery({ port = DISCOVERY_PORT, endpoint, socket, onError = () => {} } = {}) {
   const sock = socket || createSocket({ type: "udp4", reuseAddr: true });
 
   sock.on("message", (msg, rinfo) => {
@@ -76,8 +78,9 @@ export function startDiscovery({ port = DISCOVERY_PORT, endpoint, socket } = {})
     sock.send(reply, rinfo.port, rinfo.address, () => {});
   });
 
-  sock.on("error", () => {
+  sock.on("error", (err) => {
     /* A bound-port conflict must not take the dock down; HTTP still works. */
+    try { onError(err); } catch { /* reporting must not throw */ }
   });
 
   const ready = new Promise((resolve) => {

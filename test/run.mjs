@@ -38,6 +38,7 @@ const EXPECTED = {
   "verify-macos-agent.mjs": "macos-agent verification passed",
   "verify-tls.mjs": "tls verification passed",
   "verify-bonjour.mjs": "bonjour verification passed",
+  "verify-host-ui.mjs": "host-ui verification passed",
 };
 
 // Guard against an oracle being added to scripts/ but never wired in here.

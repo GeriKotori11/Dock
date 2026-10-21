@@ -76,6 +76,23 @@ Reinstalling replaces the old login item; it does not create a second one.
 
 ## Pair your phone
 
+The easiest way: open **<http://127.0.0.1:8620/host>** in a browser on the Mac
+(Safari, Chrome or any other). Until the WinDock menu-bar app exists, this page
+is WinDock's control panel: it shows whether the host is running, a QR code and
+PIN for pairing, your paired phones (rename or remove them there), and whether
+phones can find the Mac. Opening it with no phones paired opens pairing
+straight away; otherwise click **Pair a new phone**. Pairing stays open for 10
+minutes, and **Stop pairing** closes it and retires the code on screen.
+
+In WinDock on the phone, tap **Scan QR code**, or point the phone's camera at
+the code. You can also type the address and PIN shown under the code.
+
+The page works only on the Mac itself (on another device the address answers
+"not found"), and only at `127.0.0.1` or `localhost`. If you run the host on
+another port, use that port in the address.
+
+From a terminal instead:
+
 ```sh
 npm run info
 ```
@@ -89,7 +106,8 @@ Enter this address and PIN in the WinDock app on your phone.
 ```
 
 Open WinDock on your phone, pick your Mac (Android can find it automatically) or
-type the address, then enter the 6-digit PIN within 10 minutes.
+type the address, then enter the 6-digit PIN within 10 minutes. With HTTPS on
+(the default), `npm run info` also prints the pairing QR code in the terminal.
 
 `npm run info` works only on the Mac itself. The login item never writes the PIN
 to its log file, so this command is how you see it. Pairing is open for 10
@@ -100,6 +118,10 @@ run `npm run info` again for the next PIN. The PIN also changes when the host
 restarts, but phones that are already paired stay paired.
 
 ## See and remove paired phones
+
+The control page at <http://127.0.0.1:8620/host> lists paired phones, shows
+which are connected now, and lets you rename a phone (the name is only used on
+this Mac) or remove it. From a terminal:
 
 ```sh
 npm run devices
@@ -200,4 +222,6 @@ Run `npm run mac:install` again so it points at the current Node binary.
   recognise.
 - Software on the Mac itself is trusted without pairing, but only when it
   connects to `127.0.0.1`, `localhost` or `[::1]`. Websites open in a browser on
-  the Mac cannot use this trust.
+  the Mac cannot use this trust: the host refuses any request a browser marks
+  as coming from another site, so a web page can't reopen pairing or read the
+  control page.

@@ -9,6 +9,7 @@
  */
 
 import { resolve } from "node:path";
+import { encodeQr, qrTerminalText } from "../src/qr.js";
 
 export const DEFAULT_PORT = 8620;
 export const NOT_RUNNING =
@@ -70,6 +71,31 @@ export async function fetchPairing(port = DEFAULT_PORT, { timeoutMs = 3000, fetc
   return { ok: true, info };
 }
 
+/**
+ * The pairing QR code as terminal text (half blocks), with a caption; empty
+ * without a payload (pairing closed, TLS off, or an older host).
+ */
+export function formatQr(payload) {
+  if (typeof payload !== "string" || !payload.startsWith("windock://pair?")) return "";
+  try {
+    return `${qrTerminalText(encodeQr(payload).modules)}Or scan this code with WinDock on your phone.\n`;
+  } catch {
+    return "";
+  }
+}
+
+/** The QR payload from a local host's GET /api/host/pairing, or null. */
+export async function fetchQrPayload(port = DEFAULT_PORT, { timeoutMs = 3000, fetchImpl = fetch } = {}) {
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${port}/api/host/pairing`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (res.status !== 200) return null;
+    const body = await res.json();
+    return body?.open && typeof body.qr?.text === "string" ? body.qr.text : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Text for a failed fetch. */
 export function failureText(result, port) {
   if (result.reason === "unreachable") return `${NOT_RUNNING}\n`;
@@ -83,6 +109,8 @@ if (isMain) {
   const result = await fetchPairing(port);
   if (result.ok) {
     process.stdout.write(formatInfo(result.info));
+    // Asking above reopened pairing, so the QR (HTTPS hosts only) is current.
+    process.stdout.write(formatQr(await fetchQrPayload(port)));
   } else {
     process.stderr.write(failureText(result, port));
     process.exit(1);
