@@ -52,14 +52,20 @@ export function renderPages(state, layout, editing = false) {
   return Array.from({ length: pageCount(all, layout, editing) }, (_, page) => {
     const start = page * capacity;
     let slots = all.slice(start, start + capacity);
-    // A page with a gap on it or before it holds positions the user chose (an
-    // icon dropped on page 3's first slot sits in row 1): it keeps the true grid rows.
-    const gap = all.slice(0, start + capacity).some(isSpacer);
-    // Arranging shows every slot of the page; otherwise the page ends at its last icon.
+    let single = "";
+    // Arranging shows every slot of the page, so the user can pick any row.
     if (editing) slots = [...slots, ...Array(capacity - slots.length).fill(null)];
-    else while (slots.length && isSpacer(slots[slots.length - 1])) slots.pop();
-    // An auto-filled page whose tiles fit in one row is centred vertically (see .dock-page--single-row).
-    const single = !gap && slots.length <= layout.columns ? " dock-page--single-row" : "";
+    else {
+      // At rest, a page whose icons all sit in one row (top or bottom) shows just
+      // that row, centred vertically; icons keep their columns.
+      const rows = new Set(slots.flatMap((tile, i) => (tile && !isSpacer(tile) ? [Math.floor(i / layout.columns)] : [])));
+      if (rows.size === 1) {
+        const row = [...rows][0];
+        slots = slots.slice(row * layout.columns, (row + 1) * layout.columns);
+        single = " dock-page--single-row";
+      }
+      while (slots.length && isSpacer(slots[slots.length - 1])) slots.pop();
+    }
     const cells = slots.map((tile, i) => (!tile || isSpacer(tile) ? renderEmptySlot(start + i, editing) : renderTile(tile, { editing, launcher: true })));
     return `<div class="dock-page${single}" role="group" aria-label="Page ${page + 1}">${cells.join("")}</div>`;
   }).join("");
