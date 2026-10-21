@@ -1,12 +1,9 @@
 name: Build WinDock iOS
 
+# Manual only (Actions → Build WinDock iOS → Run workflow): macOS runner
+# minutes are expensive on a private repository.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['ios/**', 'public/**', 'src/**', 'website/assets/*.png', 'server.js', 'package*.json', '.github/workflows/build-ios.yml']
-  pull_request:
-    paths: ['ios/**', 'public/**', 'src/**', 'website/assets/*.png', 'server.js', 'package*.json', '.github/workflows/build-ios.yml']
 
 permissions:
   contents: read

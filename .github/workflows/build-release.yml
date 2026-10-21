@@ -11,17 +11,7 @@ on:
         description: New release tag (used only when creating a draft)
         type: string
         default: v0.2.2-preview.1
-  push:
-    branches: [main]
-    paths:
-      - 'native/**'
-      - 'src/**'
-      - 'public/**'
-      - 'android/**'
-      - 'scripts/**'
-      - 'server.js'
-      - 'package*.json'
-      - '.github/workflows/build-release.yml'
+# Manual only (Actions → Build WinDock downloads → Run workflow).
 
 permissions:
   contents: read
