@@ -522,7 +522,7 @@ t.deepEqual(powerLabels("Studio PC", { shutdown: true, restart: true }), { lock:
 t.equal(powerLabels("Studio PC", { shutdown: false, restart: true }).shutdown, "Restart Studio PC", "the entry is named for what it offers");
 t.ok(!appJs.includes("confirmPower") && appJs.includes('if (verb === "shutdown" || verb === "restart") return openShutdown();'), "only shut down and restart ask first");
 t.ok(appJs.includes('if (key === "sleep" && button.dataset.tileKey) {') && appJs.includes("const result = arming.tap(button.dataset.tileKey);"), "a pinned Sleep tile needs two taps; the drawer's Sleep acts at once");
-t.ok(html.includes('<button id="confirm-restart" class="button" type="button" hidden><span data-icon="refresh"></span>Restart</button>'), "the confirm dialog has a Restart button");
+t.ok(html.includes('<button id="confirm-restart" class="button" type="button" hidden><span data-icon="restart"></span>Restart</button>'), "the confirm dialog has a Restart button with the restart icon");
 t.ok(html.includes('id="confirm-cancel" class="button" type="button" autofocus>Cancel<'), "Cancel keeps autofocus");
 
 // Mini player and Media sheet renderers per state (5.2, 5.3).

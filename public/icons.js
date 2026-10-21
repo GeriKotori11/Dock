@@ -12,7 +12,8 @@ const paths = {
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
   edit: '<path d="m15 4 5 5M4 20l5-1L20 8a3.5 3.5 0 0 0-5-5L4 14z"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
-  refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2"/>',
+  refresh: '<path d="M3.5 11.5a8.5 8.5 0 0 1 14.5-5.5l2.5 2.5"/><path d="M20.5 3.5v5h-5"/><path d="M20.5 12.5a8.5 8.5 0 0 1-14.5 5.5l-2.5-2.5"/><path d="M3.5 20.5v-5h5"/>',
+  restart: '<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6l2.5 2.5"/><path d="M20.5 3.5v5h-5"/>',
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   left: '<path d="m14 6-6 6 6 6"/>',
   right: '<path d="m10 6 6 6-6 6"/>',
@@ -51,5 +52,5 @@ export function icon(name, className = "") {
 /** Glyph for a control tile; Play/Pause follows the live media state when known. */
 export function controlIcon(verb, { playing = false } = {}) {
   if (verb === "media-play-pause" && playing) return icon("pause");
-  return icon({ "volume-up": "volume", "volume-down": "quieter", "volume-set": "volume", "mute-toggle": "mute", "media-play-pause": "play", "media-next": "next", "media-previous": "previous", "media-stop": "stop", "brightness-set": "sun", lock: "lock", sleep: "moon", shutdown: "power", restart: "refresh" }[verb]);
+  return icon({ "volume-up": "volume", "volume-down": "quieter", "volume-set": "volume", "mute-toggle": "mute", "media-play-pause": "play", "media-next": "next", "media-previous": "previous", "media-stop": "stop", "brightness-set": "sun", lock: "lock", sleep: "moon", shutdown: "power", restart: "restart" }[verb]);
 }

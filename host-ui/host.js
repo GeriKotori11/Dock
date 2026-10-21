@@ -588,7 +588,7 @@ function startPage() {
     // Attached host: the shell didn't start it, so it can't restart it.
     const canRestart = cap("restart") && !isAttached(true, S.status);
     if (canRestart || cap("quit")) items.push("sep");
-    if (canRestart) items.push({ icon: "refresh", text: COPY.moreRestart, run: () => { S.restarting = true; renderHeader(); post({ type: "restart" }); } });
+    if (canRestart) items.push({ icon: "restart", text: COPY.moreRestart, run: () => { S.restarting = true; renderHeader(); post({ type: "restart" }); } });
     if (cap("quit")) items.push({ icon: "power", text: COPY.moreQuit, run: () => post({ type: "quit" }) });
     while (items[0] === "sep") items.shift();
     return items;
