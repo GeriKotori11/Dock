@@ -711,6 +711,42 @@ const IMG = { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-
 }
 
 {
+  // Spotify row (This computer): Client ID validation, state selection, error copy.
+  const id = "0123456789abcdef0123456789abcdef";
+  t.equal(page.normalizeClientId(id), id, "a 32-hex Client ID is accepted");
+  t.equal(page.normalizeClientId(`  ${id.toUpperCase()}\n`), id, "a pasted Client ID is trimmed and lowercased");
+  t.equal(page.normalizeClientId(id.slice(1)), null, "31 characters is not a Client ID");
+  t.equal(page.normalizeClientId(`${id}0`), null, "33 characters is not a Client ID");
+  t.equal(page.normalizeClientId(`${id.slice(0, 31)}g`), null, "a non-hex character is rejected");
+  t.equal(page.normalizeClientId("0123456789abcdef 0123456789abcdef"), null, "an inner space is rejected");
+  t.equal(page.normalizeClientId(null), null, "no value is not a Client ID");
+
+  const base = { configured: false, clientId: null, redirectUri: "http://127.0.0.1:8620/api/spotify/callback", connected: false, account: null, error: null };
+  t.equal(page.spotifyState(null), "hidden", "no body (older host, 404): the row is hidden");
+  t.equal(page.spotifyState(base), "setup", "not configured: set up");
+  t.equal(page.spotifyState({ ...base, configured: true, clientId: id }), "setup", "configured but not connected: set up");
+  t.equal(page.spotifyState(base, { waiting: true }), "waiting", "after Save and connect: waiting");
+  t.equal(page.spotifyState({ ...base, connected: true, account: { name: "Geri", premium: true } }, { waiting: true }), "connected", "connected wins over waiting");
+  t.equal(page.spotifyState({ ...base, error: "access_denied" }), "error", "an error shows the error state");
+  t.equal(page.spotifyState({ ...base, error: "access_denied" }, { waiting: true, ignoreError: "access_denied" }), "waiting",
+    "the error showing when the user retried doesn't cut the new attempt short");
+  t.equal(page.spotifyState({ ...base, error: "invalid_client" }, { waiting: true, ignoreError: "access_denied" }), "error", "a new error ends waiting");
+  t.equal(page.spotifyState(base, { localError: "failed" }), "error", "a failed connect request shows the error state");
+
+  t.equal(page.spotifyErrorCopy("invalid_client"), "Spotify didn’t recognise that Client ID. Check it in your dashboard.", "invalid_client copy");
+  t.equal(page.spotifyErrorCopy("redirect_mismatch"), "The Redirect URI in your Spotify app doesn’t match. Copy it again from here.", "redirect_mismatch copy");
+  t.equal(page.spotifyErrorCopy("access_denied"), "Login was cancelled.", "access_denied copy");
+  t.equal(page.spotifyErrorCopy("disconnected"), "Spotify disconnected. Connect again.", "disconnected copy");
+  t.equal(page.spotifyErrorCopy("something_else"), "Spotify login didn’t finish. Try again.", "an unknown code gets the fallback copy");
+  t.equal(page.spotifyErrorCopy("toString"), "Spotify login didn’t finish. Try again.", "prototype keys are not error codes");
+  t.ok(page.spotifyErrorNeedsSetup("invalid_client") && page.spotifyErrorNeedsSetup("redirect_mismatch"), "Client ID and Redirect URI errors reopen the setup steps");
+  t.ok(!page.spotifyErrorNeedsSetup("access_denied") && !page.spotifyErrorNeedsSetup("disconnected"), "cancelled and disconnected retry the login");
+
+  t.equal(page.spotifyConnectedCaption({ name: "Geri", premium: true, product: "premium" }), "Connected as Geri · Premium", "connected caption, Premium");
+  t.equal(page.spotifyConnectedCaption({ name: "Geri", premium: false, product: "free" }), "Connected as Geri · Free — playing from the phone needs Premium", "connected caption, Free");
+}
+
+{
   // Native replaceChildren() renders a null argument as the text "null"; optional
   // children must go through fill() (or h()), which skip empty slots.
   const source = await readFile(new URL("../host-ui/host.js", import.meta.url), "utf8");

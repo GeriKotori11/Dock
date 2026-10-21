@@ -99,7 +99,46 @@ export const COPY = Object.freeze({
   noteAttached: "WinDock was started outside this app, so it can’t restart or stop it.",
   closesSoon: "Pairing closes in less than a minute",
   closedNow: "Pairing closed",
+  spTitle: "Spotify",
+  spSetupCaption: "Connect your account to browse and play from the phone",
+  spSetup: "Set up",
+  spStep1Lead: "Create a free app at ",
+  spDashboardUrl: "https://developer.spotify.com/dashboard",
+  spDashboardText: "developer.spotify.com/dashboard",
+  spStep2: "Set this Redirect URI:",
+  spStep3: "Tick Web API, then add your Spotify account under User Management.",
+  spStep4: "Paste the Client ID:",
+  spCopyRedirect: "Copy Redirect URI",
+  spRedirectCopied: "Redirect URI copied",
+  spInvalidId: "That doesn’t look like a Client ID. It’s 32 letters and numbers.",
+  spSaveError: "Couldn’t save the Client ID. Try again.",
+  spSave: "Save and connect",
+  spWaiting: "Finish logging in to Spotify in your browser…",
+  spOpenAgain: "Open the window again",
+  spConnectedPremium: "Connected as {name} · Premium",
+  spConnectedFree: "Connected as {name} · Free — playing from the phone needs Premium",
+  spConnectedNow: "Spotify is connected",
+  spDisconnect: "Disconnect",
+  spDisconnectTitle: "Disconnect Spotify?",
+  spDisconnectBody: "Phones keep basic controls.",
+  spDisconnectError: "Couldn’t disconnect. Try again.",
+  spDisconnected: "Spotify disconnected",
+  spChangeId: "Change Client ID",
+  spClientId: "Client ID",
+  spRedirect: "Redirect URI",
+  spTryAgain: "Try again",
 });
+
+/** Spotify connect errors (GET /api/host/spotify `error`) in plain words. */
+export const SPOTIFY_ERRORS = Object.freeze({
+  invalid_client: "Spotify didn’t recognise that Client ID. Check it in your dashboard.",
+  redirect_mismatch: "The Redirect URI in your Spotify app doesn’t match. Copy it again from here.",
+  access_denied: "Login was cancelled.",
+  disconnected: "Spotify disconnected. Connect again.",
+});
+const SPOTIFY_ERROR_FALLBACK = "Spotify login didn’t finish. Try again.";
+/** Errors fixed in the setup steps: Try again opens them instead of reconnecting. */
+const SPOTIFY_SETUP_ERRORS = new Set(["invalid_client", "redirect_mismatch"]);
 
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for the oracle)
@@ -256,6 +295,45 @@ export function otherAddressText(other) {
   return kind ? `${other.address} (${kind})` : other.address;
 }
 
+/** A pasted Spotify Client ID, trimmed and lowercased, or null unless it is 32 hex characters. */
+export function normalizeClientId(value) {
+  const s = String(value ?? "").trim().toLowerCase();
+  return /^[0-9a-f]{32}$/.test(s) ? s : null;
+}
+
+/** Plain copy for a Spotify error code. */
+export function spotifyErrorCopy(code) {
+  return Object.hasOwn(SPOTIFY_ERRORS, code) ? SPOTIFY_ERRORS[code] : SPOTIFY_ERROR_FALLBACK;
+}
+
+/** True when Try again should open the setup steps (the fix is there) rather than reconnect. */
+export function spotifyErrorNeedsSetup(code) {
+  return SPOTIFY_SETUP_ERRORS.has(code);
+}
+
+/**
+ * The Spotify row's state from the GET /api/host/spotify body (null when the
+ * host has no such route) and the page's own flags:
+ * "hidden" | "connected" | "error" | "waiting" | "setup".
+ * `ignoreError` is the error showing when the user started a new login, so a
+ * stale one doesn't cut the new attempt short.
+ */
+export function spotifyState(body, { waiting = false, ignoreError = null, localError = null } = {}) {
+  if (!body || typeof body !== "object") return "hidden";
+  if (body.connected) return "connected";
+  if (localError) return "error";
+  if (body.error && body.error !== ignoreError) return "error";
+  if (waiting) return "waiting";
+  if (body.error) return "error";
+  return "setup";
+}
+
+/** "Connected as Geri · Premium" / "… · Free — playing from the phone needs Premium". */
+export function spotifyConnectedCaption(account) {
+  const name = account?.name || "your account";
+  return (account?.premium ? COPY.spConnectedPremium : COPY.spConnectedFree).replace("{name}", name);
+}
+
 // ---------------------------------------------------------------------------
 // The page
 // ---------------------------------------------------------------------------
@@ -312,6 +390,12 @@ function startPage() {
     firewall: null, // "ok" | "blocked" | "unknown" from the shell
     offline: false,
     lastAnnounce: "",
+    // Spotify row (GET /api/host/spotify). body null: not loaded, or an older host (404).
+    sp: {
+      body: null, accountKey: undefined, waiting: false, ignoreError: null, localError: null,
+      expanded: false, changing: false, confirming: false, draft: null, inputError: null,
+      actionError: null, busy: false, focus: null, lastState: null,
+    },
   };
 
   // ---- tiny DOM helpers ----
@@ -453,6 +537,12 @@ function startPage() {
     renderBanners();
     renderComputer();
     renderNote();
+    // Spotify: refetch when the account part of the status changes (and on the first status).
+    const accountKey = JSON.stringify(status.features?.spotify?.account ?? null);
+    if (accountKey !== S.sp.accountKey) {
+      S.sp.accountKey = accountKey;
+      loadSpotify();
+    }
   }
 
   // ---- live updates: SSE, polling after 3 failed reconnects (D8) ----
@@ -630,7 +720,7 @@ function startPage() {
     dl.replaceChildren(...rows.flatMap(([term, dd]) => [h("dt", { text: term }), dd]));
   }
 
-  async function copyText(value, button) {
+  async function copyText(value, button, message = COPY.copied) {
     try {
       await navigator.clipboard.writeText(value);
     } catch {
@@ -639,7 +729,7 @@ function startPage() {
     button.classList.add("copied");
     clearTimeout(button._copyTimer);
     button._copyTimer = setTimeout(() => button.classList.remove("copied"), 1500);
-    announce(COPY.copied);
+    announce(message);
   }
 
   // ---- banners (Home): problem → recording → update ----
@@ -1113,11 +1203,289 @@ function startPage() {
     }
     rows.push(h("div", { class: "h-row" }, h("span", { class: "h-gl" }, icon("net")),
       h("div", { class: "txt" }, h("div", { class: "ttl", text: COPY.netTitle }), h("div", { class: "sub wrap", text: discoveryCaption(s.discovery) }))));
-    const box = $("computer");
+    const box = $("computer-rows");
     const hadFocus = box.contains(document.activeElement) ? document.activeElement.getAttribute("role") : null;
     box.replaceChildren(...rows);
     if (hadFocus === "switch") box.querySelector("[role=switch]")?.focus();
   }
+
+  // ---- Spotify (This computer; DOCK-CONTROLS section 12: login happens on this computer) ----
+  // The Client ID only ever travels in a JSON body, never in a URL.
+  let spPollTimer = null;
+  async function loadSpotify() {
+    let body;
+    try {
+      body = await api("/api/host/spotify");
+    } catch (err) {
+      if (err.status === 404) { // older host: no Spotify row
+        S.sp.body = null;
+        S.sp.waiting = false;
+        renderSpotify();
+      }
+      return; // anything else keeps what is showing; the next status retries
+    }
+    applySpotify(body);
+  }
+  function applySpotify(body) {
+    const sp = S.sp;
+    sp.body = body && typeof body === "object" ? body : null;
+    if (sp.body && !sp.body.error) sp.ignoreError = null;
+    const state = spotifyState(sp.body, sp);
+    if (state === "connected" || state === "error") sp.waiting = false;
+    if (state === "connected") sp.localError = null;
+    renderSpotify();
+  }
+  function syncSpotifyPoll() {
+    // While waiting for the browser login, also poll in case no status event arrives.
+    const want = S.sp.waiting && !paused && !document.hidden;
+    if (want && !spPollTimer) spPollTimer = setInterval(loadSpotify, 3000);
+    else if (!want && spPollTimer) { clearInterval(spPollTimer); spPollTimer = null; }
+  }
+
+  async function spotifyConnect({ focusStatus = false } = {}) {
+    const sp = S.sp;
+    sp.ignoreError = sp.body?.error || null;
+    sp.localError = null;
+    sp.actionError = null;
+    sp.waiting = true;
+    sp.expanded = false;
+    sp.changing = false;
+    sp.confirming = false;
+    if (focusStatus) sp.focus = "status";
+    renderSpotify();
+    try {
+      await api("/api/host/spotify/connect", { method: "POST" });
+    } catch (err) {
+      if (err.status === 404) { loadSpotify(); return; }
+      sp.waiting = false;
+      sp.localError = err.message && !/^HTTP \d+$/.test(err.message) ? err.message : "failed";
+      sp.focus = "status";
+      renderSpotify();
+      return;
+    }
+    loadSpotify();
+  }
+
+  async function spotifySave() {
+    const sp = S.sp;
+    if (sp.busy) return;
+    const clientId = normalizeClientId(sp.draft ?? "");
+    if (!clientId) {
+      sp.inputError = COPY.spInvalidId;
+      sp.focus = "cid";
+      renderSpotify();
+      return;
+    }
+    sp.inputError = null;
+    sp.busy = true;
+    renderSpotify();
+    try {
+      await api("/api/host/spotify", { method: "PUT", body: { clientId } });
+    } catch (err) {
+      sp.busy = false;
+      sp.inputError = err.status === 400 ? COPY.spInvalidId : COPY.spSaveError;
+      sp.focus = "cid";
+      renderSpotify();
+      return;
+    }
+    sp.busy = false;
+    sp.draft = null;
+    if (sp.body) sp.body = { ...sp.body, configured: true, clientId };
+    spotifyConnect({ focusStatus: true });
+  }
+
+  async function spotifyDisconnect() {
+    const sp = S.sp;
+    if (sp.busy) return;
+    sp.busy = true;
+    sp.actionError = null;
+    renderSpotify();
+    try {
+      await api("/api/host/spotify", { method: "DELETE" });
+    } catch {
+      sp.busy = false;
+      sp.actionError = COPY.spDisconnectError;
+      sp.focus = "cancel";
+      renderSpotify();
+      return;
+    }
+    Object.assign(sp, { busy: false, confirming: false, expanded: false, changing: false, waiting: false, localError: null, lastState: "setup", focus: "primary" });
+    if (sp.body) sp.body = { ...sp.body, connected: false, account: null, error: null };
+    announce(COPY.spDisconnected);
+    renderSpotify();
+    loadSpotify();
+  }
+
+  function spotifyTryAgain() {
+    const sp = S.sp;
+    const code = sp.localError || sp.body?.error;
+    if (spotifyErrorNeedsSetup(code)) {
+      sp.expanded = !sp.expanded;
+      if (sp.expanded) sp.focus = "dash-link";
+      renderSpotify();
+    } else {
+      spotifyConnect({ focusStatus: true });
+    }
+  }
+
+  function announceSpotify(state) {
+    const sp = S.sp;
+    if (state === "waiting") announce(COPY.spWaiting);
+    else if (state === "connected") announce(spotifyConnectedCaption(sp.body?.account));
+    else if (state === "error") announce(spotifyErrorCopy(sp.localError || sp.body?.error));
+  }
+
+  function renderSpotify() {
+    const slot = $("spotify-slot");
+    const sp = S.sp;
+    const state = spotifyState(sp.body, sp);
+    if (sp.lastState !== null && sp.lastState !== state) {
+      // A new state starts collapsed (an error's open setup steps don't carry into Connected).
+      sp.expanded = false;
+      sp.changing = false;
+      sp.confirming = false;
+      sp.inputError = null;
+      announceSpotify(state);
+    }
+    sp.lastState = state;
+    syncSpotifyPoll();
+    if (state === "hidden") {
+      slot.dataset.key = "";
+      slot.replaceChildren();
+      return;
+    }
+    const key = JSON.stringify([state, sp.body, sp.expanded, sp.changing, sp.confirming, sp.inputError, sp.actionError, sp.busy, sp.localError]);
+    const focusRole = sp.focus;
+    sp.focus = null;
+    if (slot.dataset.key === key && !focusRole) return; // unchanged: keep it (and what's typed)
+    const activeRole = slot.contains(document.activeElement) ? document.activeElement.dataset.role : null;
+    if (slot.dataset.key !== key) {
+      slot.dataset.key = key;
+      fill(slot, spotifyNodes(state));
+    }
+    const role = focusRole || activeRole;
+    const el = role ? slot.querySelector(`[data-role="${role}"]`) : null;
+    if (el && document.activeElement !== el) el.focus();
+  }
+
+  function spotifySteps() {
+    const sp = S.sp;
+    const b = sp.body;
+    if (sp.draft === null) sp.draft = b.clientId || "";
+    const redirect = b.redirectUri || "";
+    const input = h("input", {
+      class: "h-field h-sp-input", id: "sp-cid", type: "text", "data-role": "cid", value: sp.draft, maxlength: "64",
+      autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false",
+      "aria-invalid": sp.inputError ? "true" : null, "aria-describedby": sp.inputError ? "sp-cid-err" : null,
+    });
+    input.addEventListener("input", () => { sp.draft = input.value; });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); spotifySave(); } });
+    return h("ol", { class: "h-steps" },
+      h("li", {}, COPY.spStep1Lead,
+        h("a", { class: "h-link h-ext", href: COPY.spDashboardUrl, target: "_blank", rel: "noopener noreferrer", "data-role": "dash-link", text: COPY.spDashboardText })),
+      h("li", {}, h("span", { text: COPY.spStep2 }),
+        h("div", { class: "h-sp-uri" }, h("span", { class: "v", text: redirect }),
+          h("button", { type: "button", class: "h-ib h-copy", "aria-label": COPY.spCopyRedirect, "data-role": "copy", onclick: (e) => copyText(redirect, e.currentTarget, COPY.spRedirectCopied) },
+            icon("copy", "i base"), icon("check", "i ok")))),
+      h("li", { text: COPY.spStep3 }),
+      h("li", {}, h("label", { for: "sp-cid", text: COPY.spStep4 }), input,
+        sp.inputError ? h("p", { class: "h-err", id: "sp-cid-err", role: "alert", text: sp.inputError }) : null,
+        h("div", { class: "h-btns" },
+          h("button", { type: "button", class: "h-btn primary sm", "data-role": "save", disabled: sp.busy, text: COPY.spSave, onclick: spotifySave }),
+          sp.changing ? h("button", {
+            type: "button", class: "h-btn ghost sm", "data-role": "cancel-change", text: COPY.cancel,
+            onclick: () => { sp.changing = false; sp.inputError = null; sp.draft = null; sp.focus = "change"; renderSpotify(); },
+          }) : null)));
+  }
+
+  function spotifyNodes(state) {
+    const sp = S.sp;
+    const b = sp.body;
+    const errCode = sp.localError || b.error;
+
+    if (state === "connected" && sp.confirming) {
+      return [h("div", { class: "h-row danger-zone" }, h("span", { class: "h-gl warn" }, icon("spotify")),
+        h("div", { class: "txt" },
+          h("div", { class: "ttl", text: COPY.spDisconnectTitle }),
+          h("div", { class: "sub wrap", text: COPY.spDisconnectBody }),
+          sp.actionError ? h("p", { class: "h-err", role: "alert", text: sp.actionError }) : null,
+          h("div", { class: "h-btns" },
+            h("button", { type: "button", class: "h-btn sm", "data-role": "cancel", text: COPY.cancel, onclick: () => { sp.confirming = false; sp.actionError = null; sp.focus = "primary"; renderSpotify(); } }),
+            h("button", { type: "button", class: "h-btn sm danger", "data-role": "confirm", disabled: sp.busy, text: COPY.spDisconnect, onclick: spotifyDisconnect }))))];
+    }
+
+    const glyph = h("span", { class: `h-gl${state === "connected" ? " on" : state === "error" ? " warn" : ""}` }, icon("spotify"));
+    const title = h("div", { class: "ttl", id: "sp-ttl", text: COPY.spTitle });
+    let sub;
+    let trailing = null;
+    let panel = null;
+    let rowClass = "h-row";
+
+    if (state === "waiting") {
+      rowClass = "h-row top";
+      sub = [
+        h("div", { class: "sub wrap h-sp-status", tabindex: "-1", "data-role": "status" }, h("span", { class: "h-spin", "aria-hidden": "true" }), COPY.spWaiting),
+        h("div", { class: "h-btns" },
+          h("button", { type: "button", class: "h-btn sm", "data-role": "again", text: COPY.spOpenAgain, onclick: () => spotifyConnect() }),
+          h("button", { type: "button", class: "h-btn ghost sm", "data-role": "cancel-wait", text: COPY.cancel, onclick: () => { sp.waiting = false; sp.focus = "primary"; renderSpotify(); } })),
+      ];
+    } else if (state === "connected") {
+      sub = h("div", { class: "sub wrap h-sp-status", tabindex: "-1", "data-role": "status" },
+        spotifyConnectedCaption(b.account), h("span", { class: "sep", "aria-hidden": "true", text: " · " }),
+        h("button", {
+          type: "button", class: "h-link", "data-role": "details", "aria-expanded": String(sp.expanded), "aria-controls": sp.expanded ? "sp-panel" : null,
+          onclick: () => { sp.expanded = !sp.expanded; sp.changing = false; sp.inputError = null; renderSpotify(); },
+        }, COPY.details, icon("chev-d")));
+      trailing = h("button", { type: "button", class: "h-btn sm", "data-role": "primary", text: COPY.spDisconnect, onclick: () => { sp.confirming = true; sp.actionError = null; sp.focus = "cancel"; renderSpotify(); } });
+      if (sp.expanded) {
+        const redirect = b.redirectUri || "";
+        panel = sp.changing ? spotifySteps() : [
+          h("dl", { class: "h-dl h-sp-dl" },
+            h("dt", { text: COPY.spClientId }), h("dd", {}, h("span", { text: b.clientId || "" })),
+            h("dt", { text: COPY.spRedirect }), h("dd", {}, h("span", { text: redirect }),
+              h("button", { type: "button", class: "h-ib h-copy", "aria-label": COPY.spCopyRedirect, onclick: (e) => copyText(redirect, e.currentTarget, COPY.spRedirectCopied) },
+                icon("copy", "i base"), icon("check", "i ok")))),
+          h("button", { type: "button", class: "h-link h-sp-change", "data-role": "change", text: COPY.spChangeId, onclick: () => { sp.changing = true; sp.draft = null; sp.focus = "dash-link"; renderSpotify(); } }),
+        ];
+      }
+    } else if (state === "error") {
+      sub = h("div", { class: "sub wrap h-sp-status", tabindex: "-1", "data-role": "status", text: spotifyErrorCopy(errCode) });
+      const setup = spotifyErrorNeedsSetup(errCode);
+      trailing = h("button", {
+        type: "button", class: "h-btn sm", "data-role": "primary", text: COPY.spTryAgain, onclick: spotifyTryAgain,
+        "aria-expanded": setup ? String(sp.expanded) : null, "aria-controls": setup && sp.expanded ? "sp-panel" : null,
+      });
+      if (setup && sp.expanded) panel = spotifySteps();
+    } else {
+      sub = h("div", { class: "sub wrap h-sp-status", tabindex: "-1", "data-role": "status", text: COPY.spSetupCaption });
+      trailing = h("button", {
+        type: "button", class: "h-btn sm", "data-role": "primary", text: COPY.spSetup, "aria-expanded": String(sp.expanded), "aria-controls": sp.expanded ? "sp-panel" : null,
+        onclick: () => { sp.expanded = !sp.expanded; if (sp.expanded) sp.focus = "dash-link"; else sp.inputError = null; renderSpotify(); },
+      });
+      if (sp.expanded) panel = spotifySteps();
+    }
+
+    return [
+      h("div", { class: rowClass }, glyph, h("div", { class: "txt" }, title, sub), trailing),
+      panel ? h("div", { class: "h-sp-panel", id: "sp-panel", role: "group", "aria-labelledby": "sp-ttl" }, panel) : null,
+    ];
+  }
+
+  $("spotify-slot").addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const sp = S.sp;
+    if (sp.confirming) { sp.confirming = false; sp.actionError = null; sp.focus = "primary"; }
+    else if (sp.changing) { sp.changing = false; sp.inputError = null; sp.draft = null; sp.focus = "change"; }
+    else if (sp.expanded) { sp.expanded = false; sp.inputError = null; sp.focus = spotifyState(sp.body, sp) === "connected" ? "details" : "primary"; }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    renderSpotify();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) loadSpotify();
+    else syncSpotifyPoll();
+  });
 
   function renderNote() {
     const slot = $("note-slot");
@@ -1182,10 +1550,12 @@ function startPage() {
         if (S.devices) S.order = sortDevices(S.devices).map((d) => d.id);
         renderPhones();
         connect();
+        loadSpotify();
       } else {
         paused = true;
         closeMenu(false);
         disconnect();
+        syncSpotifyPoll();
       }
     } else if (detail.type === "navigate" && detail.view === "pair") {
       goPair();
