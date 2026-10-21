@@ -25,7 +25,7 @@ import {
   CONTROL_VERBS,
 } from "../src/platform/contract.js";
 import { imageInfo, spotifyArtworkUrl, artworkKey, fetchSpotifyArtwork } from "../src/platform/artwork.js";
-import { createWindowsProvider, windowsClosable, findSpotify } from "../src/platform/windows.js";
+import { createWindowsProvider, windowsClosable, findSpotify, parseMediaState } from "../src/platform/windows.js";
 import { createLinuxProvider } from "../src/platform/linux.js";
 import {
   createMacProvider,
@@ -202,14 +202,14 @@ t.deepEqual(winFeatures, {
   media: {
     sources: "system",
     players: [{ id: "spotify", name: "Spotify", appId: "c:/users/me/appdata/roaming/spotify/spotify.exe", installed: true, running: true, permission: "not-required" }],
-    artwork: false,
-    sessions: false,
+    artwork: true,
+    sessions: true,
   },
-  volume: { get: true, set: true, mute: false },
+  volume: { get: true, set: true, mute: true },
   power: { lock: "ready", sleep: "ready", restart: "ready", shutdown: "ready" },
   spotify: {
     installed: true,
-    local: { nowPlaying: true, transport: true, artwork: false, seek: false, shuffle: false, repeat: false },
+    local: { nowPlaying: true, transport: true, artwork: true, seek: false, shuffle: false, repeat: false },
     account: { available: false },
   },
 }, "Windows capability map (7.2): system media, Spotify from the catalog, every power verb ready");
@@ -533,43 +533,232 @@ t.equal(macClosable({ bundleId: "com.apple.calculator" }), true, "Calculator is 
   await h2.stop();
 }
 
-// Windows provider: existing helper verbs only.
+// Windows provider: the media-state / media-command / media-artwork helper
+// verbs, volume with mute, lock state, and the old verbs as fallbacks.
 {
+  const statusOf = async (fn) => { try { await fn(); return "resolved"; } catch (err) { return err?.status ?? "no-status"; } };
+  const KEY = "0123456789abcdef0123456789abcdef";
+  const spotifyPath = "C:\\Users\\Me\\AppData\\Roaming\\Spotify\\Spotify.exe";
+  const sessionRow = (over = {}) => ({
+    sessionId: "Spotify.exe", name: "Spotify", path: spotifyPath, current: true,
+    title: "Houdini", artist: "Dua Lipa", album: "Radical Optimism", status: "playing",
+    positionMs: 72000, durationMs: 185000, updatedAt: 1_000_000, shuffle: true, repeat: "all",
+    controls: { previous: true, next: true, playPause: true, seek: true, shuffle: true, repeat: true },
+    artworkKey: KEY, ...over,
+  });
+  const chromeRow = (over = {}) => sessionRow({
+    sessionId: "Chrome", name: "Google Chrome", path: null, current: false, title: "A video", artist: "", album: "",
+    status: "paused", durationMs: null, positionMs: null, updatedAt: null, shuffle: null, repeat: null,
+    controls: { previous: false, next: false, playPause: true, seek: false, shuffle: false, repeat: false }, artworkKey: null, ...over,
+  });
+  let state = { current: "Spotify.exe", sessions: [sessionRow(), chromeRow()] };
+  let stateRaw = null;
+  let commandOut = '{"ok":true}';
+  let artworkOut = "";
+  let helperIsOld = false;
   const calls = [];
-  let nowPlaying = '{"title":"Song","artist":"Band","playing":true}';
   const win = createWindowsProvider({
     helperPath: "H.exe",
+    now: () => 2_000_000,
     exec: async (file, args) => {
       calls.push(args);
-      if (args[0] === "volume") return { stdout: '{"volume":0.45}' };
-      if (args[0] === "nowplaying") return { stdout: nowPlaying };
-      return { stdout: "" };
+      t.equal(file, "H.exe", `every Windows call goes to the helper (${args[0]})`);
+      const newVerbs = ["media-state", "media-command", "media-artwork", "volume-mute", "session-locked"];
+      if (helperIsOld && newVerbs.includes(args[0])) {
+        const err = new Error("exit 1"); err.stderr = `unknown verb: ${args[0]}`; throw err;
+      }
+      switch (args[0]) {
+        case "volume": return { stdout: '{"volume":0.45,"muted":false}' };
+        case "volume-mute": return { stdout: `{"volume":0.45,"muted":${args[1]}}` };
+        case "nowplaying": return { stdout: '{"title":"Song","artist":"Band","playing":true}' };
+        case "media-state": return { stdout: stateRaw ?? JSON.stringify(state) };
+        case "media-command": return { stdout: commandOut };
+        case "media-artwork": return { stdout: artworkOut };
+        case "session-locked": return { stdout: '{"locked":true}' };
+        case "close": return { stdout: '{"windows":3}' };
+        default: return { stdout: "" };
+      }
     },
   });
-  t.deepEqual(await win.volume(), { level: 45, muted: null }, "Windows volume reads the helper's level");
-  t.deepEqual(calls.at(-1), ["volume"], "Windows volume read argv");
+
+  // volume and mute
+  t.deepEqual(await win.volume(), { level: 45, muted: false }, "Windows volume reads level and mute");
+  t.deepEqual(calls.at(-1), ["volume"], "volume read argv");
+  calls.length = 0;
+  t.deepEqual(await win.setVolume({ muted: true }), { level: 45, muted: true }, "mute returns the new state");
+  t.deepEqual(calls, [["volume-mute", "true"]], "mute argv is exact");
+  calls.length = 0;
+  await win.setVolume({ level: 40, muted: false });
+  t.deepEqual(calls, [["control", "volume-set", "40"], ["volume-mute", "false"]], "level and mute together: both verbs, in order");
+  calls.length = 0;
   await win.setVolume({ level: 40 });
-  t.ok(calls.some((a) => JSON.stringify(a) === JSON.stringify(["control", "volume-set", "40"])), "Windows volume set uses the existing volume-set verb");
-  await t.rejects(() => win.setVolume({ muted: true }), "Windows refuses an absolute mute (state unknown)");
+  t.deepEqual(calls, [["control", "volume-set", "40"], ["volume"]], "level alone sets, then reads back");
+  await t.rejects(() => win.setVolume({}), "setVolume with nothing to do is refused");
+  await t.rejects(() => win.setVolume({ level: 101 }), "an out-of-range level is refused");
+
+  // lock state
+  calls.length = 0;
+  t.deepEqual(await win.sessionState(), { locked: true }, "session-locked maps to { locked }");
+  t.deepEqual(calls, [["session-locked"]], "session-locked argv");
+
+  // close reports the window count
+  calls.length = 0;
+  t.deepEqual(await win.closeApp({ pid: 77 }), { windows: 3 }, "close reports how many windows were asked to close");
+  t.deepEqual(calls, [["close", "77"]], "close argv is unchanged");
+
+  // rich media state
+  calls.length = 0;
   const media = normalizeMediaState(await win.media());
-  t.deepEqual([media.source.id, media.title, media.artist, media.playing, media.artwork], ["system", "Song", "Band", true, null], "Windows media maps the system session");
+  t.deepEqual(calls, [["media-state"]], "media reads media-state only");
+  t.deepEqual(media.source, { id: "system", name: "Spotify", appId: "c:/users/me/appdata/roaming/spotify/spotify.exe", sessionId: "Spotify.exe" }, "the source names the session and its catalog app id");
+  t.deepEqual([media.title, media.artist, media.album, media.playing, media.positionMs, media.durationMs, media.updatedAt], ["Houdini", "Dua Lipa", "Radical Optimism", true, 72000, 185000, 1_000_000], "track, timeline and when it was read");
+  t.deepEqual([media.shuffle, media.repeat, media.repeatModes], [true, "all", ["off", "all", "one"]], "shuffle and repeat (all three modes)");
+  t.deepEqual(media.controls, { previous: true, next: true, playPause: true, seek: true, shuffle: true, repeat: true }, "controls follow the session");
+  t.equal(media.artwork, mediaArtworkPath(KEY), "artwork is a host path for the helper's key");
+  t.deepEqual(media.sessions, [
+    { sessionId: "Spotify.exe", name: "Spotify", appId: "c:/users/me/appdata/roaming/spotify/spotify.exe", title: "Houdini", current: true },
+    { sessionId: "Chrome", name: "Google Chrome", appId: null, title: "A video", current: false },
+  ], "every session is listed; the shown one is current");
+
+  // packaged source ids map to the packaged catalog id
+  state = { current: "Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", sessions: [sessionRow({ sessionId: "Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic", name: "Media Player", path: null })] };
+  t.equal(normalizeMediaState(await win.media()).source.appId, "shell:appsfolder/microsoft.zunemusic_8wekyb3d8bbwe!microsoft.zunemusic", "a packaged session maps to its AppsFolder id");
+
+  // seek / shuffle / repeat only when the session can
+  state = { current: "Chrome", sessions: [sessionRow({ current: false }), chromeRow()] };
+  const chrome = normalizeMediaState(await win.media());
+  t.equal(chrome.source.sessionId, "Chrome", "Windows' current session is shown");
+  t.deepEqual([chrome.controls.seek, chrome.controls.shuffle, chrome.controls.repeat, chrome.shuffle, chrome.repeat, chrome.repeatModes], [false, false, false, null, null, undefined], "no seek, shuffle or repeat when the session does not report them");
+  t.equal(chrome.updatedAt, 2_000_000, "no timeline timestamp: updatedAt is now");
+  t.equal(chrome.artwork, null, "no thumbnail: no artwork");
+  state = { current: "Chrome", sessions: [sessionRow({ current: false, updatedAt: 9_000_000 }), chromeRow({ title: "" })] };
+  const fallback = normalizeMediaState(await win.media());
+  t.equal(fallback.source.sessionId, "Spotify.exe", "a current session without a track yields to one with a track");
+  t.equal(fallback.updatedAt, 2_000_000, "a timestamp in the future is clamped to now");
+
+  // session selection (stateless helper, remembered by the provider)
+  state = { current: "Spotify.exe", sessions: [sessionRow(), chromeRow()] };
+  calls.length = 0;
+  await win.mediaCommand("select", "Chrome", "Chrome");
+  t.deepEqual(calls, [["media-state"]], "select checks the session exists and runs no command");
+  t.equal(normalizeMediaState(await win.media()).source.sessionId, "Chrome", "the selected session is shown");
+  calls.length = 0;
+  await win.mediaCommand("next", null, null);
+  t.deepEqual(calls, [["media-command", "next", "", "Chrome"]], "commands go to the selected session (empty value placeholder)");
+  calls.length = 0;
+  await win.mediaCommand("toggle", null, "Spotify.exe");
+  t.deepEqual(calls, [["media-command", "toggle", "", "Spotify.exe"]], "an explicit sessionId wins");
+  t.equal(await statusOf(() => win.mediaCommand("select", "Nope.exe", "Nope.exe")), 404, "selecting an unknown session: 404");
+  t.equal(await statusOf(() => win.mediaCommand("select", "bad id", "bad id")), 400, "a malformed session id is refused before the helper");
+  state = { current: "Spotify.exe", sessions: [sessionRow()] };
+  t.equal(normalizeMediaState(await win.media()).source.sessionId, "Spotify.exe", "a selected session that ended is forgotten");
+  calls.length = 0;
+  await win.mediaCommand("pause", null, null);
+  t.deepEqual(calls, [["media-command", "pause"]], "no selection, no sessionId: the helper uses the current session");
+
+  // exact argv per action
+  calls.length = 0;
+  await win.mediaCommand("play", null, null);
+  await win.mediaCommand("previous", null, null);
+  await win.mediaCommand("seek", 61000, null);
+  await win.mediaCommand("shuffle", false, null);
+  await win.mediaCommand("repeat", "one", "Spotify.exe");
+  t.deepEqual(calls, [
+    ["media-command", "play"],
+    ["media-command", "previous"],
+    ["media-command", "seek", "61000"],
+    ["media-command", "shuffle", "false"],
+    ["media-command", "repeat", "one", "Spotify.exe"],
+  ], "media-command argv is exact for every action");
+  calls.length = 0;
+  for (const [action, value] of [["seek", -1], ["seek", 1.5], ["seek", "100"], ["shuffle", "true"], ["repeat", "track"]]) {
+    t.equal(await statusOf(() => win.mediaCommand(action, value, null)), 400, `invalid ${action} value ${JSON.stringify(value)} refused`);
+  }
+  t.equal(await statusOf(() => win.mediaCommand("open", "spotify", null)), 501, "open is the host's job");
+  t.deepEqual(calls, [], "invalid commands never reach the helper");
+
+  // helper outcomes
+  commandOut = '{"ok":false,"error":"no-session"}';
+  t.equal(await statusOf(() => win.mediaCommand("next", null, null)), 404, "no session: 404");
+  commandOut = '{"ok":false,"error":"unknown-session"}';
+  t.equal(await statusOf(() => win.mediaCommand("next", null, "Gone.exe")), 404, "unknown session: 404");
+  commandOut = '{"ok":false,"error":"rejected"}';
+  t.equal(await statusOf(() => win.mediaCommand("shuffle", true, null)), 501, "the app refused: 501");
+  for (const bad of ["", "not json", "[1]", '{"ok":"yes"}', `{"ok":true,"pad":"${"x".repeat(5000)}"}`]) {
+    commandOut = bad;
+    t.equal(await statusOf(() => win.mediaCommand("next", null, null)), 502, `malformed command output refused: ${JSON.stringify(bad.slice(0, 20))}`);
+  }
+  commandOut = '{"ok":true}';
+
+  // malformed / oversized media-state falls back to the old verbs
+  for (const bad of ["", "nope", "[]", '{"sessions":5}', JSON.stringify({ current: null, sessions: [], pad: "x".repeat(300 * 1024) })]) {
+    stateRaw = bad;
+    calls.length = 0;
+    const m = normalizeMediaState(await win.media());
+    t.deepEqual([m.source?.id, m.title, calls.map((c) => c[0])], ["system", "Song", ["media-state", "nowplaying"]], `unusable media-state (${bad.length} chars) falls back to nowplaying`);
+  }
+  stateRaw = JSON.stringify({ current: "x", sessions: [
+    { sessionId: "bad id", title: "Space" },
+    { sessionId: 7, title: "Number" },
+    sessionRow({ sessionId: "A.exe", status: "dancing", positionMs: -5, durationMs: "185000", shuffle: "yes", repeat: "track", artworkKey: "ZZ", controls: { seek: "true" }, name: 5, path: "relative\\a.exe" }),
+    sessionRow({ sessionId: "A.exe", title: "Duplicate" }),
+  ] });
+  const parsed = parseMediaState(stateRaw);
+  t.deepEqual(parsed.sessions.map((s) => s.sessionId), ["A.exe"], "invalid and duplicate session ids are dropped");
+  t.deepEqual([parsed.current, parsed.sessions[0].current], [null, false], "a current id that is not listed is ignored");
+  const a = parsed.sessions[0];
+  t.deepEqual([a.status, a.positionMs, a.durationMs, a.shuffle, a.repeat, a.artworkKey, a.controls.seek, a.name, a.appId], ["closed", null, null, null, null, null, false, null, null], "every field is type-checked");
+  stateRaw = JSON.stringify({ current: null, sessions: Array.from({ length: 30 }, (_, i) => sessionRow({ sessionId: `P${i}.exe`, current: false })) });
+  t.equal(parseMediaState(stateRaw).sessions.length, 16, "at most 16 sessions");
+  stateRaw = JSON.stringify({ current: null, sessions: [chromeRow({ title: "" })] });
+  const nothing = normalizeMediaState(await win.media());
+  t.deepEqual([nothing.source, nothing.controls.playPause, nothing.sessions.length], [null, true, 1], "sessions without a track: no source, resume still offered");
+  stateRaw = null;
+
+  // artwork: key -> session, signature, size and staleness checks
+  state = { current: "Spotify.exe", sessions: [sessionRow()] };
+  await win.media();
+  const art = (bytes, over = {}) => JSON.stringify({ ok: true, key: KEY, mime: imageInfo(bytes)?.mime ?? "image/png", data: bytes.toString("base64"), ...over });
+  artworkOut = art(png(300, 300));
+  calls.length = 0;
+  const served = await win.mediaArtwork(KEY);
+  t.deepEqual(calls, [["media-artwork", "Spotify.exe"]], "artwork argv names the session the key came from");
+  t.deepEqual([served?.mime, imageInfo(served?.bytes)?.width], ["image/png", 300], "a small PNG is served");
+  artworkOut = art(jpeg(512, 400));
+  t.equal((await win.mediaArtwork(KEY))?.mime, "image/jpeg", "a 512 px JPEG is served");
+  const refused = [
+    ["larger than 512 px", art(png(513, 100))],
+    ["not an image", art(Buffer.from("GIF89a-not-allowed-here-xxxxxxxxx"), { mime: "image/gif" })],
+    ["mime mismatch", art(png(100, 100), { mime: "image/jpeg" })],
+    ["stale key (track changed)", art(png(100, 100), { key: "f".repeat(32) })],
+    ["not ok", JSON.stringify({ ok: false, error: "no-artwork" })],
+    ["bad base64", art(png(100, 100), { data: "!!!!" })],
+    ["over 2 MB", art(Buffer.concat([png(100, 100), Buffer.alloc(2 * 1024 * 1024)]))],
+    ["malformed", "{"],
+  ];
+  for (const [label, out] of refused) {
+    artworkOut = out;
+    t.equal(await win.mediaArtwork(KEY), null, `artwork refused: ${label}`);
+  }
+  calls.length = 0;
+  t.equal(await win.mediaArtwork("e".repeat(32)), null, "an unknown key yields no artwork");
+  t.equal(await win.mediaArtwork("../../etc"), null, "a malformed key yields no artwork");
+  t.deepEqual(calls, [], "unknown keys never reach the helper");
+
+  // an older helper (no new verbs): media keys and nowplaying still work
+  helperIsOld = true;
+  const old = normalizeMediaState(await win.media());
+  t.deepEqual([old.source.id, old.title, old.artist, old.playing, old.artwork, old.sessions], ["system", "Song", "Band", true, null, []], "older helper: media from nowplaying");
   calls.length = 0;
   await win.mediaCommand("toggle", null, null);
   await win.mediaCommand("next", null, null);
-  await win.mediaCommand("previous", null, null);
-  t.deepEqual(calls, [["control", "media-play-pause"], ["control", "media-next"], ["control", "media-previous"]], "Windows transport uses the media-key verbs");
+  t.deepEqual(calls, [["media-command", "toggle"], ["control", "media-play-pause"], ["media-command", "next"], ["control", "media-next"]], "older helper: transport falls back to media keys");
   calls.length = 0;
   await win.mediaCommand("play", null, null);
-  t.deepEqual(calls, [["nowplaying"]], "play while already playing sends no key");
-  nowPlaying = '{"title":"Song","artist":"Band","playing":false}';
-  calls.length = 0;
-  await win.mediaCommand("play", null, null);
-  t.deepEqual(calls, [["nowplaying"], ["control", "media-play-pause"]], "play while paused toggles once");
-  await t.rejects(() => win.mediaCommand("seek", 1000, null), "seek is not offered on Windows yet");
-  nowPlaying = "{}";
-  const empty = normalizeMediaState(await win.media());
-  t.equal(empty.source, null, "no session on Windows: source null");
-  t.equal(empty.controls.playPause, true, "Windows can still resume the last player");
+  t.deepEqual(calls, [["media-command", "play"], ["nowplaying"]], "older helper: play while playing sends no key");
+  t.equal(await statusOf(() => win.mediaCommand("seek", 1000, null)), 501, "older helper: seek unavailable");
+  t.equal(await win.sessionState(), null, "older helper: lock state unknown");
+  helperIsOld = false;
 }
 
 // =========================================================================

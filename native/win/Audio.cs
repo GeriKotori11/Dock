@@ -23,6 +23,15 @@ internal static class Audio
         return WithEndpoint(endpoint => endpoint.GetMasterVolumeLevelScalar(out level) == 0) ? level : null;
     }
 
+    public static bool SetMute(bool muted) =>
+        WithEndpoint(endpoint => endpoint.SetMute(muted, IntPtr.Zero) == 0);
+
+    public static bool? GetMute()
+    {
+        var muted = false;
+        return WithEndpoint(endpoint => endpoint.GetMute(out muted) == 0) ? muted : null;
+    }
+
     private static bool WithEndpoint(Func<IAudioEndpointVolume, bool> action)
     {
         IMMDeviceEnumerator? enumerator = null;
@@ -83,5 +92,11 @@ internal static class Audio
         [PreserveSig] int SetMasterVolumeLevelScalar(float level, IntPtr eventContext);
         [PreserveSig] int GetMasterVolumeLevel(out float levelDb);
         [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int SetChannelVolumeLevel(uint channel, float levelDb, IntPtr eventContext);
+        [PreserveSig] int SetChannelVolumeLevelScalar(uint channel, float level, IntPtr eventContext);
+        [PreserveSig] int GetChannelVolumeLevel(uint channel, out float levelDb);
+        [PreserveSig] int GetChannelVolumeLevelScalar(uint channel, out float level);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool muted, IntPtr eventContext);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool muted);
     }
 }

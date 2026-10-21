@@ -7,9 +7,16 @@
 // Verbs:
 //   launch <absolutePath> [args] start a process with the shortcut's argument string
 //   focus  <pid>                 bring a process's main window to the foreground
-//   close  <pid>                 ask the main window to close
+//   close  <pid>                 ask every visible top-level window to close
 //   control <verb> [value]       volume / media / brightness / power
 //   nowplaying                   print the current media session as JSON
+//   media-state                  every media session (track, timeline, controls)
+//   media-command <action> [value] [sessionId]
+//                                play/pause/toggle/next/previous/seek/shuffle/repeat
+//   media-artwork [sessionId]    the session thumbnail, base64 PNG/JPEG <= 512 px
+//   volume                       master level (0..1) and mute state
+//   volume-mute <true|false>     set the master mute
+//   session-locked               whether this login session is locked
 //
 // Exit codes: 0 success, 1 usage error, 2 runtime failure.
 
@@ -41,7 +48,12 @@ internal static class Program
                 "close" => Close(args),
                 "control" => Control(args),
                 "nowplaying" => NowPlaying(),
-                "volume" => ReadVolume(),
+                "volume" when args.Length == 1 => ReadVolume(),
+                "volume-mute" => SetMute(args),
+                "media-state" => MediaSession.State(args),
+                "media-command" => MediaSession.Command(args),
+                "media-artwork" => MediaSession.Artwork(args),
+                "session-locked" => SessionLock.Run(args),
                 "brightness" => ReadBrightness(args),
                 "capture" => ScreenCapture.Run(args),
                 "touchpad" when args.Length == 1 => Touchpad.Run(),
@@ -58,7 +70,7 @@ internal static class Program
         }
     }
 
-    private static int Usage(string message)
+    internal static int Usage(string message)
     {
         Console.Error.WriteLine(message);
         return 1;
@@ -145,7 +157,25 @@ internal static class Program
     }
 
     private const uint WM_CLOSE = 0x0010;
-    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private const uint GW_OWNER = 4;
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr hWnd, uint cmd);
+
+    /** Visible, unowned top-level windows of a process (owned dialogs close with their owner). */
+    private static List<IntPtr> TopLevelWindows(int pid)
+    {
+        var found = new List<IntPtr>();
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var owner);
+            if (owner == (uint)pid && IsWindowVisible(hWnd) && GetWindow(hWnd, GW_OWNER) == IntPtr.Zero) found.Add(hWnd);
+            return found.Count < 256;
+        }, IntPtr.Zero);
+        return found;
+    }
 
     private static int Close(string[] args)
     {
@@ -157,13 +187,14 @@ internal static class Program
 
         // WM_CLOSE asks politely, so the app can prompt to save. It is never
         // escalated to Kill(): losing a user's unsaved work from a phone tap is
-        // not an acceptable failure mode.
-        if (proc.MainWindowHandle != IntPtr.Zero)
-        {
-            SendMessage(proc.MainWindowHandle, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-            return 0;
-        }
-        Console.Error.WriteLine("close: process has no main window");
+        // not an acceptable failure mode. Posted (not sent) to every visible
+        // top-level window, so one window's save prompt cannot block the rest.
+        var windows = TopLevelWindows(pid);
+        if (windows.Count == 0 && proc.MainWindowHandle != IntPtr.Zero) windows.Add(proc.MainWindowHandle);
+        var posted = windows.Count(hWnd => PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero));
+        Console.Out.Write(JsonSerializer.Serialize(new { windows = posted }));
+        if (posted > 0) return 0;
+        Console.Error.WriteLine("close: process has no window to close");
         return 2;
     }
 
@@ -288,12 +319,20 @@ internal static class Program
         return 0;
     }
 
-    // Read-only diagnostic, also used to restore volume during native checks.
+    // Level and mute; also used to restore volume during native checks.
     private static int ReadVolume()
     {
         var level = Audio.GetMasterVolume();
-        Console.Out.Write(JsonSerializer.Serialize(new { volume = level }));
+        var muted = Audio.GetMute();
+        Console.Out.Write(JsonSerializer.Serialize(new { volume = level, muted }));
         return level is null ? 2 : 0;
+    }
+
+    private static int SetMute(string[] args)
+    {
+        if (args.Length != 2 || (args[1] != "true" && args[1] != "false")) return Usage("usage: volume-mute <true|false>");
+        if (!Audio.SetMute(args[1] == "true")) return 2;
+        return ReadVolume();
     }
 
     private static int ReadBrightness(string[] args)
