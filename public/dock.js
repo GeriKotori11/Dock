@@ -237,38 +237,51 @@ export function miniPlayerLabel(media) {
 
 /**
  * The mini player's volume buttons, after Next behind a hairline. `mode` is
- * "level" (with a level chip) or "legacy" (volume verbs, no chip).
+ * "level" (with a level chip) or "legacy" (volume verbs, no chip). `mute`
+ * ("level", "legacy" or null) adds the mute toggle after Volume up; `muted`
+ * (true, false or null when unknown) is its pressed state, which only a
+ * "level" host can report.
  */
-function renderMiniVolume(mode, online) {
+function renderMiniVolume(mode, online, mute = null, muted = null) {
   if (mode !== "level" && mode !== "legacy") return "";
   const off = online ? "" : " disabled";
+  const pressed = mute === "level" && typeof muted === "boolean" ? ` aria-pressed="${muted}"` : "";
   return [
     '<span class="mini__divider" aria-hidden="true"></span>',
     `<div class="mini__vol" role="group" aria-label="Volume" data-mini-vol-mode="${mode}">`,
     mode === "level" ? '<span class="mini__chip" data-mini-chip aria-live="polite"></span>' : "",
     `<button class="mini__btn" type="button" data-mini-vol="down" aria-label="Volume down"${off}>${icon("speaker-minus")}</button>`,
     `<button class="mini__btn" type="button" data-mini-vol="up" aria-label="Volume up"${off}>${icon("speaker-plus")}</button>`,
+    mute === "level" || mute === "legacy"
+      ? `<button class="mini__btn mini__mute" type="button" data-mini-mute="${mute}" aria-label="${muted === true && mute === "level" ? "Unmute" : "Mute"}"${pressed}${off}>${icon("mute")}</button>`
+      : "",
     "</div>",
   ].join("");
 }
 
 /**
- * The progress line along the mini player's bottom edge: draggable with a
- * slider hit area when the source can seek, read-only otherwise, absent
- * without a duration. Position is painted by the page (`--p`, aria values),
- * so the markup only changes with the track.
+ * The seek row under the controls: elapsed time, the line, total time. The
+ * whole row is the slider's hit area when the source can seek; read-only
+ * (no thumb, no slider) otherwise; absent without a duration. Position is
+ * painted by the page (`--p`, the elapsed time, aria values), so the markup
+ * only changes with the track.
  */
 function renderMiniSeek(media, online) {
   const mode = miniSeekMode(media);
   if (!mode) return "";
-  const line = '<span class="mini__seek-track"><span class="mini__seek-fill"></span></span>';
-  if (mode === "progress") return `<div class="mini__seek" data-mini-seek="progress" style="--p:0" aria-hidden="true">${line}</div>`;
+  const seekable = mode === "seek";
+  const bar = [
+    '<span class="mini__seek-bar">',
+    '<span class="mini__seek-track"><span class="mini__seek-fill"></span></span>',
+    seekable ? '<span class="mini__seek-thumb" aria-hidden="true"></span>' : "",
+    "</span>",
+  ].join("");
+  const times = (inner) => `<span class="mini__seek-now" data-mini-seek-now aria-hidden="true">0:00</span>${inner}<span class="mini__seek-end" aria-hidden="true">${formatTime(media.durationMs)}</span>`;
+  if (!seekable) return `<div class="mini__seek" data-mini-seek="progress" style="--p:0" aria-hidden="true">${times(bar)}</div>`;
   const aria = seekAria(0, media.durationMs, spokenTime);
   return [
     '<div class="mini__seek is-seekable" data-mini-seek="seek" style="--p:0">',
-    line,
-    '<span class="mini__seek-thumb" aria-hidden="true"></span>',
-    `<span class="mini__seek-time" data-mini-seek-time aria-hidden="true">0:00 / ${formatTime(media.durationMs)}</span>`,
+    times(bar),
     `<div class="mini__seek-hit" data-mini-seek-hit role="slider" tabindex="${online ? 0 : -1}" aria-label="Seek" aria-valuemin="${aria.min}" aria-valuemax="${aria.max}" aria-valuenow="${aria.now}" aria-valuetext="${escapeHtml(aria.text)}"${online ? "" : ' aria-disabled="true"'}></div>`,
     "</div>",
   ].join("");
@@ -278,9 +291,11 @@ function renderMiniSeek(media, online) {
  * The floating mini player (or its inline footer form in classic mode).
  * `mode` comes from miniPlayerMode: hidden, player or permission. `volume`
  * ("level", "legacy" or null) adds the volume buttons; the caller passes it
- * only when miniVolumeShown allows it, and the player then widens.
+ * only when miniVolumeShown allows it, and the player then widens. `mute`
+ * ("level", "legacy" or null, from miniMuteMode) adds the mute toggle to that
+ * group, `muted` its state. A known duration adds the seek row (has-seek).
  */
-export function renderMiniPlayer({ mode = "hidden", media = null, permission = null, online = true, volume = null } = {}) {
+export function renderMiniPlayer({ mode = "hidden", media = null, permission = null, online = true, volume = null, mute = null, muted = null } = {}) {
   if (mode === "permission" && permission) {
     return [
       '<div class="mini mini--permission" role="region" aria-label="Now playing" data-mode="permission">',
@@ -294,10 +309,11 @@ export function renderMiniPlayer({ mode = "hidden", media = null, permission = n
   if (mode !== "player" || !media?.active) return "";
   const { title, sub } = miniPlayerText(media);
   const can = (name) => (media.controls?.[name] !== false && online ? "" : " disabled");
-  const vol = renderMiniVolume(volume, online);
+  const vol = renderMiniVolume(volume, online, mute, muted);
   const seek = renderMiniSeek(media, online);
   return [
     `<div class="mini${vol ? " mini--wide" : ""}${seek ? " has-seek" : ""}" role="region" aria-label="Now playing" data-mode="player" data-playing="${media.playing ? "true" : "false"}">`,
+    '<div class="mini__row">',
     `<button class="mini__open" type="button" data-media-open aria-label="${escapeHtml(miniPlayerLabel(media))}">`,
     `<span class="mini__art" aria-hidden="true">${renderArt(media, { badge: true })}</span>`,
     `<span class="mini__text" aria-hidden="true"><span class="mini__title">${escapeHtml(title)}</span>${sub ? `<span class="mini__sub">${escapeHtml(sub)}</span>` : ""}</span>`,
@@ -306,6 +322,7 @@ export function renderMiniPlayer({ mode = "hidden", media = null, permission = n
     `<button class="mini__btn mini__play" type="button" data-media="${media.playing ? "pause" : "play"}" aria-label="${PLAYING_LABEL(media.playing)}"${can("playPause")}>${icon(media.playing ? "pause" : "play", media.playing ? "" : "icon--fill")}</button>`,
     `<button class="mini__btn" type="button" data-media="next" aria-label="Next track"${can("next")}>${icon("next", "icon--fill")}</button>`,
     vol,
+    "</div>",
     seek,
     "</div>",
   ].join("");

@@ -8,7 +8,7 @@ import {
   computerKind, powerCaps, offersPower, shutdownEntry, volumeMode, mediaCaps, showMediaButton, showFullscreenButton,
   closeTarget, closeLabels, createArming, createThrottle, expectDisconnect, readExpected, pillVariant, pillContent,
   closeOutcome, pendingPermission, miniPlayerMode, shutdownDialog, powerToast, powerLabels, RESTART_GRACE_MS,
-  miniVolumeMode, miniVolumeShown, miniVolumeChip, createVolumeStepper, createHoldRepeat, seekAria, seekFromPointer, seekKey, CHIP_HIDE_MS,
+  miniVolumeMode, miniMuteMode, miniVolumeShown, miniVolumeChip, stepVolume, createVolumeStepper, createHoldRepeat, seekAria, seekFromPointer, seekKey, CHIP_HIDE_MS,
 } from "./dock-controls.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow } from "./native-bridge.js";
 
@@ -35,8 +35,14 @@ let miniSeek = null, miniVolumeFetched = false, miniChipTimer = null, miniLegacy
 const miniStepper = createVolumeStepper({
   getLevel: () => volume.level,
   onLevel: (level) => { volume.level = level; paintVolume(false); showMiniChip(); },
-  send: (level) => sendVolume({ level }, true),
+  send: (level) => {
+    const change = unmuteWithLevel ? { level, muted: false } : { level };
+    unmuteWithLevel = false;
+    sendVolume(change, true);
+  },
 });
+// Volume up while muted unmutes and raises, as the computer's own volume keys do.
+let unmuteWithLevel = false;
 const POWER_VERBS = new Set(["lock", "sleep", "restart", "shutdown"]);
 const EXPECTED_KEY = "windock-expected";
 // Native shell hand-shakes: ready is posted once, unauthorized once per lost session.
@@ -59,6 +65,13 @@ const mediaPoller = createMediaPoller({
   load: loadMedia,
   isActive: () => paired && online && !document.hidden && mediaWanted(),
   onChange: applyMedia,
+});
+// The system volume uses the same ordered poller: a read that started before a
+// volume or mute change was answered can't flip the optimistic state back.
+const volumePoller = createMediaPoller({
+  load: loadVolume,
+  isActive: () => $("media").open && paired && online && !document.hidden && !volume.dragging,
+  onChange: applyVolume,
 });
 let layout;
 try { layout = normalizeLayout(JSON.parse(localStorage.getItem("windock-layout"))); } catch { layout = normalizeLayout(); }
@@ -692,11 +705,12 @@ function renderMedia(before = media) {
   // A drag on the seek line or a held volume button is never interrupted by a re-render.
   if (miniSeek || miniStepper.holding || miniLegacyHold?.active) { if ($("media").open) renderSheet(); return; }
   const volMode = miniVolumeMode(caps());
+  const muteMode = volMode ? miniMuteMode(caps()) : null;
   const workspace = $("mini-player").parentElement;
-  const showVolume = mode === "player" && miniVolumeShown({ mode: volMode, immersive: floating, viewportWidth: window.innerWidth, containerWidth: workspace.clientWidth || window.innerWidth });
-  const html = renderMiniPlayer({ mode, media, permission, online, volume: showVolume ? volMode : null });
+  const showVolume = mode === "player" && miniVolumeShown({ mode: volMode, mute: muteMode, immersive: floating, viewportWidth: window.innerWidth, containerWidth: workspace.clientWidth || window.innerWidth });
+  const html = renderMiniPlayer({ mode, media, permission, online, volume: showVolume ? volMode : null, mute: showVolume ? muteMode : null, muted: volume.muted === true });
   // The level is fetched once when the mini player first shows its buttons, if still unknown.
-  if (showVolume && volMode === "level" && !miniVolumeFetched && !Number.isFinite(volume.level)) { miniVolumeFetched = true; fetchVolumeLevel(); }
+  if (showVolume && volMode === "level" && !miniVolumeFetched && !Number.isFinite(volume.level)) { miniVolumeFetched = true; volumePoller.refresh().catch(() => {}); }
   const target = floating ? $("mini-player") : $("nowplaying");
   const other = floating ? $("nowplaying") : $("mini-player");
   if (other.innerHTML) clearHtml(other);
@@ -706,8 +720,8 @@ function renderMedia(before = media) {
     if (leaving && floating) {
       // Fade out first, then let the grid take the room back (spec 10).
       leaving.classList.add("is-leaving");
-      miniLeaveTimer = setTimeout(() => { clearHtml(target); document.body.classList.remove("has-mini"); }, 150);
-    } else { clearHtml(target); document.body.classList.remove("has-mini"); }
+      miniLeaveTimer = setTimeout(() => { clearHtml(target); document.body.classList.remove("has-mini", "has-mini-seek"); }, 150);
+    } else { clearHtml(target); document.body.classList.remove("has-mini", "has-mini-seek"); }
   } else {
     const entering = !target.querySelector(".mini:not(.is-leaving)");
     const trackChanged = before?.title !== media?.title || before?.artwork !== media?.artwork;
@@ -717,6 +731,8 @@ function renderMedia(before = media) {
       else if (trackChanged) mini?.classList.add("is-track");
     } else target.querySelector(".mini")?.classList.remove("is-leaving");
     document.body.classList.toggle("has-mini", floating);
+    // The seek row makes the player 20 px taller; the dock reserves that room too.
+    document.body.classList.toggle("has-mini-seek", floating && Boolean(target.querySelector(".mini.has-seek")));
     tickMini(true);
   }
   if ($("media").open) renderSheet();
@@ -728,13 +744,15 @@ function paintMiniSeek(position, instant) {
   if (!line || !media?.durationMs || position === null) return;
   if (instant) line.classList.add("is-instant");
   line.style.setProperty("--p", (position / media.durationMs).toFixed(4));
+  // The elapsed time follows the line, live while dragging too (it stands in for a label over the thumb).
+  const now = line.querySelector("[data-mini-seek-now]");
+  if (now) now.textContent = formatTime(position);
   const hit = line.querySelector("[data-mini-seek-hit]");
   if (hit) {
     const aria = seekAria(position, media.durationMs, spokenTime);
     hit.setAttribute("aria-valuemax", String(aria.max));
     hit.setAttribute("aria-valuenow", String(aria.now));
     hit.setAttribute("aria-valuetext", aria.text);
-    line.querySelector("[data-mini-seek-time]").textContent = formatTime(position) + " / " + formatTime(media.durationMs);
   }
   if (instant) { void line.offsetWidth; line.classList.remove("is-instant"); }
 }
@@ -774,6 +792,7 @@ function tickProgress(instant = false) {
   if (track.classList.contains("is-instant")) { void track.offsetWidth; track.classList.remove("is-instant"); }
 }
 function paintVolume(animate) {
+  paintMiniMute();
   const range = $("media-volume").querySelector("[data-volume-range]");
   if (!range) return;
   const known = Number.isFinite(volume.level);
@@ -792,38 +811,48 @@ function paintVolume(animate) {
   mute.setAttribute("aria-pressed", String(volume.muted));
   mute.disabled = !online || !known;
 }
-async function refreshVolume() {
-  if (volume.loading || volumeMode(caps()) !== "slider" || !online) return;
-  volume.loading = true;
-  try {
-    const fresh = await api("/api/volume");
-    if (!volume.dragging && !volumeThrottle.pending) { volume.level = clampLevel(fresh.level); volume.muted = fresh.muted === true; paintVolume(true); }
-  } catch { /* Keep the last value; the next poll retries. */ }
-  finally { volume.loading = false; }
+// The mini player's mute toggle shows the shared state (only a "level" host reports it).
+function paintMiniMute() {
+  const button = miniHost().querySelector('[data-mini-mute="level"]');
+  if (!button) return;
+  button.setAttribute("aria-pressed", String(volume.muted === true));
+  button.setAttribute("aria-label", volume.muted === true ? "Unmute" : "Mute");
 }
 const clampLevel = (value) => Number.isFinite(Number(value)) ? Math.max(0, Math.min(100, Math.round(Number(value)))) : null;
+function loadVolume(signal) {
+  if (!online || (volumeMode(caps()) !== "slider" && miniVolumeMode(caps()) !== "level")) return null;
+  return api("/api/volume", { signal });
+}
+// A poll or a change's reply: applied unless a drag or a held button owns the value.
+function applyVolume(fresh) {
+  if (!fresh || typeof fresh !== "object" || volume.dragging || volumeThrottle.pending || miniStepper.holding) return;
+  if (Number.isFinite(fresh.level)) volume.level = clampLevel(fresh.level);
+  if (typeof fresh.muted === "boolean") volume.muted = fresh.muted;
+  paintVolume(true);
+  const chip = miniHost().querySelector("[data-mini-chip].is-visible");
+  if (chip) chip.textContent = miniVolumeChip(volume);
+}
+const refreshVolume = () => volumePoller.refresh().catch(() => { /* Keep the last value; the next poll retries. */ });
+// Changes run through the poller (ordered against polls); a final change's reply becomes the shared state.
 async function sendVolume(change, final) {
   try {
-    const fresh = await api("/api/volume", { method: "POST", body: JSON.stringify(change) });
-    if (final && !volume.dragging && !miniStepper.holding && fresh && typeof fresh === "object") {
-      if (Number.isFinite(fresh.level)) volume.level = clampLevel(fresh.level);
-      volume.muted = fresh.muted === true;
-      paintVolume(false);
-      const chip = miniHost().querySelector("[data-mini-chip].is-visible");
-      if (chip) chip.textContent = miniVolumeChip(volume);
-    }
+    await volumePoller.command(() => api("/api/volume", { method: "POST", body: JSON.stringify(change) }).then((fresh) => (final ? fresh : null)));
   } catch (error) { if (final) { report(error); refreshVolume(); } }
 }
 // At most one level per 100 ms while dragging, and always the final value (8.4).
 const volumeThrottle = createThrottle((level, final) => sendVolume({ level }, final), { intervalMs: 100 });
 async function fetchVolumeLevel() {
-  if (!online) return;
-  try {
-    const fresh = await api("/api/volume");
-    if (!volume.dragging && !miniStepper.holding && fresh && typeof fresh === "object") {
-      volume.level = clampLevel(fresh.level); volume.muted = fresh.muted === true; paintVolume(true);
-    }
-  } catch { /* The next press tries again. */ }
+  if (online) await refreshVolume();
+}
+// Mute toggle (mini player and Media sheet): optimistic, then the reply reconciles.
+// Older hosts only have the mute-toggle verb and no state to show.
+function toggleMute(mode) {
+  if (!online) return notify(offlineMessage(), true);
+  if (mode === "legacy") return api("/api/control", { method: "POST", body: JSON.stringify({ verb: "mute-toggle" }) }).catch(report);
+  volume.muted = volume.muted !== true;
+  paintVolume(false);
+  showMiniChip();
+  sendVolume({ muted: volume.muted }, true);
 }
 function showMiniChip() {
   const chip = miniHost().querySelector("[data-mini-chip]");
@@ -850,9 +879,17 @@ async function pressMiniVolume(button) {
     await fetchVolumeLevel();
     if (!Number.isFinite(volume.level)) return;
     // Released while the level loaded: still one step, but no hold.
-    if (!miniVolumeDown) { miniStepper.press(direction); miniStepper.release(); return; }
+    if (!miniVolumeDown) { unmuteOnRaise(direction); miniStepper.press(direction); miniStepper.release(); return; }
   }
+  unmuteOnRaise(direction);
   miniStepper.press(direction);
+}
+function unmuteOnRaise(direction) {
+  if (direction <= 0 || volume.muted !== true || miniMuteMode(caps()) !== "level") return;
+  volume.muted = false;
+  // At 100 the step sends no level, so the unmute goes on its own.
+  if (stepVolume(volume.level, 1) === volume.level) { paintVolume(false); showMiniChip(); sendVolume({ muted: false }, true); }
+  else unmuteWithLevel = true;
 }
 function releaseMiniVolume() {
   miniVolumeDown = false;
@@ -1130,6 +1167,7 @@ function handleMediaClick(target) {
   const data = el.dataset;
   if ("mediaOpen" in data || "mediaAllow" in data) openMedia();
   else if (data.miniVol) return true; // pressed on pointerdown; keyboard clicks are handled by the host listener
+  else if (data.miniMute) toggleMute(data.miniMute);
   else if (data.media) mediaCommand(data.media);
   else if ("mediaDismiss" in data) {
     const permission = pendingPermission(mediaCaps(caps()), media);
@@ -1142,10 +1180,7 @@ function handleMediaClick(target) {
     const target = showOnTarget();
     if (target) api("/api/apps/focus", { method: "POST", body: JSON.stringify({ pid: target.pid }) }).catch(report);
   } else if (data.mediaControl) api("/api/control", { method: "POST", body: JSON.stringify({ verb: data.mediaControl }) }).catch(report);
-  else if ("volumeMute" in data) {
-    volume.muted = !volume.muted; paintVolume(false);
-    sendVolume({ muted: volume.muted }, true);
-  } else if (data.perm) {
+  else if ("volumeMute" in data) toggleMute("level"); else if (data.perm) {
     const permission = sheetPermission() || pendingPermission(mediaCaps(caps()), media);
     if (!permission) return true;
     if (data.perm === "ask") askPermission(permission.player);
@@ -1237,13 +1272,14 @@ document.addEventListener("pointerup", (event) => {
 let miniGesture = null;
 for (const host of [$("mini-player"), $("nowplaying")]) {
   host.addEventListener("pointerdown", (event) => {
-    // The seek line and the volume buttons are their own controls: no swipe-up, no tap-to-open.
-    const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol]");
+    // The seek row, the volume buttons and mute are their own controls: no swipe-up, no tap-to-open.
+    const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol], [data-mini-mute]");
     miniGesture = event.target.closest(".mini") && !own ? { id: event.pointerId, x: event.clientX, y: event.clientY } : null;
     if (!own || event.button !== 0) return;
     event.stopPropagation();
     const vol = event.target.closest("[data-mini-vol]");
     if (vol) { if (!vol.disabled) { event.preventDefault(); pressMiniVolume(vol); } return; }
+    if (event.target.closest("[data-mini-mute]")) return; // toggles on click
     startMiniSeek(event);
   });
   // Enter / Space (and assistive taps) on a volume button: one step.
@@ -1276,7 +1312,9 @@ function startMiniSeek(event) {
   event.preventDefault();
   const line = hit.closest("[data-mini-seek]");
   try { hit.setPointerCapture(event.pointerId); } catch { /* Synthetic pointers can't be captured. */ }
-  miniSeek = { id: event.pointerId, line, value: seekFromPointer(event.clientX, line.getBoundingClientRect(), media.durationMs) };
+  // Positions map onto the line itself; the rest of the row (times, padding) clamps to its ends.
+  const bar = line.querySelector(".mini__seek-bar");
+  miniSeek = { id: event.pointerId, line, bar, value: seekFromPointer(event.clientX, bar.getBoundingClientRect(), media.durationMs) };
   line.classList.add("is-dragging");
   paintMiniSeek(miniSeek.value, true);
 }
@@ -1296,7 +1334,7 @@ function endMiniSeek(commit) {
 }
 document.addEventListener("pointermove", (event) => {
   if (!miniSeek || event.pointerId !== miniSeek.id || !media?.durationMs) return;
-  miniSeek.value = seekFromPointer(event.clientX, miniSeek.line.getBoundingClientRect(), media.durationMs);
+  miniSeek.value = seekFromPointer(event.clientX, miniSeek.bar.getBoundingClientRect(), media.durationMs);
   paintMiniSeek(miniSeek.value, true);
 });
 document.addEventListener("pointerup", (event) => {
@@ -1368,7 +1406,6 @@ document.addEventListener("pointerup", () => { if (volume.dragging) setTimeout((
 $("media").addEventListener("close", () => { sourcesOpen = false; seeking = false; volume.dragging = false; });
 setInterval(() => { if ($("media").open && !document.hidden) tickProgress(); }, 1000);
 setInterval(() => { if (!document.hidden) tickMini(); }, 1000);
-setInterval(() => { if ($("media").open && paired && online && !document.hidden && !volume.dragging) refreshVolume(); }, 2000);
 $("refresh").addEventListener("click", async () => {
   $("refresh").disabled = true;
   try { appsLoaded = false; await refresh(); connect(); notify("Your dock is up to date"); } catch (error) { report(error); }

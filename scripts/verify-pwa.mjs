@@ -7,10 +7,10 @@ import {
   computerKind, powerCaps, offersPower, shutdownEntry, volumeMode, mediaCaps, showMediaButton, showFullscreenButton, closeTarget,
   createArming, createThrottle, expectDisconnect, readExpected, pillVariant, pillContent, closeOutcome, closeLabels,
   pendingPermission, miniPlayerMode, shutdownDialog, powerToast, powerLabels, ARM_WINDOW_MS, ARM_MIN_GAP_MS, EXPECTED_WINDOW_MS, RESTART_GRACE_MS,
-  stepVolume, miniVolumeMode, miniPlayerWidth, miniVolumeShown, miniVolumeChip, createHoldRepeat, createVolumeStepper, miniSeekMode, seekAria, seekFromPointer, seekKey,
+  stepVolume, miniVolumeMode, miniMuteMode, MINI_VOLUME_MIN_WIDTH, MINI_VOLUME_MUTE_MIN_WIDTH, miniPlayerWidth, miniVolumeShown, miniVolumeChip, createHoldRepeat, createVolumeStepper, miniSeekMode, seekAria, seekFromPointer, seekKey,
   VOLUME_STEP, HOLD_DELAY_MS, HOLD_REPEAT_MS, CHIP_HIDE_MS,
 } from "../public/dock-controls.js";
-import { normalizeMedia, fromNowPlaying, spokenTime } from "../public/now-playing.js";
+import { normalizeMedia, fromNowPlaying, spokenTime, createMediaPoller } from "../public/now-playing.js";
 import { readNative, displayName, wantsSwitcher, shouldHandOff, postToNative, renderSwitchRow, COMPUTER_NAME_MAX } from "../public/native-bridge.js";
 
 const t = createChecker("pwa");
@@ -617,7 +617,7 @@ t.equal(renderVolumeRow({ mode: null }), "", "no volume, no row");
   const legacyVol = renderMiniPlayer({ mode: "player", media: spotify, volume: "legacy" });
   t.ok(legacyVol.includes('data-mini-vol-mode="legacy"') && !legacyVol.includes("data-mini-chip"), "legacy volume buttons have no level chip");
   t.ok(appJs.includes('verb: direction > 0 ? "volume-up" : "volume-down"'), "legacy buttons send the volume verbs");
-  t.ok(appJs.includes('const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol]");') && appJs.includes("event.stopPropagation();"), "volume and seek never start the mini player's swipe or tap-to-open");
+  t.ok(appJs.includes('const own = event.target.closest("[data-mini-seek-hit], [data-mini-vol], [data-mini-mute]");') && appJs.includes("event.stopPropagation();"), "volume, mute and seek never start the mini player's swipe or tap-to-open");
   t.ok(appJs.includes('else if (data.miniVol) return true;'), "a volume tap never opens the media sheet");
 
   // Seek line rules.
@@ -626,23 +626,96 @@ t.equal(renderVolumeRow({ mode: null }), "", "no volume, no row");
   t.equal(miniSeekMode(noSeek), "progress", "a duration without seek: read-only line");
   t.equal(miniSeekMode(normalizeMedia({ source: { name: "Chrome" }, title: "T" })), null, "no duration: no line");
   t.ok(wide.includes('data-mini-seek="seek"') && wide.includes('role="slider"') && wide.includes('aria-valuemin="0" aria-valuemax="185" aria-valuenow="0" aria-valuetext="0 seconds of 3 minutes 5 seconds"'), "the seek hit area is a slider with aria values in seconds");
-  t.ok(wide.includes('data-mini-seek-time aria-hidden="true">0:00 / 3:05</span>') && wide.includes('class="mini__seek-thumb"'), "thumb and time label exist for dragging");
+  // The seek row: elapsed · line · total, its own row under the controls.
+  t.ok(wide.includes('<span class="mini__seek-now" data-mini-seek-now aria-hidden="true">0:00</span>') && wide.includes('<span class="mini__seek-end" aria-hidden="true">3:05</span>'), "seekable: elapsed time left, total time right");
+  t.ok(wide.includes('class="mini__seek-thumb"') && !wide.includes("data-mini-seek-time"), "seekable: a thumb, and no floating time label (the elapsed time updates live instead)");
+  t.ok(wide.indexOf('<div class="mini__row">') < wide.indexOf('data-mini-vol="up"') && wide.indexOf('data-mini-vol="up"') < wide.indexOf("data-mini-seek=") && wide.indexOf('data-mini-seek=') > wide.lastIndexOf("</button>"), "the seek row comes after the controls row, outside it");
+  t.ok(/<div class="mini__seek is-seekable" data-mini-seek="seek" style="--p:0">.*<div class="mini__seek-hit"[^>]*role="slider"[^>]*><\/div><\/div>/.test(wide), "the slider hit area is a direct child of the seek row");
   const prog = renderMiniPlayer({ mode: "player", media: noSeek });
-  t.ok(prog.includes('data-mini-seek="progress"') && !prog.includes('role="slider"') && !prog.includes("mini__seek-thumb"), "progress only: no slider, no thumb");
-  t.ok(!renderMiniPlayer({ mode: "player", media: normalizeMedia({ source: { name: "Chrome" }, title: "T" }) }).includes("mini__seek"), "no duration renders no line");
+  t.ok(prog.includes('data-mini-seek="progress"') && prog.includes('class="mini has-seek"') && prog.includes("mini__seek-now") && prog.includes(">3:20</span>"), "progress only: the row with both times");
+  t.ok(!prog.includes('role="slider"') && !prog.includes("mini__seek-thumb") && !prog.includes("mini__seek-hit") && prog.includes('data-mini-seek="progress" style="--p:0" aria-hidden="true"'), "progress only: no slider, no thumb, hidden from assistive tech");
+  const noDur = renderMiniPlayer({ mode: "player", media: normalizeMedia({ source: { name: "Chrome" }, title: "T" }) });
+  t.ok(!noDur.includes("mini__seek") && !noDur.includes("has-seek"), "no duration: no row and the compact height");
   t.deepEqual(seekAria(72000, 185000, spokenTime), { min: 0, max: 185, now: 72, text: "1 minute 12 seconds of 3 minutes 5 seconds" }, "slider values while playing");
   t.equal(seekFromPointer(150, { left: 50, width: 400 }, 200000), 50000, "pointer to position");
   t.deepEqual([seekFromPointer(0, { left: 50, width: 400 }, 200000), seekFromPointer(999, { left: 50, width: 400 }, 200000)], [0, 200000], "pointer clamps to the line");
   t.deepEqual([seekKey(72000, 185000, "ArrowRight"), seekKey(72000, 185000, "ArrowLeft"), seekKey(2000, 185000, "ArrowDown"), seekKey(183000, 185000, "ArrowUp"), seekKey(1, 2, "Enter")], [77000, 67000, 0, 185000, null], "arrow keys move 5 s, clamped");
-  t.ok(css.includes(".mini__seek-hit { position: absolute; z-index: 3; left: 0; right: 0; top: 50%; height: 28px;") && /\.mini__seek \{[^}]*height: 3px/.test(css) && css.includes("background: var(--accent); transform: scaleX(var(--p))"), "3 px line, accent fill, 28 px hit area");
-  // Every mini player button stacks above the seek hit area (same stacking context: .mini__seek and .mini__vol set no z-index).
+  t.ok(/\.mini__seek-bar \{[^}]*flex: 1;[^}]*height: 4px/.test(css) && css.includes("background: var(--accent); transform: scaleX(var(--p))"), "4 px line taking the free width, accent fill");
+  t.ok(/\.mini__seek \{[^}]*color: var\(--muted\); font-size: 11px;[^}]*font-variant-numeric: tabular-nums/.test(css), "times are 11 px tabular numerals in the secondary colour");
+  t.ok(css.includes(".mini__seek-thumb { position: absolute; top: 50%; left: calc(var(--p) * 100%); width: 14px; height: 14px;") && css.includes("transform: scale(.5715)") && css.includes(".mini__seek.is-dragging .mini__seek-thumb, .mini__seek:has(.mini__seek-hit:focus-visible) .mini__seek-thumb { transform: none; }"), "an 8 px thumb at rest, 14 px while dragging or focused");
+  t.ok(css.includes(".mini__seek-hit { position: absolute; z-index: 3; inset: 0;"), "the hit area is the whole seek row");
+  // Geometry: the seek row's hit area sits entirely below every button (border-box sizes from the CSS).
+  const px = (re) => Number((css.match(re) || [])[1]);
+  const miniH = px(/\.mini\.has-seek \{ height: (\d+)px; \}/), rowH = px(/\.mini\.has-seek \.mini__row \{ flex: 0 0 (\d+)px; \}/), seekH = px(/\.mini__seek \{[^}]*flex: 0 0 (\d+)px;/), btnH = px(/\.mini__btn \{[^}]*height: (\d+)px/), border = 1;
+  t.deepEqual([miniH, rowH, seekH, btnH], [78, 50, 26, 44], "player 78 tall with the seek row (58 + 20): controls 50, seek row 26, buttons 44");
+  t.equal(border + rowH + seekH + border, miniH, "the two rows fill the player exactly");
+  const btnRect = { top: border + (rowH - btnH) / 2, bottom: border + (rowH + btnH) / 2 };
+  const hitRect = { top: border + rowH, bottom: border + rowH + seekH };
+  t.ok(hitRect.top >= btnRect.bottom && hitRect.bottom <= miniH, "the seek hit area never intersects a button's rect");
+  t.ok(hitRect.bottom - hitRect.top >= 24, "the hit area is at least 24 px tall");
+  // Buttons still win taps, as a guarantee (same stacking context: no wrapper sets z-index).
   const zOf = (sel) => Number((css.match(new RegExp(sel.replace(/[.]/g, "\\.") + " \\{[^}]*z-index: (\\d+)")) || [])[1]);
-  t.ok(css.includes(".mini__btn { position: relative; z-index: 4; }") && zOf(".mini__btn") > zOf(".mini__seek-hit"), "buttons (z 4) sit above the seek hit area (z 3), so a tap near a button's bottom edge still hits the button");
-  t.ok(css.includes('.mini__btn::after { content: ""; position: absolute; inset: 0; border-radius: 0; }'), "the full 44 px square of each button takes the tap, corners included");
-  t.ok(!/\.mini__seek \{[^}]*z-index/.test(css) && !/\.mini__vol \{[^}]*z-index/.test(css), "no wrapper creates a stacking context that would undo that order");
-  t.ok(/\.mini__seek \{ --inset-l: 60px; --inset-r: 6px;/.test(css) && 8 + 42 + 10 === 60, "the line starts at the text column, clear of the artwork's source badge");
-  t.ok(css.includes(".mini__seek-thumb { position: absolute; z-index: 2; top: 50%; left: calc(var(--p) * 100%); width: 12px; height: 12px;"), "12 px thumb");
+  t.ok(css.includes(".mini__btn { position: relative; z-index: 4; }") && zOf(".mini__btn") > zOf(".mini__seek-hit"), "buttons (z 4) stack above the seek hit area (z 3)");
+  t.ok(!/\.mini__seek \{[^}]*z-index/.test(css) && !/\.mini__vol \{[^}]*z-index/.test(css) && !/\.mini__row \{[^}]*z-index/.test(css), "no wrapper creates a stacking context that would undo that order");
+  t.ok(!css.includes("margin-top: -14px") && !css.includes("--inset-l"), "the old overlapping 28 px hit strip is gone");
+  // Height class and the dock reflow.
+  t.ok(appJs.includes('document.body.classList.toggle("has-mini-seek", floating && Boolean(target.querySelector(".mini.has-seek")));') && appJs.includes('document.body.classList.remove("has-mini", "has-mini-seek")'), "the body knows when the taller player shows");
+  t.ok(css.includes("body.is-immersive.has-mini.has-mini-seek .workspace { padding-bottom: 102px; }") && css.includes("calc((100dvh - 64px - 88px) * var(--icon-scale))") && css.includes("body.is-immersive.has-mini.has-mini-seek .page-dots { bottom: 96px; }"), "with the seek row the dock reserves 20 px more and icons shrink to fit");
+  t.ok(appJs.includes('const bar = line.querySelector(".mini__seek-bar");') && appJs.includes("seekFromPointer(event.clientX, miniSeek.bar.getBoundingClientRect(), media.durationMs)"), "drag positions map onto the line itself, not the whole row");
+  t.ok(appJs.includes("if (now) now.textContent = formatTime(position);"), "the elapsed time follows the line, live while dragging");
   t.ok(appJs.includes('mediaCommand("seek", value);') && appJs.includes("if (commit && media)"), "the seek request goes out once, on release");
+
+  // Mute button in the mini player (5.2 addition).
+  t.equal(miniMuteMode({ features: WIN }), "level", "features.volume.mute gives the mute toggle");
+  t.equal(miniMuteMode({ features: { volume: { get: true, set: true } }, verbs: LEGACY_VERBS }), null, "a new host without volume.mute shows no mute button (no legacy fallback)");
+  t.equal(miniMuteMode({ features: { controls: true }, verbs: ["volume-up", "volume-down", "mute-toggle"] }), "legacy", "older hosts use the mute-toggle verb");
+  t.equal(miniMuteMode({ features: { controls: true }, verbs: ["volume-up", "volume-down"] }), null, "no mute verb, no mute button");
+  t.deepEqual([MINI_VOLUME_MIN_WIDTH, MINI_VOLUME_MUTE_MIN_WIDTH], [440, 484], "the mute button raises the width threshold by its 44 px");
+  t.equal(miniVolumeShown({ mode: "level", mute: "level", viewportWidth: 844, containerWidth: 844 }), true, "844 wide (523 px) fits volume and mute");
+  t.equal(miniVolumeShown({ mode: "level", mute: "level", viewportWidth: 932, containerWidth: 932 }), true, "932 wide (560 px) fits volume and mute");
+  t.equal(miniVolumeShown({ mode: "level", mute: "level", viewportWidth: 760, containerWidth: 760 }), false, "760 wide (471 px) hides the whole group when it has mute");
+  t.equal(miniVolumeShown({ mode: "level", mute: null, viewportWidth: 760, containerWidth: 760 }), true, "the same width still fits − / + without mute");
+  const withMute = renderMiniPlayer({ mode: "player", media: spotify, volume: "level", mute: "level", muted: false });
+  t.ok(withMute.includes('<button class="mini__btn mini__mute" type="button" data-mini-mute="level" aria-label="Mute" aria-pressed="false">'), "the mute toggle: Mute, not pressed");
+  t.ok(withMute.indexOf('data-mini-vol="up"') < withMute.indexOf("data-mini-mute") && withMute.indexOf("data-mini-mute") < withMute.indexOf("data-mini-seek"), "mute sits right of Volume up, inside the controls row");
+  const mutedHtml = renderMiniPlayer({ mode: "player", media: spotify, volume: "level", mute: "level", muted: true });
+  t.ok(mutedHtml.includes('data-mini-mute="level" aria-label="Unmute" aria-pressed="true"'), "muted: Unmute, pressed");
+  t.ok(!renderMiniPlayer({ mode: "player", media: spotify, volume: "level" }).includes("data-mini-mute"), "no mute capability, no mute button");
+  t.ok(!renderMiniPlayer({ mode: "player", media: spotify, mute: "level" }).includes("data-mini-mute"), "no volume group, no mute button");
+  const legacyMute = renderMiniPlayer({ mode: "player", media: spotify, volume: "legacy", mute: "legacy", muted: true });
+  t.ok(legacyMute.includes('data-mini-mute="legacy" aria-label="Mute">') && !legacyMute.includes("aria-pressed"), "legacy mute: no state shown (the host can't report it)");
+  t.ok(renderMiniPlayer({ mode: "player", media: spotify, volume: "level", mute: "level", online: false }).match(/data-mini-mute="level"[^>]*disabled/), "offline: mute disabled");
+  t.ok(css.includes('.mini__mute[aria-pressed="true"] { background: #b4edcc1f; color: var(--accent); }'), "muted: mint tint like the other active toggles");
+  t.ok(appJs.includes('if (mode === "legacy") return api("/api/control", { method: "POST", body: JSON.stringify({ verb: "mute-toggle" }) }).catch(report);'), "legacy mute sends the mute-toggle verb");
+  t.ok(appJs.includes("volume.muted = volume.muted !== true;") && appJs.includes("sendVolume({ muted: volume.muted }, true);") && appJs.includes('else if (data.miniMute) toggleMute(data.miniMute);') && appJs.includes('else if ("volumeMute" in data) toggleMute("level");'), "mini and sheet mute share one optimistic toggle");
+  t.ok(appJs.includes("const change = unmuteWithLevel ? { level, muted: false } : { level };") && appJs.includes('if (direction <= 0 || volume.muted !== true || miniMuteMode(caps()) !== "level") return;'), "Volume up while muted sends muted:false with the new level");
+  t.ok(appJs.includes('await volumePoller.command(() => api("/api/volume", { method: "POST", body: JSON.stringify(change) })') && appJs.includes("const volumePoller = createMediaPoller({"), "volume changes run through an ordered poller like media commands");
+  t.ok(!appJs.includes("refreshVolume(); }, 2000);"), "the old unordered volume poll is gone");
+  // A poll that started before the mute reply can't flip the optimistic state back.
+  {
+    let applied = { muted: false };
+    let resolvePoll;
+    const poller = createMediaPoller({ load: () => new Promise((resolve) => { resolvePoll = resolve; }), onChange: (fresh) => { if (fresh) applied = fresh; }, isActive: () => false, intervalMs: 1e6 });
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const poll = poller.refresh();
+    await settle();
+    applied = { muted: true }; // optimistic
+    await poller.command(async () => ({ level: 45, muted: true }));
+    resolvePoll({ level: 45, muted: false }); // stale read from before the toggle
+    await poll;
+    t.equal(applied.muted, true, "a stale volume poll doesn't undo the optimistic mute");
+    let resolveHeld;
+    const held = poller.command(() => new Promise((resolve) => { resolveHeld = resolve; }));
+    const during = poller.refresh();
+    await settle();
+    resolvePoll({ level: 45, muted: false });
+    await during;
+    t.equal(applied.muted, true, "a poll while the change is in flight is held");
+    resolveHeld({ level: 45, muted: false });
+    await held;
+    t.equal(applied.muted, false, "the change's own reply reconciles");
+    poller.stop();
+  }
 
   // Hold-repeat and throttle timing with fake timers.
   t.deepEqual([HOLD_DELAY_MS, HOLD_REPEAT_MS], [400, 150], "hold starts after 400 ms, repeats every 150 ms");

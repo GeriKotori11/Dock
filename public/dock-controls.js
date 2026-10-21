@@ -359,6 +359,8 @@ export const HOLD_REPEAT_MS = 150;
 export const CHIP_HIDE_MS = 1200;
 export const SEEK_KEY_STEP_MS = 5000;
 export const MINI_VOLUME_MIN_WIDTH = 440;
+/** With the mute button the group is 44 px wider, so it needs 44 px more room. */
+export const MINI_VOLUME_MUTE_MIN_WIDTH = MINI_VOLUME_MIN_WIDTH + 44;
 
 /** A volume level one step up (+1) or down (-1), clamped to 0–100. */
 export function stepVolume(level, direction, step = VOLUME_STEP) {
@@ -379,15 +381,31 @@ export function miniVolumeMode({ features, verbs } = {}) {
   return verbList.includes("volume-up") || verbList.includes("volume-down") ? "legacy" : null;
 }
 
+/**
+ * The mini player's mute button: "level" (POST /api/volume { muted }) when the
+ * host reports `features.volume.mute`, "legacy" (the mute-toggle verb, no state)
+ * on older hosts without `features.volume`, or null.
+ */
+export function miniMuteMode({ features, verbs } = {}) {
+  const volume = features?.volume;
+  if (isObject(volume)) return volume.set === true && volume.mute === true ? "level" : null;
+  return list(verbs).includes("mute-toggle") ? "legacy" : null;
+}
+
 /** The floating mini player's width: min(440px, 48vw, 100% - 48px), or min(560px, 62vw, 100% - 48px) with volume. */
 export function miniPlayerWidth({ viewportWidth, containerWidth, wide = false }) {
   return Math.min(wide ? 560 : 440, (wide ? 0.62 : 0.48) * viewportWidth, containerWidth - 48);
 }
 
-/** Volume buttons show only on the floating player, and only when the wide width is at least 440 px. */
-export function miniVolumeShown({ mode, immersive = true, viewportWidth, containerWidth }) {
+/**
+ * Volume buttons show only on the floating player, and only when the wide width
+ * is at least 440 px (484 px when the group also has the mute button). Below
+ * that the whole group hides; the Media sheet keeps the volume row.
+ */
+export function miniVolumeShown({ mode, mute = null, immersive = true, viewportWidth, containerWidth }) {
   if (!mode || !immersive) return false;
-  return miniPlayerWidth({ viewportWidth, containerWidth: containerWidth ?? viewportWidth, wide: true }) >= MINI_VOLUME_MIN_WIDTH;
+  const min = mute ? MINI_VOLUME_MUTE_MIN_WIDTH : MINI_VOLUME_MIN_WIDTH;
+  return miniPlayerWidth({ viewportWidth, containerWidth: containerWidth ?? viewportWidth, wide: true }) >= min;
 }
 
 /** The level chip: "45%", "Muted", or "" when the level is unknown. */
