@@ -376,7 +376,7 @@ function normalizePlayers(list) {
  * `featureState()` result: installed/running players, permission-dependent
  * power statuses, whether Spotify is installed.
  */
-export function featuresOf(provider, live = {}) {
+export function featuresOf(provider, live = {}, { spotifyAccount } = {}) {
   const declared = provider?.features || {};
   const out = {
     controls: declared.controls !== false,
@@ -420,10 +420,34 @@ export function featuresOf(provider, live = {}) {
         shuffle: local.shuffle === true,
         repeat: local.repeat === true,
       },
-      account: { available: false },
+      account: spotifyAccountFeature(spotifyAccount),
+    };
+  } else if (spotifyAccount?.available === true) {
+    // The Web API needs no local player: a host without a Spotify provider
+    // still offers the account once a client ID is configured.
+    out.spotify = {
+      installed: false,
+      local: { nowPlaying: false, transport: false, artwork: false, seek: false, shuffle: false, repeat: false },
+      account: spotifyAccountFeature(spotifyAccount),
     };
   }
   return deepFreeze(out);
+}
+
+/**
+ * `features.spotify.account` (DOCK-CONTROLS 7.1, Phase B): `{ available: false }`
+ * until the host has a Spotify client ID, then
+ * `{ available, connected, premium: true|false|null, name, error }`.
+ */
+export function spotifyAccountFeature(account) {
+  if (!account || account.available !== true) return { available: false };
+  return {
+    available: true,
+    connected: account.connected === true,
+    premium: typeof account.premium === "boolean" ? account.premium : null,
+    name: typeof account.name === "string" ? account.name.slice(0, 200) : null,
+    error: typeof account.error === "string" ? account.error : null,
+  };
 }
 
 /** The control verbs a provider advertises (`controlVerbs`, default all). */

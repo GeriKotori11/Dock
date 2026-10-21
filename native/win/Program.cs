@@ -17,6 +17,8 @@
 //   volume                       master level (0..1) and mute state
 //   volume-mute <true|false>     set the master mute
 //   session-locked               whether this login session is locked
+//   protect-write <path>         DPAPI-encrypt stdin (CurrentUser) into <path>
+//   protect-read <path>          decrypt <path> to stdout (exit 3: no file)
 //
 // Exit codes: 0 success, 1 usage error, 2 runtime failure.
 
@@ -54,6 +56,8 @@ internal static class Program
                 "media-command" => MediaSession.Command(args),
                 "media-artwork" => MediaSession.Artwork(args),
                 "session-locked" => SessionLock.Run(args),
+                "protect-write" => Protect.Write(args),
+                "protect-read" => Protect.Read(args),
                 "brightness" => ReadBrightness(args),
                 "capture" => ScreenCapture.Run(args),
                 "touchpad" when args.Length == 1 => Touchpad.Run(),

@@ -40,6 +40,7 @@ const EXPECTED = {
   "verify-bonjour.mjs": "bonjour verification passed",
   "verify-host-ui.mjs": "host-ui verification passed",
   "verify-dock-controls.mjs": "dock-controls verification passed",
+  "verify-spotify.mjs": "spotify verification passed",
 };
 
 // Guard against an oracle being added to scripts/ but never wired in here.

@@ -148,6 +148,31 @@ npm run devices
 npm run devices -- revoke <id>
 ```
 
+## Spotify setup (optional)
+
+Playlists, Liked Songs, search, the queue and choosing which device plays come
+from Spotify's Web API, which needs your own Spotify developer app. The sign-in
+happens on the PC and stays there: the phone never sees your password or a
+token.
+
+1. Open <https://developer.spotify.com/dashboard>, log in, and create an app
+   (any name; tick **Web API**).
+2. Under **Redirect URIs** add exactly `http://127.0.0.1:8620/api/spotify/callback`.
+   It must be `127.0.0.1`, not `localhost`. If you run the host on another port,
+   add that port's URI too (the WinDock page shows the exact one to copy).
+3. In **User Management** add the Spotify account you will connect (a new app
+   in Development Mode allows up to 5 listed users, and the app's owner needs
+   Premium).
+4. Copy the app's **Client ID** (32 characters) and paste it into the Spotify row
+   on the WinDock page on this PC, then choose **Connect**. A browser window
+   opens on the PC; log in and allow WinDock. "Connected. You can close this
+   tab." means it worked.
+
+Playing from your library, adding to the queue and switching devices need
+Spotify Premium. The sign-in is encrypted for your Windows user (DPAPI) in
+`%APPDATA%\windock\spotify-tokens.dpapi`; **Disconnect** on the WinDock page
+deletes it and keeps the Client ID.
+
 ## Where WinDock keeps its files
 
 | What | Where |

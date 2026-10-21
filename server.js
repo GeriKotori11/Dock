@@ -12,7 +12,7 @@ import { hostname, networkInterfaces } from "node:os";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { isIPv4 } from "node:net";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { createProvider } from "./src/platform/index.js";
 import {
   validateControl,
@@ -28,7 +28,7 @@ import {
   nowPlayingFromMedia,
 } from "./src/platform/contract.js";
 import { imageInfo, ARTWORK_MAX_BYTES } from "./src/platform/artwork.js";
-import { createConfigStore, defaultDataDir } from "./src/config.js";
+import { createConfigStore, defaultDataDir, defaultConfigPath } from "./src/config.js";
 import { loadHostIdentity } from "./src/identity.js";
 import { createSyncHub } from "./src/sync.js";
 import { createInputHub } from "./src/input-hub.js";
@@ -38,6 +38,11 @@ import { startDiscovery, primaryAddress, DISCOVERY_PORT } from "./src/discovery.
 import { startBonjour, buildTxt, followBonjour } from "./src/bonjour.js";
 import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_MS } from "./src/tls.js";
 import { pairingQr } from "./src/qr.js";
+import { createSpotifyAccount, SpotifyError } from "./src/spotify/account.js";
+import { createTokenStore, KEYCHAIN_SERVICE } from "./src/spotify/token-store.js";
+import { createBrowserOpener } from "./src/spotify/open-browser.js";
+import { redirectUriFor } from "./src/spotify/contract.js";
+import { callbackProblem, sendCallbackPage, handleSpotifyRoute } from "./src/spotify/routes.js";
 import {
   newPin,
   isValidPinShape,
@@ -261,6 +266,14 @@ export async function createApp({
   mediaCacheMs = MEDIA_CACHE_MS,
   timers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) },
   log = (line) => process.stderr.write(`${line}\n`),
+  // Spotify Phase B (DOCK-CONTROLS 8.8, 12). The token store is only created
+  // (and the OS secret store only touched) once a client ID is configured.
+  spotifyTokenStore = null,
+  spotifyKeychainService = KEYCHAIN_SERVICE,
+  spotifyOpenUrl = createBrowserOpener(),
+  spotifyFetch = globalThis.fetch,
+  spotifyRandomBytes = undefined,
+  spotifyNow = Date.now,
 } = {}) {
   // `endpoint` is the LAN URL the host advertises and `secureEndpoint` its
   // https form; start() fills them in once the listening port is known.
@@ -278,9 +291,35 @@ export async function createApp({
   const discoveryState = { bonjour: "off", udp: "off" };
   const shellName = typeof shell === "string" && /^[a-z0-9-]{1,32}$/.test(shell) ? shell : null;
   const appIcon = createIconCache(provider);
+  // Spotify account: client ID in the config, tokens in the OS secret store.
+  const spotify = createSpotifyAccount({
+    configStore,
+    tokenStore: () => spotifyTokenStore
+      ? (typeof spotifyTokenStore === "function" ? spotifyTokenStore() : spotifyTokenStore)
+      : createTokenStore({
+        account: identity?.hostId ?? "default",
+        service: spotifyKeychainService,
+        dataDir: dirname(configStore.path || defaultConfigPath()),
+      }),
+    openUrl: spotifyOpenUrl,
+    fetchImpl: spotifyFetch,
+    now: spotifyNow,
+    ...(spotifyRandomBytes ? { randomBytes: spotifyRandomBytes } : {}),
+    fitImage: typeof provider.fitImage === "function" ? (bytes, px) => provider.fitImage(bytes, px) : null,
+    log,
+    onChange: () => spotifyChanged(),
+  });
   // Static until the first snapshot; dockState() refreshes the live part
   // (players, permissions) from the provider's featureState().
-  let features = featuresOf(provider);
+  let liveFeatures = {};
+  const computeFeatures = () => featuresOf(provider, liveFeatures, { spotifyAccount: spotify.feature() });
+  let features = computeFeatures();
+  /** The account changed (connected, premium, name, error): docks and the host page hear about it. */
+  function spotifyChanged() {
+    features = computeFeatures();
+    broadcastIfChanged().catch(() => {});
+    changed();
+  }
   const controlVerbs = Object.freeze(controlVerbsOf(provider));
   // Installed-app catalog, stale-while-revalidate. `catalog` holds the last
   // successful scan; `scanning` is the single in-flight scan, so concurrent
@@ -318,6 +357,7 @@ export async function createApp({
     // treat tiles as available until a successful scan says otherwise. The
     // running poll skips this, so a connected dock does not rescan every minute.
     if (refreshCatalog) installedApps().catch(() => {});
+    await spotify.init();
     const [config, listed] = await Promise.all([
       configStore.load(),
       provider.listRunningApps().catch(() => []),
@@ -328,7 +368,8 @@ export async function createApp({
         : undefined,
       typeof provider.sessionState === "function" ? provider.sessionState().catch(() => null) : null,
     ]);
-    if (live !== undefined) features = featuresOf(provider, live || {});
+    if (live !== undefined) liveFeatures = live || {};
+    features = computeFeatures();
     const running = withClosable(listed);
     const runningIds = new Set(running.map((r) => r.id));
     const verbs = features.controls ? controlVerbs : [];
@@ -338,11 +379,13 @@ export async function createApp({
       hostName: hostname(),
       features,
       ...(typeof session?.locked === "boolean" ? { session: { locked: session.locked } } : {}),
-      tiles: config.tiles.map((tile) =>
-        tile.kind === "app"
-          ? { ...tile, running: runningIds.has(tile.id), available: catalog ? catalog.ids.has(tile.id) : true }
-          : { ...tile, available: features.controls && verbs.includes(tile.verb) },
-      ),
+      tiles: config.tiles.map((tile) => {
+        if (tile.kind === "app") return { ...tile, running: runningIds.has(tile.id), available: catalog ? catalog.ids.has(tile.id) : true };
+        // A Spotify tile plays through the account; its image key is the
+        // host's own (stable per URI), whatever the phone saved.
+        if (tile.kind === "spotify") return { ...tile, image: spotify.imageKeyFor(tile.uri), available: spotify.connected };
+        return { ...tile, available: features.controls && verbs.includes(tile.verb) };
+      }),
       running,
       verbs,
       allowDestructive,
@@ -606,7 +649,15 @@ export async function createApp({
       },
       devices: { count: sessions.size, generation: devicesGeneration },
       capture,
+      // Only the Spotify part of the capability map: the host page follows
+      // the account through this snapshot and its SSE events.
+      features: { spotify: { account: spotify.feature() } },
     };
+  }
+
+  /** GET /api/host/spotify: the setup state for the host page (never a token). */
+  function hostSpotify() {
+    return { ...spotify.status(), redirectUri: redirectUriFor(currentPort()) };
   }
 
   /** GET /api/host/pairing: the PIN and QR while open, only the reason while closed. */
@@ -776,6 +827,30 @@ export async function createApp({
       }
       return hostJson(res, 200, pairingBody());
     }
+    if (path === "/api/host/spotify" || path.startsWith("/api/host/spotify/")) {
+      try {
+        await spotify.init();
+        if (path === "/api/host/spotify" && req.method === "GET") return hostJson(res, 200, hostSpotify());
+        if (path === "/api/host/spotify" && req.method === "PUT") {
+          const body = await readJsonBody(req);
+          await spotify.setClientId(body.clientId);
+          return hostJson(res, 200, hostSpotify());
+        }
+        if (path === "/api/host/spotify" && req.method === "DELETE") {
+          await spotify.disconnect(null);
+          return hostJson(res, 200, hostSpotify());
+        }
+        if (path === "/api/host/spotify/connect" && req.method === "POST") {
+          await readJsonBody(req);
+          await spotify.beginConnect(redirectUriFor(currentPort()));
+          return hostJson(res, 200, { ok: true, ...hostSpotify() });
+        }
+      } catch (err) {
+        if (err instanceof SpotifyError) return sendJson(res, err.status, err.body, { ...HOST_SECURITY_HEADERS, ...err.headers });
+        throw err;
+      }
+      return hostJson(res, 404, { error: "not found" });
+    }
     if (path === "/api/host/pairing/close" && req.method === "POST") {
       await readJsonBody(req);
       // Stop pairing: close now and rotate, so a photographed code is dead.
@@ -843,6 +918,17 @@ export async function createApp({
         return sendJson(res, 200, { ok: true }, {
           "set-cookie": sessionCookie(token, { secure: Boolean(req.socket.encrypted) }),
         });
+      }
+
+      if (path === "/api/spotify/callback") {
+        // The user's browser on this computer, back from accounts.spotify.com:
+        // no session, so this sits before the auth check; the loopback,
+        // navigation and single-use state checks stand in for it.
+        const problem = callbackProblem(req, remote);
+        if (problem) return sendCallbackPage(res, problem.status, "forbidden");
+        const result = await spotify.completeConnect(url.searchParams, req.headers.host);
+        if (result.ok) return sendCallbackPage(res, 200, "connected");
+        return sendCallbackPage(res, result.error === "expired" ? 400 : 502, result.error);
       }
 
       const local = trustLoopback && isTrustedLoopback(req, remote);
@@ -951,6 +1037,14 @@ export async function createApp({
         return sendJson(res, 404, { error: "not found" });
       }
 
+      if (path.startsWith("/api/spotify/")) {
+        const handled = await handleSpotifyRoute({
+          req, res, path, url, account: spotify, redirectUri: () => redirectUriFor(currentPort()), sendJson, readJsonBody, isJsonRequest,
+        });
+        if (handled !== false) return;
+        return sendJson(res, 404, { error: "not found" });
+      }
+
       if (path === "/api/state" && req.method === "GET") {
         return sendJson(res, 200, await dockState());
       }
@@ -974,14 +1068,16 @@ export async function createApp({
       }
 
       if (path === "/api/tiles" && req.method === "GET") {
-        return sendJson(res, 200, await configStore.load());
+        // The dock's view of the config: tiles only (host settings stay on the host).
+        const config = await configStore.load();
+        return sendJson(res, 200, { version: config.version, tiles: config.tiles });
       }
 
       if (path === "/api/tiles" && req.method === "PUT") {
         const body = await readJsonBody(req);
         const saved = await configStore.save({ tiles: body.tiles });
         await broadcastState();
-        return sendJson(res, 200, saved);
+        return sendJson(res, 200, { version: saved.version, tiles: saved.tiles });
       }
 
       if (path === "/api/apps/launch" && req.method === "POST") {
@@ -1229,7 +1325,7 @@ export async function createApp({
   }
   return {
     server, secureServer, listener, tls, hub, inputHub, provider, configStore, dockState, state, pairing, sessions, lockout, identity,
-    hostStatus, pairingBody, discoveryState, notifyChanged: changed, endEvents,
+    hostStatus, pairingBody, discoveryState, notifyChanged: changed, endEvents, spotify,
     get features() { return features; },
     broadcastIfChanged,
     get polling() { return pollOn; },
@@ -1267,7 +1363,14 @@ export async function start({
   const tls = transport.tls
     ? await loadOrCreateTlsIdentity({ dir: dataDir, commonName: `WinDock ${identity.hostId}` })
     : null;
-  const app = await createApp({ sessions, identity, tls, plainHttp: transport.plainHttp, shell: env.WINDOCK_SHELL || null });
+  // A test host can keep its Spotify sign-in under its own Keychain service.
+  const keychainService = /^[A-Za-z0-9._-]{1,128}$/.test(env.WINDOCK_SPOTIFY_KEYCHAIN_SERVICE || "")
+    ? env.WINDOCK_SPOTIFY_KEYCHAIN_SERVICE
+    : KEYCHAIN_SERVICE;
+  const app = await createApp({
+    sessions, identity, tls, plainHttp: transport.plainHttp, shell: env.WINDOCK_SHELL || null, spotifyKeychainService: keychainService,
+  });
+  app.spotify.init().catch(() => {});
   await new Promise((resolve, reject) => {
     app.listener.once("error", reject);
     app.listener.listen(port, () => { app.listener.off("error", reject); resolve(); });

@@ -437,7 +437,7 @@ const IMG = { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-
   // ---- status ----
   const status = await call(port, "/api/host/status");
   t.equal(status.status, 200, "GET /api/host/status answers");
-  t.deepEqual(Object.keys(status.json).sort(), ["app", "capture", "devices", "discovery", "firewall", "hostId", "hostName", "network", "pairing", "plainHttp", "platform", "platformName", "shell", "tls", "version"],
+  t.deepEqual(Object.keys(status.json).sort(), ["app", "capture", "devices", "discovery", "features", "firewall", "hostId", "hostName", "network", "pairing", "plainHttp", "platform", "platformName", "shell", "tls", "version"],
     "the status snapshot has the documented fields");
   t.ok(!status.text.includes(app.pairing.pin), "the status snapshot never carries the PIN");
   t.equal(status.json.shell, "macos-menubar", "status.shell comes from the shell option (WINDOCK_SHELL)");

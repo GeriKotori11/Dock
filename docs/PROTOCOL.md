@@ -205,6 +205,10 @@ and `X-Content-Type-Options: nosniff`.
 | GET | `/api/host/pairing` | Open: `{ open: true, pin, securityCode, address, endpoint, secureEndpoint, hostName, remainingMs, generation, qr }` with `qr` = `{ text, size, version, path }` (null when TLS is off). Closed: `{ open: false, closedReason, generation }`, no PIN. Never reopens |
 | POST | `/api/host/pairing/open` | Opens pairing for a full 10 minutes (resets the budget; keeps the PIN); returns the body above. With no LAN address it stays closed (`closedReason: "no-address"`) |
 | POST | `/api/host/pairing/close` | Stop pairing: closes now and rotates the PIN; returns the closed body (`closedReason: "stopped"`) |
+| GET | `/api/host/spotify` | Spotify setup: `{ configured, clientId, redirectUri, connected, account: { name, premium, product } \| null, error }` (below). Never a token |
+| PUT | `/api/host/spotify` | `{ clientId }` (32 lowercase hex, else 400). Saved in the host config; a different ID drops the old sign-in. Returns the setup body |
+| POST | `/api/host/spotify/connect` | `{}`. Starts a login: clears `error`, opens Spotify's authorize page in this computer's default browser. `{ ok: true, …setup }`; 501 `spotify not configured`, 502 `could not open the browser` |
+| DELETE | `/api/host/spotify` | Disconnect: deletes the tokens from the secret store, keeps the client ID. Returns the setup body |
 
 `closedReason` is `"timeout"`, `"budget"` (10 wrong PINs), `"stopped"`,
 `"no-address"`, or null while open. `generation` grows on every change a QR
@@ -230,7 +234,8 @@ Status snapshot:
   "firewall": "unknown",
   "pairing": { "open": true, "remainingMs": 540000, "closedReason": null, "generation": 7 },
   "devices": { "count": 3, "generation": 12 },
-  "capture": null
+  "capture": null,
+  "features": { "spotify": { "account": { "available": true, "connected": true, "premium": true, "name": "Geri", "error": null } } }
 }
 ```
 
@@ -241,6 +246,24 @@ Status snapshot:
   reports `"unknown"`; the macOS shell checks the firewall itself). `capture` is
   null on hosts without screen capture, else `{ phase }`.
 - `hostName` drops macOS's `.local` suffix.
+- `features` carries only `spotify.account` (same shape as in the dock
+  snapshot). A change of the Spotify account (configured, connected, Premium,
+  name, `error`) emits an SSE `status` event.
+
+### Spotify setup (`/api/host/spotify`)
+
+- `redirectUri` is `http://127.0.0.1:<actual port>/api/spotify/callback`. Spotify
+  accepts only the loopback IP literal (never `localhost`), and the URI must match
+  the app's registered one exactly, so the page shows it for copying.
+- `account.product` is Spotify's `product` from `GET /me`. Spotify removed that
+  field for Development Mode apps in February 2026, so it is usually null; then
+  `premium` is null until a playback command answers (success → true,
+  `PREMIUM_REQUIRED` → false).
+- `error`: null, or `invalid_client` (Spotify refused the client ID),
+  `redirect_mismatch` (the redirect URI is not registered as sent),
+  `access_denied` (the user declined), `disconnected` (the sign-in was revoked
+  or expired: refresh `invalid_grant`, or a second 401), `exchange_failed`,
+  `unavailable` (any other failure). A new login clears it.
 
 ### QR pairing payload
 
@@ -287,6 +310,20 @@ it. Example (148 bytes, version 8):
 | POST | `/api/volume` | `{ level?, muted? }` (at least one) | The new `{ level, muted }` | 400, 501 `volume unavailable` / `mute unavailable` |
 | POST | `/api/permissions/request` | `{ scope: "spotify" \| "music" \| "system-events" }`, JSON | `{ scope, status: "granted" \| "needed" \| "denied" }` when answered or after 60 s (`needed`); broadcasts when the capability map changed | 400 `unknown scope`, 409 `not running` (a player is never launched to ask), 415, 501 `permissions unavailable` |
 | POST | `/api/permissions/open-settings` | `{ scope }`, JSON | `{ ok: true, scope }`; opens System Settings › Privacy & Security › Automation on the Mac | 400, 415, 501 |
+| GET | `/api/spotify/status` | — | `{ configured, connected, premium, name, error, playback }` (below) | |
+| POST | `/api/spotify/connect` | `{}`, JSON | `{ ok: true }`; opens the login in the computer's browser (same as the host page) | 415, 501, 502 |
+| DELETE | `/api/spotify/account` | — | `{ ok: true, connected: false }` | 501 |
+| GET | `/api/spotify/playlists` | `?offset=0..100000&limit=1..50` (default 0, 50) | Page of playlists (below), cached 60 s per page | 400 |
+| GET | `/api/spotify/liked` | same | Page of Liked Songs (tracks), cached 60 s per page | 400 |
+| GET | `/api/spotify/search` | `?q=` (1..100 chars) `&types=track,artist,album,playlist` (or `songs,artists,albums,playlists`; default all) `&limit=1..10&offset=0..1000` | `{ q, tracks?, artists?, albums?, playlists? }`, each a page | 400 |
+| GET | `/api/spotify/devices` | — | `{ devices: [{ id \| null, name, type, active, restricted, privateSession, volume, supportsVolume }] }` | |
+| POST | `/api/spotify/play` | `{ uri?, contextUri?, deviceId? }` | `{ ok: true }` | 400, 403 `premium required`, 409 `no active device` |
+| POST | `/api/spotify/queue` | `{ uri, deviceId? }` (track or episode) | `{ ok: true }` | 400, 403, 409 |
+| GET | `/api/spotify/queue` | — | `{ currentlyPlaying, queue: [...] }` (Up next, at most 20) | |
+| POST | `/api/spotify/transfer` | `{ deviceId, play? }` | `{ ok: true }` | 400, 403, 409 |
+| POST | `/api/spotify/like` | `{ trackId, liked }` | `{ trackId, liked }` | 400 |
+| GET | `/api/spotify/like` | `?trackId=` | `{ trackId, liked }` | 400 |
+| GET | `/api/spotify/image` | `?key=<32 hex>` | PNG/JPEG, at most 300 px where the host can resize (else Spotify's ≤ 640 px original), `cache-control: private, max-age=3600` | 400 `invalid key`, 404 `no image` |
 | GET | `/api/stats` | — | CPU, memory, battery (fields may be missing) | |
 | GET | `/api/capture` | — | `{ available, phase, … }` | |
 | POST | `/api/capture/screenshot`, `/start`, `/stop` | `{}` | Capture status | 400 options given, 501 not on this host, 503 |
@@ -334,6 +371,77 @@ per track, fetches Spotify's `https://i.scdn.co/…` image itself (that host
 only, no redirects, 2 MB cap) or extracts Music's artwork, resizes anything
 over 512 px (macOS `sips`), and caches by key.
 
+### Spotify account (DOCK-CONTROLS.md sections 8.8 and 12)
+
+The host holds the Spotify sign-in and proxies a small part of the Web API;
+the phone never sees a token and never talks to Spotify.
+
+**Login (PKCE, on the computer).** `POST /api/spotify/connect` (or the host
+page's connect) makes a 64-character `code_verifier`, its S256
+`code_challenge` (`base64url(sha256(verifier))`) and a random `state` (single
+use, 10 minutes, at most 8 waiting), and opens
+`https://accounts.spotify.com/authorize?client_id=…&response_type=code&redirect_uri=http://127.0.0.1:<port>/api/spotify/callback&code_challenge_method=S256&code_challenge=…&state=…&scope=…`
+in the default browser (macOS `/usr/bin/open <url>`, Windows
+`rundll32 url.dll,FileProtocolHandler <url>`, Linux `xdg-open`; argv only, and
+only a URL the host built). Scopes: `user-read-playback-state
+user-modify-playback-state user-read-currently-playing user-library-read
+user-library-modify playlist-read-private playlist-read-collaborative
+user-read-private`.
+
+**`GET /api/spotify/callback`** needs no session: it is the user's own browser
+coming back from Spotify. It answers only a loopback client whose `Host` is
+exactly `127.0.0.1:<port>`, only to a top-level document navigation (when the
+browser sends `Sec-Fetch-Mode`/`Sec-Fetch-Dest` they must be `navigate`/
+`document`; a foreign `Origin` is refused), and only with a waiting `state`,
+which it spends. It exchanges the code at `https://accounts.spotify.com/api/token`
+(form body, no redirects, 10 s timeout), stores the tokens, broadcasts, and shows
+"Connected. You can close this tab." (or a short error page). Pages have
+`Content-Security-Policy: default-src 'none'; style-src 'sha256-…'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+and `Referrer-Policy: no-referrer`.
+
+**Tokens** live in the OS secret store, never in the config: the macOS login
+Keychain (generic password, service `dev.gerikotori.windock.spotify`, account =
+host ID, written through `security -i` with the command on stdin so the secret
+is never in an argv), Windows DPAPI for the current user (WinDockHelper
+`protect-write`/`protect-read`, secret on stdin/stdout, blob
+`spotify-tokens.dpapi` in the data folder), else a 0600 file
+`spotify-tokens.json`. The access token is refreshed 5 minutes before it
+expires, one refresh at a time; a refresh that answers `invalid_grant` deletes
+the sign-in (`error: "disconnected"`). Codes and tokens are never logged.
+
+**States and errors** for every `/api/spotify/*` route except `status`:
+501 `spotify not configured` (no client ID), 409 `spotify not connected`,
+409 `spotify disconnected` (the sign-in was revoked; a 401 from Spotify is
+retried once after a refresh first), 403 `premium required` (Spotify's
+`PREMIUM_REQUIRED`), 403 `spotify user not allowed` (the account is not in the
+app's User Management list), 409 `no active device` (`NO_ACTIVE_DEVICE`, or a
+404 from a player command), 429 `rate limited` with `Retry-After` (the host
+honours Spotify's `Retry-After`, up to 60 s, and answers 429 itself meanwhile),
+502 `spotify unavailable`.
+
+**Validation.** Spotify IDs are 22 base62 characters; URIs are
+`spotify:<type>:<id>` with `uri` a track or episode and `contextUri` an album,
+playlist or artist (an artist context cannot take a starting `uri`). Device IDs
+are 1–128 of `[A-Za-z0-9_-]`.
+
+**Shapes.** A page is `{ items, total, offset, limit, next: bool }`.
+Playlist: `{ id, uri, name, owner: { id, name }, tracks: <count> | null, collaborative, image }`.
+Track: `{ type: "track", id, uri, name, artists: [{ id, uri, name }], album: { id, uri, name }, durationMs, explicit, playable, image }`
+(episodes: `{ type: "episode", id, uri, name, show, durationMs, image }`).
+Album: `{ id, uri, name, artists, tracks, releaseDate, image }`. Artist:
+`{ id, uri, name, image }`. `status.playback` is null (nothing playing, not
+connected) or `{ device, playing, item, context: { type, uri }, progressMs, shuffle, repeat: "off" | "track" | "context" }`
+(read at most every 2 s).
+
+**Images.** `image` is an opaque key (or null) for `GET /api/spotify/image`.
+Keys are stable per entity (`spotify:playlist:…`, `spotify:album:…`), so a tile
+keeps its key across restarts; Spotify image URLs expire within a day, so the
+host re-resolves an entity's image after 6 hours. The host fetches only from
+`i.scdn.co`, `mosaic.scdn.co`, `image-cdn-ak.spotifycdn.com` and
+`image-cdn-fa.spotifycdn.com` (https, no redirects, 2 MB cap, PNG/JPEG only),
+picks the largest variant ≤ 300 px, resizes larger ones where the provider can
+(macOS `sips`), and caches bytes by key.
+
 **Power.** Lock is not a destructive verb: it works with `allowDestructive`
 false. On a Mac, restart and shut down go through System Events and need a
 one-time Automation permission: until granted the host answers
@@ -375,10 +483,13 @@ Snapshot message:
     "media": { "sources": "system", "players": [], "artwork": false, "sessions": false },
     "volume": { "get": true, "set": true, "mute": false },
     "power": { "lock": "ready", "sleep": "ready", "restart": "ready", "shutdown": "ready" },
-    "spotify": { "installed": false, "local": { "nowPlaying": true, "transport": true, "artwork": false, "seek": false, "shuffle": false, "repeat": false }, "account": { "available": false } }
+    "spotify": { "installed": false, "local": { "nowPlaying": true, "transport": true, "artwork": false, "seek": false, "shuffle": false, "repeat": false }, "account": { "available": true, "connected": true, "premium": true, "name": "Geri", "error": null } }
   },
   "session": { "locked": false },
-  "tiles": [{ "kind": "app", "id": "…", "label": "…", "running": false, "available": true }],
+  "tiles": [
+    { "kind": "app", "id": "…", "label": "…", "running": false, "available": true },
+    { "kind": "spotify", "uri": "spotify:playlist:37i9dQZF1DXcBWIGoYBM5M", "label": "Chill", "image": "9f2c…", "available": true }
+  ],
   "running": [{ "id": "…", "pid": 4812, "title": "…", "closable": true }],
   "verbs": ["volume-up", "…"],
   "allowDestructive": true
@@ -389,6 +500,13 @@ Snapshot message:
 everything is on. `verbs` is empty when `controls` is false, and lists only the
 verbs this host maps (a Mac has no `brightness-set`). Control tiles carry
 `available: features.controls && verbs.includes(verb)`.
+
+**Spotify tiles** (`kind: "spotify"`) play one playlist or album:
+`{ kind, uri: "spotify:(playlist|album):<22 base62>", label, image: <32-hex key or ""> }`.
+Anything else is dropped when tiles are saved; duplicates are folded by
+`spotify:<uri>`. In the snapshot `image` is always the host's key for that URI
+and `available` is true while the account is connected. The phone plays a tile
+with `POST /api/spotify/play { contextUri: uri }`.
 
 The four legacy booleans keep "missing means on". Every newer key is
 **missing means not offered**:
@@ -402,7 +520,7 @@ The four legacy booleans keep "missing means on". Every newer key is
 | `volume` | get, set; `mute: false` (the helper cannot read mute yet) | get, set, mute | omitted |
 | `power` | all `ready` | lock, sleep `ready`; restart, shutdown `needs-permission` until System Events is allowed, then `ready` (or `denied`) | omitted |
 | `spotify` | `installed` from the catalog; `local` nowPlaying + transport | `installed`; `local` all true | omitted |
-| `spotify.account` | `{ available: false }` (Phase B) | same | — |
+| `spotify.account` | `{ available: false }` until a client ID is set; then `{ available: true, connected, premium: true \| false \| null, name, error }` | same | same (with `installed: false` and `local` all false) |
 
 `session` is live: `{ locked }` where the host can tell (macOS, from
 `CGSessionCopyCurrentDictionary`); omitted otherwise. Each `running[]` entry

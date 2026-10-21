@@ -803,21 +803,21 @@ export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript 
     return tempDir;
   }
 
-  /** Larger edge at most 512 px: sips for bigger images, the original when it is small enough. */
-  async function fitArtwork(bytes) {
+  /** Larger edge at most `maxPx` (512 by default): sips for bigger images, the original when it is small enough. */
+  async function fitArtwork(bytes, maxPx = ARTWORK_MAX_PX) {
     const info = imageInfo(bytes);
     if (!info || bytes.length > ARTWORK_MAX_BYTES) return null;
     const edge = Math.max(info.width, info.height);
-    if (edge <= ARTWORK_MAX_PX) return { mime: info.mime, bytes };
+    if (edge <= maxPx) return { mime: info.mime, bytes };
     const dir = await ensureTempDir();
     const input = join(dir, `${randomUUID()}.src`);
     const output = join(dir, `${randomUUID()}.jpg`);
     try {
       await writeFile(input, bytes);
-      await exec(SIPS, ["-s", "format", "jpeg", "-Z", String(ARTWORK_MAX_PX), input, "--out", output]);
+      await exec(SIPS, ["-s", "format", "jpeg", "-Z", String(maxPx), input, "--out", output]);
       const resized = await readFile(output);
       const out = imageInfo(resized);
-      if (out && Math.max(out.width, out.height) <= ARTWORK_MAX_PX && resized.length <= ARTWORK_MAX_BYTES) {
+      if (out && Math.max(out.width, out.height) <= maxPx && resized.length <= ARTWORK_MAX_BYTES) {
         return { mime: out.mime, bytes: resized };
       }
     } catch {
@@ -903,6 +903,12 @@ export function createMacProvider({ exec, appDirs = defaultAppDirs(), osascript 
       spotify: Object.freeze({ local: Object.freeze({ nowPlaying: true, transport: true, artwork: true, seek: true, shuffle: true, repeat: true }) }),
     }),
     controlVerbs: MAC_CONTROL_VERBS,
+
+    /** Spotify Web API images (Phase B): the same sips pipeline, any edge from 64 to 512 px. */
+    async fitImage(bytes, maxPx) {
+      const px = Number.isInteger(maxPx) ? Math.min(ARTWORK_MAX_PX, Math.max(64, maxPx)) : ARTWORK_MAX_PX;
+      return Buffer.isBuffer(bytes) ? fitArtwork(bytes, px) : null;
+    },
 
     async appIcon(app) {
       const target = validAppPath(app?.target);
