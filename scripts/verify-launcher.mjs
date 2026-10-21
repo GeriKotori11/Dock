@@ -45,6 +45,27 @@ t.equal(tiles[1].id, "c:/apps/1.exe", "a canceled drag can restore the untouched
 t.equal(new Set(reordered.map(tileKey)).size, 17, "cross-page moves never duplicate or drop an app");
 t.deepEqual(moveToTile(tiles, "missing", tileKey(tiles[0])), tiles, "a stale drag key is ignored");
 
+// ---- dock controls: settings and close buttons in the pager (DOCK-CONTROLS 4, 5.1) ----
+t.equal(normalizeLayout().closeButtons, true, "close buttons on open apps default on");
+t.equal(normalizeLayout().miniPlayer, true, "now playing on the dock defaults on");
+t.equal(normalizeLayout({ closeButtons: false, miniPlayer: false }).closeButtons, false, "close buttons can be turned off");
+t.equal(normalizeLayout({ closeButtons: false, miniPlayer: false }).miniPlayer, false, "the mini player can be turned off");
+t.equal(normalizeLayout({ closeButtons: "no", miniPlayer: 0 }).closeButtons, true, "only an explicit false turns a switch off");
+const withClose = tiles.slice(0, 8).map((tile, i) => (i % 2 ? tile : { ...tile, running: true, close: { count: 1, state: "rest" } }));
+for (const perPage of [4, 6, 8]) {
+  const grid = normalizeLayout({ perPage });
+  const pagesHtml = renderPages({ tiles: withClose }, grid);
+  t.equal((pagesHtml.match(/class="tile-slot"/g) || []).length, 4, `${perPage} per page: every running closable tile gets a slot`);
+  t.equal((pagesHtml.match(/data-tile-key=/g) || []).length, 8, `${perPage} per page: every tile still renders once`);
+  t.equal((pagesHtml.match(/class="tile__close"/g) || []).length, 4, `${perPage} per page: one close button per running app`);
+  const firstPage = pagesHtml.split('<div class="dock-page')[1];
+  const cells = firstPage.replace(/<div class="tile-slot".*?<\/button><button class="tile__close".*?<\/button><\/div>/g, "<cell>");
+  t.equal((cells.match(/<cell>|<button class="tile /g) || []).length, Math.min(perPage, 8), `${perPage} per page: a slot is one grid cell`);
+}
+const arranging = renderPages({ tiles: withClose }, layout, true);
+t.ok(!arranging.includes("tile__close") && !arranging.includes("tile-slot"), "Arrange renders no close buttons or slots");
+t.deepEqual(moveToTile(withClose, tileKey(withClose[0]), tileKey(withClose[3])).map(tileKey), moveToTile(tiles.slice(0, 8), tileKey(tiles[0]), tileKey(tiles[3])).map(tileKey), "reordering is unaffected by close state");
+
 let active = 0, peak = 0, calls = 0;
 const iconCache = createIconCache({ appIcon: async () => { active++; calls++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 5)); active--; return Buffer.from("icon"); } });
 await Promise.all([...tiles, tiles[0]].map(iconCache));

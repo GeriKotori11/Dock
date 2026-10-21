@@ -32,12 +32,22 @@ const paths = {
   power: '<path d="M12 2v9m-6-6a9 9 0 1 0 12 0"/>',
   music: '<path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="5.5" cy="18" rx="3.5" ry="3"/><ellipse cx="17.5" cy="16" rx="3.5" ry="3"/>',
   wifi: '<path d="M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0m-11 4a6 6 0 0 1 8 0M12 20h.01"/>',
+  shuffle: '<path d="M3 7h3c4.5 0 6.5 10 11 10h4m0 0-3-3m3 3-3 3M3 17h3c1.7 0 3-1.4 4.2-3.3M21 7h-4c-1.7 0-3 1.4-4.2 3.3M21 7l-3-3m3 3-3 3"/>',
+  repeat: '<path d="m17 3 3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/>',
+  "repeat-one": '<path d="m17 3 3 3-3 3"/><path d="M4 11V9a3 3 0 0 1 3-3h13M7 21l-3-3 3-3"/><path d="M20 13v2a3 3 0 0 1-3 3H4"/><path d="M11 10.5 12.5 9.5v5"/>',
+  speaker: '<rect x="6" y="2.5" width="12" height="19" rx="3"/><circle cx="12" cy="14.5" r="3.2"/><path d="M12 7h.01"/>',
+  heart: '<path d="M12 20s-7.5-4.6-9.2-9.4A4.8 4.8 0 0 1 12 7.4a4.8 4.8 0 0 1 9.2 3.2C19.5 15.4 12 20 12 20z"/>',
+  shield: '<path d="M12 3l7.5 3v5.2c0 4.6-3.1 8.4-7.5 9.8-4.4-1.4-7.5-5.2-7.5-9.8V6z"/><path d="m9 12 2 2 4-4"/>',
+  open: '<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
+  "chevron-down": '<path d="m7 10 5 5 5-5"/>',
 };
 
 export function icon(name, className = "") {
   return `<svg class="icon ${className}" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.grid}</svg>`;
 }
 
-export function controlIcon(verb) {
+/** Glyph for a control tile; Play/Pause follows the live media state when known. */
+export function controlIcon(verb, { playing = false } = {}) {
+  if (verb === "media-play-pause" && playing) return icon("pause");
   return icon({ "volume-up": "volume", "volume-down": "quieter", "volume-set": "volume", "mute-toggle": "mute", "media-play-pause": "play", "media-next": "next", "media-previous": "previous", "media-stop": "stop", "brightness-set": "sun", lock: "lock", sleep: "moon", shutdown: "power", restart: "refresh" }[verb]);
 }

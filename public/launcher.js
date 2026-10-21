@@ -13,6 +13,9 @@ export function normalizeLayout(value = {}) {
     iconSize: { 4: 160, 6: 138, 8: 116 }[perPage],
     immersive: value?.immersive !== false,
     showLabels: value?.showLabels === true,
+    // DOCK-CONTROLS section 4: both switches default on.
+    closeButtons: value?.closeButtons !== false,
+    miniPlayer: value?.miniPlayer !== false,
     background: ["aurora", "dusk", "ember", "midnight"].includes(value?.background) ? value.background : "aurora",
     theme: ["glass", "frost", "smoke"].includes(value?.theme) ? value.theme : "glass",
   };

@@ -1,4 +1,4 @@
-import { createNowPlayingPoller } from "../public/now-playing.js";
+import { createNowPlayingPoller, createMediaPoller, normalizeMedia, fromNowPlaying, mediaPosition, formatTime, spokenTime, safeArtwork } from "../public/now-playing.js";
 import { createChecker } from "./lib/assert.mjs";
 
 const t = createChecker("now-playing");
@@ -81,4 +81,35 @@ try {
 const stoppedCount = timeoutUpdates;
 await sleep(50);
 t.equal(timeoutUpdates, stoppedCount, "stopped poller never renders again");
+
+// ---- the media model (DOCK-CONTROLS 7.3, 8.3) ----
+t.equal(createMediaPoller, createNowPlayingPoller, "the media poller is the same single-flight poller");
+const rich = normalizeMedia({ source: { id: "spotify", name: "Spotify", appId: "com.spotify.client", sessionId: "s" }, title: " Houdini ", artist: "Dua Lipa", album: "Radical Optimism", playing: true, positionMs: 72000, durationMs: 185000, updatedAt: 1, artwork: "/api/media/artwork?key=9f2c", controls: { previous: true, next: false, playPause: true, seek: true, shuffle: true, repeat: true }, shuffle: true, repeat: "all", sessions: [{ sessionId: "s", name: "Spotify", current: true }, { name: "no id" }], permission: { player: "spotify", status: "granted" } });
+t.equal(rich.active, true, "a source means a session");
+t.equal(rich.title, "Houdini", "titles are trimmed");
+t.deepEqual(rich.controls, { previous: true, next: false, playPause: true, seek: true, shuffle: true, repeat: true }, "per-source controls are read");
+t.equal(rich.sessions.length, 1, "sessions without an id are dropped");
+t.equal(rich.repeat, "all", "repeat is read");
+t.equal(normalizeMedia({ source: { name: "X" }, repeat: "sometimes" }).repeat, "off", "an unknown repeat reads as off");
+t.equal(normalizeMedia({ source: null, title: "Ghost" }).active, false, "source null means nothing playing");
+t.equal(normalizeMedia(null).active, false, "a missing body means nothing playing");
+t.equal(normalizeMedia({ source: { name: "X" }, controls: { seek: true } }).controls.seek, false, "seek needs a duration");
+t.equal(normalizeMedia({ source: { name: "X" }, durationMs: 1000, positionMs: 5000 }).positionMs, 1000, "position is clamped to the duration");
+t.equal(safeArtwork("/api/media/artwork?key=abc-1"), "/api/media/artwork?key=abc-1", "the host's artwork route is accepted");
+for (const bad of ["https://i.scdn.co/image/x", "//evil/api/media/artwork?key=1", "/api/media/artwork?key=1\" onerror=\"x", "javascript:alert(1)", "/api/apps/icon?id=x", 42]) {
+  t.equal(safeArtwork(bad), null, `artwork outside the host route is refused: ${String(bad).slice(0, 30)}`);
+}
+const legacy = fromNowPlaying({ title: "Song", artist: "Artist", playing: true }, { previous: false, playPause: true, next: true });
+t.ok(legacy.active && legacy.legacy && legacy.source === null && legacy.artwork === null, "an older host's now playing maps to a session with no source or artwork");
+t.deepEqual(legacy.controls, { previous: false, next: true, playPause: true, seek: false, shuffle: false, repeat: false }, "legacy transport follows the host's verbs");
+t.equal(fromNowPlaying(null).active, false, "no legacy now playing means no session");
+t.equal(mediaPosition(rich, 10_000, 12_500), 74_500, "position is interpolated while playing");
+t.equal(mediaPosition({ ...rich, playing: false }, 10_000, 12_500), 72_000, "paused position stands still");
+t.equal(mediaPosition(rich, 10_000, 10_000 + 999_999), 185_000, "interpolation stops at the end");
+t.equal(mediaPosition(normalizeMedia({ source: { name: "X" } }), 0, 1), null, "no timeline, no position");
+t.equal(formatTime(72_000), "1:12", "1:12");
+t.equal(formatTime(3_723_000), "1:02:03", "hours");
+t.equal(spokenTime(72_000), "1 minute 12 seconds", "spoken position");
+t.equal(spokenTime(185_000), "3 minutes 5 seconds", "spoken duration");
+t.equal(spokenTime(61_000), "1 minute 1 second", "singular units");
 t.done("now-playing verification passed");

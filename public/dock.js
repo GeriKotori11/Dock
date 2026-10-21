@@ -7,6 +7,8 @@
  */
 
 import { icon, controlIcon } from "./icons.js";
+import { closeLabels } from "./dock-controls.js";
+import { formatTime } from "./now-playing.js";
 
 /** Minimal HTML-escape for text interpolated into the dock. */
 export function escapeHtml(value) {
@@ -46,10 +48,29 @@ export function renderAppIcon(app, lazy = false) {
 }
 
 /**
+ * The close button that sits beside a running app tile (DOCK-CONTROLS 5.1).
+ * A sibling, never a child: buttons can't nest. `close.state` is rest,
+ * armed, closing or leaving; the slot carries it so CSS can fade the badge,
+ * the pill, the icon and the running dot together.
+ */
+function renderCloseButton(tile, key) {
+  const { count = 1, state = "rest", fresh = false } = tile.close;
+  const labels = closeLabels(tile.label, count);
+  return [
+    `<button class="tile__close${fresh ? " is-fresh" : ""}" type="button" data-close-for="${escapeHtml(key)}"`,
+    ` aria-label="${escapeHtml(state === "armed" ? labels.armed : labels.rest)}"${state === "closing" ? ' aria-busy="true"' : ""}>`,
+    `<span class="tile__close-badge" aria-hidden="true">${icon("close")}<span class="tile__close-spinner"></span></span>`,
+    `<span class="tile__close-pill" aria-hidden="true">${icon("close")}${escapeHtml(labels.pill)}</span>`,
+    "</button>",
+  ].join("");
+}
+
+/**
  * Render one tile.
  * In editing mode the tile stops being an action button and grows reorder and
  * remove controls, so a tap cannot launch something while the user is arranging
- * the dock.
+ * the dock. A running, closable app (`tile.close`) is wrapped in a
+ * `.tile-slot` with its close button beside it.
  */
 export function renderTile(tile, { editing = false, first = false, last = false, launcher = false } = {}) {
   const unavailable = tile.available === false;
@@ -68,22 +89,34 @@ export function renderTile(tile, { editing = false, first = false, last = false,
   // A valued verb carries its value on the element; tapping a tile with no
   // value would send an incomplete request the host correctly rejects.
   const valueAttr = hasValue ? ` data-value="${escapeHtml(String(tile.value))}"` : "";
+  // A pinned tile that needs two taps (Sleep) shows the same armed pill as close.
+  const arm = !editing && tile.kind === "control" && tile.arm && !unavailable ? tile.arm : null;
+  const glyph = tile.kind === "app" ? renderAppIcon(tile) : controlIcon(tile.verb, { playing: tile.playing === true });
+  const armPill = arm ? `<span class="tile__arm">${icon(arm.icon || "moon")}${escapeHtml(arm.text)}</span>` : "";
 
   const body = [
-    `<span class="tile__glyph" aria-hidden="true">${tile.kind === "app" ? renderAppIcon(tile) : controlIcon(tile.verb)}</span>`,
+    `<span class="tile__glyph" aria-hidden="true">${glyph}${armPill}</span>`,
     `<span class="tile__label">${escapeHtml(tile.label)}</span>`,
     !editing ? `<span class="tile__hint">${unavailable ? "Not available" : tile.kind === "app" ? running ? "Running" : "Open app" : "Quick action"}</span>` : "",
     running && !editing ? '<span class="tile__dot" aria-hidden="true"></span>' : "",
   ].join("");
 
   if (!editing || launcher) {
-    return [
+    const name = unavailable ? `${tile.label}, not available on this computer`
+      : arm?.armed ? arm.label
+      : running ? `${tile.label}, running` : tile.label;
+    const close = !editing && running && tile.close ? tile.close : null;
+    const closing = close?.state === "closing";
+    const button = [
       `<button class="${classes.join(" ")}" type="button"`,
       ` data-action="${editing ? "options" : escapeHtml(action)}" data-key="${escapeHtml(actionKey)}" data-tile-key="${escapeHtml(key)}"${valueAttr}`,
-      ` aria-label="${escapeHtml(unavailable ? `${tile.label}, not available on this computer` : tile.label)}"${running ? ' aria-pressed="true"' : ""}>`,
+      arm ? ` data-armed="${arm.armed ? "true" : "false"}"` : "",
+      ` aria-label="${escapeHtml(name)}"${running ? ' aria-pressed="true"' : ""}${closing ? ' aria-busy="true" aria-disabled="true"' : ""}>`,
       body,
       "</button>",
     ].join("");
+    if (!close) return button;
+    return `<div class="tile-slot" data-slot-key="${escapeHtml(key)}" data-close-state="${escapeHtml(close.state || "rest")}">${button}${renderCloseButton(tile, key)}</div>`;
   }
 
   return [
@@ -146,16 +179,246 @@ export function renderNowPlaying(np) {
   ].join("");
 }
 
-export function renderControls(verbs, allowDestructive = true) {
+/**
+ * The Controls sheet ("Take control"): Sound, Display and Your PC/Mac.
+ * Transport lives in the Media sheet, so there is no Playback card. With
+ * `power` (from powerCaps) the power buttons follow the host's capability
+ * map; without it, the older verbs + allowDestructive rule applies.
+ */
+export function renderControls(verbs, allowDestructive = true, { power = null, kind = "PC" } = {}) {
+  const list = Array.isArray(verbs) ? verbs : [];
   const groups = [
     { title: "Sound", hint: "A little louder. A little quieter.", symbol: "volume", items: [["volume-down", "Quieter"], ["mute-toggle", "Mute"], ["volume-up", "Louder"]] },
-    { title: "Playback", hint: "Keep the good stuff playing.", symbol: "music", items: [["media-previous", "Previous"], ["media-play-pause", "Play / pause"], ["media-next", "Next"]] },
     { title: "Display", hint: "Set your built-in screen brightness.", symbol: "sun", items: [["brightness-set", "25%", 25], ["brightness-set", "50%", 50], ["brightness-set", "100%", 100]] },
-    { title: "Your PC", hint: "Power actions ask before continuing.", symbol: "monitor", items: [["lock", "Lock"], ["sleep", "Sleep"], ["restart", "Restart"], ["shutdown", "Shut down"]] },
+    { title: `Your ${kind === "Mac" ? "Mac" : "PC"}`, hint: "Shut down and restart ask first.", symbol: "monitor", power: true, items: [["lock", "Lock"], ["sleep", "Sleep"], ["restart", "Restart"], ["shutdown", "Shut down"]] },
   ];
   return groups.map((group) => {
-    const items = group.items.filter(([verb]) => verbs.includes(verb) && (allowDestructive || !["sleep", "restart", "shutdown"].includes(verb)));
+    const items = group.items.filter(([verb]) => group.power && power
+      ? Boolean(power[verb])
+      : list.includes(verb) && (allowDestructive || !["sleep", "restart", "shutdown"].includes(verb)));
     if (!items.length) return "";
     return `<section class="control-card"><div class="control-card__heading"><span class="control-card__symbol">${icon(group.symbol)}</span><div><h3>${group.title}</h3><p>${group.hint}</p></div></div><div class="control-card__actions">${items.map(([verb, label, value]) => `<button type="button" data-action="control" data-key="${verb}"${value === undefined ? "" : ` data-value="${value}"`}>${controlIcon(verb)}<span>${label}</span></button>`).join("")}</div></section>`;
   }).join("");
+}
+
+// ---- media (DOCK-CONTROLS 5.2, 5.3) ----
+
+const PLAYING_LABEL = (playing) => (playing ? "Pause" : "Play");
+
+/** Artwork, or the source app's icon, or the music glyph; an image fades in over its fallback. */
+function renderArt(media, { badge = false } = {}) {
+  const source = media?.source;
+  const fallback = source?.appId
+    ? renderAppIcon({ id: source.appId, name: source.name })
+    : `<span class="media-glyph">${icon("music")}</span>`;
+  if (!media?.artwork) return fallback;
+  return [
+    `<span class="media-glyph">${icon("music")}</span>`,
+    `<img class="art-img" src="${escapeHtml(media.artwork)}" alt="" decoding="async">`,
+    badge && source?.appId ? `<span class="media-badge">${renderAppIcon({ id: source.appId, name: source.name })}</span>` : "",
+  ].join("");
+}
+
+/** The title and second line the mini player shows for a session (5.2). */
+export function miniPlayerText(media) {
+  const source = media?.source?.name || "";
+  if (!media?.title) return { title: source ? `Playing in ${source}` : "Playing", sub: "No track details" };
+  if (!media.playing && !media.artist) return { title: media.title, sub: source ? `Paused · ${source}` : "Paused" };
+  return { title: media.title, sub: media.artist || source };
+}
+
+/** Accessible name of the mini player's open button (11). */
+export function miniPlayerLabel(media) {
+  const { title } = miniPlayerText(media);
+  const by = media?.title && media.artist ? `${title} by ${media.artist}` : title;
+  const source = media?.source?.name;
+  return `${by}${source ? `, ${source}` : ""}. Open media controls.`;
+}
+
+/**
+ * The floating mini player (or its inline footer form in classic mode).
+ * `mode` comes from miniPlayerMode: hidden, player or permission.
+ */
+export function renderMiniPlayer({ mode = "hidden", media = null, permission = null, online = true } = {}) {
+  if (mode === "permission" && permission) {
+    return [
+      '<div class="mini mini--permission" role="region" aria-label="Now playing" data-mode="permission">',
+      `<span class="mini__art">${permission.appId ? renderAppIcon({ id: permission.appId, name: permission.name }) : `<span class="media-glyph">${icon("music")}</span>`}</span>`,
+      `<span class="mini__text"><span class="mini__title">${escapeHtml(`Allow ${permission.name} control`)}</span></span>`,
+      `<button class="button button--primary mini__allow" type="button" data-media-allow${online ? "" : " disabled"}>Allow</button>`,
+      `<button class="mini__btn mini__dismiss" type="button" data-media-dismiss aria-label="Not now">${icon("close")}</button>`,
+      "</div>",
+    ].join("");
+  }
+  if (mode !== "player" || !media?.active) return "";
+  const { title, sub } = miniPlayerText(media);
+  const can = (name) => (media.controls?.[name] !== false && online ? "" : " disabled");
+  return [
+    `<div class="mini" role="region" aria-label="Now playing" data-mode="player" data-playing="${media.playing ? "true" : "false"}">`,
+    `<button class="mini__open" type="button" data-media-open aria-label="${escapeHtml(miniPlayerLabel(media))}">`,
+    `<span class="mini__art" aria-hidden="true">${renderArt(media, { badge: true })}</span>`,
+    `<span class="mini__text" aria-hidden="true"><span class="mini__title">${escapeHtml(title)}</span>${sub ? `<span class="mini__sub">${escapeHtml(sub)}</span>` : ""}</span>`,
+    "</button>",
+    `<button class="mini__btn" type="button" data-media="previous" aria-label="Previous track"${can("previous")}>${icon("previous", "icon--fill")}</button>`,
+    `<button class="mini__btn mini__play" type="button" data-media="${media.playing ? "pause" : "play"}" aria-label="${PLAYING_LABEL(media.playing)}"${can("playPause")}>${icon(media.playing ? "pause" : "play", media.playing ? "" : "icon--fill")}</button>`,
+    `<button class="mini__btn" type="button" data-media="next" aria-label="Next track"${can("next")}>${icon("next", "icon--fill")}</button>`,
+    "</div>",
+  ].join("");
+}
+
+function renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen, plain }) {
+  const close = `<button class="icon-button media-close" type="button" data-close="media" aria-label="Close media controls">${icon("close")}</button>`;
+  const source = !plain && media?.active ? media.source : null;
+  if (!source) {
+    const context = online ? "" : `<small class="media-head__context">Reconnecting to ${escapeHtml(computer)}…</small>`;
+    return `<header class="media-head"><h2 class="media-head__title">Media</h2>${context}<span class="media-head__spacer"></span>${close}</header>`;
+  }
+  const sessions = caps?.sessions && Array.isArray(media.sessions) ? media.sessions : [];
+  const several = online && sessions.length > 1;
+  const chip = `<span class="media-source__chip">${source.appId ? renderAppIcon({ id: source.appId, name: source.name }) : icon("music")}</span>`;
+  const context = !online ? `Reconnecting to ${computer}…` : several ? `· ${sessions.length} players` : `on ${computer}`;
+  const inner = `${chip}<span class="media-source__name">${escapeHtml(source.name)}</span><small>${escapeHtml(context)}</small>`;
+  const button = several
+    ? `<button class="media-source" type="button" data-media-sources aria-expanded="${sourcesOpen ? "true" : "false"}" aria-controls="media-sources">${inner}${icon("chevron-down")}</button>`
+    : `<div class="media-source">${inner}</div>`;
+  const show = showOn && online ? `<button class="media-link" type="button" data-media-show>${icon("open")}<span>Show on ${escapeHtml(kind)}</span></button>` : "";
+  const list = several && sourcesOpen
+    ? `<div id="media-sources" class="media-sources" role="group" aria-label="Players">${sessions.map((s) => `<button type="button" data-media-select="${escapeHtml(s.sessionId)}"${s.current ? ' aria-current="true"' : ""}><span class="media-source__chip">${s.appId ? renderAppIcon({ id: s.appId, name: s.name }) : icon("music")}</span><span class="media-sources__text"><strong>${escapeHtml(s.name)}</strong>${s.title ? `<small>${escapeHtml(s.title)}</small>` : ""}</span>${s.current ? icon("check") : ""}</button>`).join("")}</div>`
+    : "";
+  return `<header class="media-head">${button}<span class="media-head__spacer"></span>${show}${close}</header>${list}`;
+}
+
+function renderPermissionCard(permission, { computer, online }) {
+  const name = permission.name;
+  const iconHtml = permission.appId ? renderAppIcon({ id: permission.appId, name }) : `<span class="media-glyph">${icon("music")}</span>`;
+  const off = online ? "" : " disabled";
+  if (permission.status === "denied") {
+    return [
+      `<div class="media-perm" data-perm-state="denied"><span class="media-perm__icon">${iconHtml}</span><div class="media-perm__text">`,
+      `<h3>${escapeHtml(`${name} control is off on your Mac`)}</h3>`,
+      `<p>${escapeHtml(`Turn on WinDock → ${name} in System Settings › Privacy & Security › Automation.`)}</p>`,
+      `<div class="media-actions"><button class="button button--primary" type="button" data-perm="settings"${off}>Open Settings on Mac</button></div>`,
+      "</div></div>",
+    ].join("");
+  }
+  const asking = permission.asking === true;
+  return [
+    `<div class="media-perm" data-perm-state="${asking ? "asking" : "needed"}"><span class="media-perm__icon">${iconHtml}</span><div class="media-perm__text">`,
+    `<h3>${escapeHtml(`Control ${name} from your phone`)}</h3>`,
+    `<p>${escapeHtml(`Your Mac asks once before WinDock can read and control ${name}.`)}</p>`,
+    `<ol class="media-steps"><li><span>1</span>Tap Ask on Mac.</li><li><span>2</span>${escapeHtml(`On ${computer}, click OK in the prompt.`)}</li></ol>`,
+    asking ? `<p class="media-perm__status" role="status">${escapeHtml(`Waiting for your Mac… Click OK in the prompt on ${computer}.`)}</p>` : "",
+    '<div class="media-actions">',
+    asking
+      ? `<button class="button button--primary" type="button" data-perm="ask" disabled aria-busy="true"><span class="spinner${permission.stopped ? " is-stopped" : ""}" aria-hidden="true"></span>Waiting for your Mac…</button>`
+      : `<button class="button button--primary" type="button" data-perm="ask"${off}>Ask on Mac</button>`,
+    '<button class="button" type="button" data-perm="later">Not now</button>',
+    "</div></div></div>",
+  ].join("");
+}
+
+function renderNothingPlaying({ media, caps, computer, online }) {
+  const off = online ? "" : " disabled";
+  const installed = (caps?.players || []).filter((p) => p.installed);
+  if (caps?.sources === "apps" && !installed.length) {
+    return `<div class="media-empty"><span class="media-empty__glyph">${icon("music")}</span><div><p>${escapeHtml(`WinDock can control Spotify and Music on a Mac. Neither is installed on ${computer}.`)}</p></div></div>`;
+  }
+  const mac = caps?.sources === "apps";
+  const buttons = [];
+  if (!mac && (caps?.legacy ? caps.transport?.playPause : true)) {
+    buttons.push(`<button class="button button--primary" type="button" data-media="play"${off}>${icon("play", "icon--fill")}Resume last player</button>`);
+  }
+  for (const player of installed.filter((p) => !p.running && (mac || p.id === "spotify"))) {
+    const glyph = player.appId ? `<span class="media-actions__icon">${renderAppIcon({ id: player.appId, name: player.name })}</span>` : "";
+    buttons.push(`<button class="button" type="button" data-media-launch="${escapeHtml(player.id)}"${off}>${glyph}${escapeHtml(`Open ${player.name}`)}</button>`);
+  }
+  const body = mac ? `Open Spotify or Music on ${computer} to control it here.` : `Play something on ${computer} and it will show up here, with its controls.`;
+  return [
+    `<div class="media-empty"><span class="media-empty__glyph">${icon("music")}</span><div>`,
+    "<h3>Nothing playing</h3>",
+    `<p>${escapeHtml(body)}</p>`,
+    buttons.length ? `<div class="media-actions">${buttons.join("")}</div>` : "",
+    "</div></div>",
+  ].join("");
+}
+
+function renderPlayer(media, { online }) {
+  const c = media.controls || {};
+  const off = (enabled) => (enabled && online ? "" : " disabled");
+  const toggle = (name, on, label, glyph) => `<button class="media-btn media-btn--toggle" type="button" data-media="${name}" aria-label="${label}" aria-pressed="${on ? "true" : "false"}"${off(true)}>${icon(glyph)}</button>`;
+  const ghost = '<span class="media-btn media-btn--ghost" aria-hidden="true"></span>';
+  const repeatLabel = `Repeat: ${{ off: "Off", all: "All", one: "One" }[media.repeat] || "Off"}`;
+  const progress = media.durationMs
+    ? [
+      '<div class="media-progress">',
+      '<span class="media-time" data-progress-time>0:00</span>',
+      `<div class="media-track${c.seek ? " is-seekable" : ""}" data-progress style="--p:0"${c.seek ? "" : ' aria-hidden="true"'}>`,
+      '<span class="media-track__fill"></span>',
+      c.seek ? `<span class="media-track__head"><span></span></span><input class="media-track__input" type="range" min="0" max="${media.durationMs}" step="1000" value="0" aria-label="Seek" data-seek${off(true)}>` : "",
+      "</div>",
+      `<span class="media-time">${formatTime(media.durationMs)}</span>`,
+      "</div>",
+    ].join("")
+    : "";
+  const { title } = miniPlayerText(media);
+  return [
+    '<div class="media-body">',
+    `<div class="media-art" aria-hidden="true">${renderArt(media)}</div>`,
+    '<div class="media-info">',
+    `<h3 class="media-title">${escapeHtml(title)}</h3>`,
+    media.title ? (media.artist ? `<p class="media-artist">${escapeHtml(media.artist)}</p>` : "") : '<p class="media-artist">No track details</p>',
+    media.album ? `<p class="media-album">${escapeHtml(media.album)}</p>` : "",
+    progress,
+    '<div class="media-transport">',
+    c.shuffle ? toggle("shuffle", media.shuffle, "Shuffle", "shuffle") : ghost,
+    `<button class="media-btn" type="button" data-media="previous" aria-label="Previous track"${off(c.previous !== false)}>${icon("previous", "icon--fill")}</button>`,
+    `<button class="media-btn media-btn--play" type="button" data-media="${media.playing ? "pause" : "play"}" aria-label="${PLAYING_LABEL(media.playing)}"${off(c.playPause !== false)}>${icon(media.playing ? "pause" : "play", media.playing ? "" : "icon--fill")}</button>`,
+    `<button class="media-btn" type="button" data-media="next" aria-label="Next track"${off(c.next !== false)}>${icon("next", "icon--fill")}</button>`,
+    c.repeat ? toggle("repeat", media.repeat !== "off", repeatLabel, media.repeat === "one" ? "repeat-one" : "repeat") : ghost,
+    "</div>",
+    "</div>",
+    "</div>",
+  ].join("");
+}
+
+/**
+ * The Media sheet's header and body for one state: permission card, player,
+ * or nothing playing (5.3). The volume row is separate (renderVolumeRow) so a
+ * drag is never interrupted by a re-render. Progress values are filled in by
+ * the page after rendering, so the markup only changes when the state does.
+ */
+export function renderMediaSheet({ media = null, caps = null, permission = null, online = true, computer = "your computer", kind = "PC", showOn = false, sourcesOpen = false } = {}) {
+  if (permission) {
+    return renderSheetHeader({ media, caps, online, computer, kind, plain: true }) + renderPermissionCard(permission, { computer, online });
+  }
+  if (media?.active) {
+    return renderSheetHeader({ media, caps, online, computer, kind, showOn, sourcesOpen }) + renderPlayer(media, { online });
+  }
+  return renderSheetHeader({ media, caps, online, computer, kind, plain: true }) + renderNothingPlaying({ media, caps, computer, online });
+}
+
+/** The system volume row: a slider (new hosts), three buttons (older hosts) or nothing (6.2). */
+export function renderVolumeRow({ mode = null, online = true } = {}) {
+  const off = online ? "" : " disabled";
+  if (mode === "slider") {
+    return [
+      '<div class="media-volume" data-volume-mode="slider">',
+      `<button class="icon-button media-volume__mute" type="button" data-volume-mute aria-label="Mute" aria-pressed="false"${off}>${icon("volume")}</button>`,
+      '<div class="range" data-volume-range style="--p:0">',
+      '<span class="range__fill"></span><span class="range__head"><span></span></span>',
+      `<input class="range__input" type="range" min="0" max="100" step="1" value="0" aria-label="Volume" aria-valuetext="0 percent" data-volume-input${off}>`,
+      "</div>",
+      '<span class="media-volume__value" data-volume-value>–</span>',
+      "</div>",
+    ].join("");
+  }
+  if (mode === "buttons") {
+    return [
+      '<div class="media-volume media-volume--buttons" data-volume-mode="buttons" role="group" aria-label="Volume">',
+      ...[["volume-down", "quieter", "Quieter"], ["mute-toggle", "mute", "Mute"], ["volume-up", "volume", "Louder"]].map(([verb, glyph, label]) =>
+        `<button class="button" type="button" data-media-control="${verb}"${off}>${icon(glyph)}<span>${label}</span></button>`),
+      "</div>",
+    ].join("");
+  }
+  return "";
 }

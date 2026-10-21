@@ -37,9 +37,10 @@
   </header>
   <div class="workspace">
     <div class="dock-heading"><div><span class="eyebrow">YOUR EVERYDAY, ONE TAP AWAY</span><h1 id="dock-title">Make yourself at home.</h1></div><p id="edit-hint">Hold an icon to arrange your space</p></div>
-    <div id="reconnect" class="reconnect" role="status" aria-live="polite" data-visible="false"><span class="reconnect__dot" aria-hidden="true"></span><span id="reconnect-text"></span></div>
+    <div id="reconnect" class="reconnect" role="status" aria-live="polite" data-visible="false"><span class="reconnect__dot" aria-hidden="true"></span><span id="reconnect-icon" class="reconnect__icon" aria-hidden="true"></span><span id="reconnect-text"></span></div>
     <section id="dock" class="dock" aria-label="Dock"></section>
     <div id="page-dots" class="page-dots" aria-label="Dock pages"></div>
+    <div id="mini-player" class="mini-player"></div>
   </div>
   <footer id="gesture-area" class="foot">
     <button id="add" class="foot__button" type="button"><span data-icon="plus"></span><span>App library</span></button>
@@ -56,6 +57,7 @@
   <button id="drawer-close" class="drawer-grip" type="button" aria-label="Close drawer"><span></span></button>
   <div class="drawer-actions">
     <button id="drawer-apps" type="button"><span data-icon="plus"></span><span>Apps</span></button>
+    <button id="drawer-media" type="button" hidden><span data-icon="music"></span><span>Media</span></button>
     <button id="drawer-controls" type="button"><span data-icon="sliders"></span><span>Controls</span></button>
     <button id="drawer-capture" type="button"><span data-icon="camera"></span><span>Capture</span></button>
     <button id="drawer-input" type="button"><span data-icon="touchpad"></span><span>Touch & sign</span></button>
@@ -63,7 +65,20 @@
     <button id="drawer-edit" type="button"><span data-icon="edit"></span><span>Arrange</span></button>
     <button id="drawer-fullscreen" type="button"><span data-icon="monitor"></span><span>Fullscreen</span></button>
   </div>
-  <div class="drawer-connection"><span id="drawer-host">Your computer</span><span id="drawer-conn" data-state="off">Connecting</span></div>
+  <div class="drawer-bottom">
+    <div class="drawer-connection"><span id="drawer-host">Your computer</span><span id="drawer-conn" data-state="off">Connecting</span></div>
+    <div id="drawer-power" class="drawer-power" role="group" aria-label="Power" hidden>
+      <button id="power-lock" type="button" hidden><span data-icon="lock"></span><span>Lock</span></button>
+      <button id="power-sleep" type="button" hidden><span data-icon="moon"></span><span>Sleep</span></button>
+      <button id="power-shutdown" class="drawer-power__off" type="button" aria-haspopup="dialog" hidden><span data-icon="power"></span><span id="power-shutdown-label">Shut down</span></button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="media" class="sheet media-sheet" aria-label="Media">
+  <button id="media-grip" class="sheet-grip" type="button" aria-label="Close media controls"><span></span></button>
+  <div id="media-content" class="media-content"></div>
+  <div id="media-volume"></div>
 </dialog>
 
 <button id="recording-stop" class="recording-stop" type="button" aria-label="Stop screen recording" hidden><span class="recording-dot"></span><span id="recording-time">00:00</span><strong>Stop</strong></button>
@@ -144,6 +159,8 @@
       </div>
       <label class="setting-row">Immersive mode<input id="immersive" class="switch" type="checkbox" role="switch" checked></label>
       <label class="setting-row">App names<input id="show-labels" class="switch" type="checkbox" role="switch"></label>
+      <label class="setting-row">Close buttons on open apps<input id="close-buttons" class="switch" type="checkbox" role="switch" checked></label>
+      <label class="setting-row">Now playing on the dock<input id="mini-setting" class="switch" type="checkbox" role="switch" checked></label>
       <p class="settings__tip">Hold to arrange. Swipe up for the drawer.</p>
     </section>
     <section class="settings__card"><h3>Background</h3>
@@ -172,11 +189,13 @@
   <button class="button options__done" type="button" data-close="tile-options">Done</button>
 </dialog>
 
-<dialog id="confirm" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-description">
-  <span class="confirm__icon" data-icon="power"></span><h2 id="confirm-title">Continue?</h2><p id="confirm-description"></p>
-  <div class="confirm__actions"><button id="confirm-cancel" class="button" type="button" autofocus>Cancel</button><button id="confirm-go" class="button button--danger" type="button">Continue</button></div>
+<dialog id="confirm" class="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-description" data-state="confirm">
+  <span id="confirm-icon" class="confirm__icon" data-icon="power"></span><h2 id="confirm-title">Continue?</h2><p id="confirm-description"></p>
+  <p id="confirm-waiting" class="confirm__waiting" role="status" hidden><span class="spinner" aria-hidden="true"></span><span>Waiting for your Mac…</span></p>
+  <div class="confirm__actions"><button id="confirm-cancel" class="button" type="button" autofocus>Cancel</button><button id="confirm-restart" class="button" type="button" hidden><span data-icon="refresh"></span>Restart</button><button id="confirm-go" class="button button--danger" type="button">Continue</button><button id="confirm-settings" class="button" type="button" hidden>Open Settings on Mac</button></div>
 </dialog>
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<div id="live" class="sr-only" aria-live="polite"></div>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

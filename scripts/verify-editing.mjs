@@ -15,7 +15,8 @@ import {
   catalogVerbs,
   CONTROL_CATALOG,
 } from "../public/tiles.js";
-import { renderTiles, renderTile, renderControlPicker } from "../public/dock.js";
+import { renderTiles, renderTile, renderControlPicker, renderControls } from "../public/dock.js";
+import { powerCaps } from "../public/dock-controls.js";
 import { CONTROL_VERBS, verbTakesValue } from "../src/platform/contract.js";
 import { normalizeTile } from "../src/config.js";
 import { createApp } from "../server.js";
@@ -197,6 +198,23 @@ t.equal(renderControlPicker(null), '<li class="picker__empty">No controls availa
 // XSS: labels reach the picker and the dock.
 const hostile = renderControlPicker([{ group: '<img src=x onerror="a()">', items: [] }]);
 t.ok(!hostile.includes("<img"), "a hostile group name cannot inject an element");
+
+// ---- Controls sheet after DOCK-CONTROLS (section 4, 17) ----
+const legacyControls = renderControls(CONTROL_VERBS, true);
+t.ok(!legacyControls.includes("Playback") && !legacyControls.includes('data-key="media-next"'), "the Controls sheet no longer has a Playback card");
+t.ok(legacyControls.includes("<h3>Sound</h3>") && legacyControls.includes("<h3>Display</h3>") && legacyControls.includes("<h3>Your PC</h3>"), "Sound, Display and Your PC stay");
+t.ok(legacyControls.includes("Shut down and restart ask first."), "the power card's hint says only shut down and restart ask");
+t.ok(!renderControls(CONTROL_VERBS, false).includes('data-key="sleep"') && renderControls(CONTROL_VERBS, false).includes('data-key="lock"'), "without a power map, allowDestructive false still hides sleep (old rule)");
+const macPower = powerCaps({ features: { power: { lock: "ready", sleep: "ready", restart: "needs-permission", shutdown: "needs-permission" } } });
+const macControls = renderControls(["volume-up", "volume-down", "mute-toggle"], true, { power: macPower, kind: "Mac" });
+t.ok(macControls.includes("<h3>Your Mac</h3>") && (macControls.match(/data-key="(lock|sleep|restart|shutdown)"/g) || []).length === 4, "a Mac host gets Your Mac with every power action it offers");
+t.equal(renderControls([], true, { power: powerCaps({ features: { power: {} } }) }), "", "nothing offered renders no cards, so Controls hides");
+const noDestructive = renderControls(CONTROL_VERBS, false, { power: powerCaps({ features: { power: { lock: "ready", sleep: "ready", restart: "ready", shutdown: "ready" } }, allowDestructive: false }) });
+t.ok(noDestructive.includes('data-key="lock"') && !/data-key="(sleep|restart|shutdown)"/.test(noDestructive), "with power actions disabled only Lock remains (5.6)");
+// The picker's control list follows the same power map (app.js pickerVerbs).
+const offered = CONTROL_VERBS.filter((verb) => !["lock", "sleep", "restart", "shutdown"].includes(verb) || powerCaps({ features: { power: { lock: "ready" } } })[verb]);
+const pickerFlat = availableControls(offered, []).flatMap((g) => g.items).map((i) => i.verb);
+t.ok(pickerFlat.includes("lock") && !pickerFlat.includes("sleep") && !pickerFlat.includes("shutdown"), "power the host doesn't offer is not offered in the picker");
 
 // ---- the host accepts an edited list end to end ----
 const provider = createWindowsProvider({
