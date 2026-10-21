@@ -11,8 +11,11 @@ import androidx.core.view.WindowInsetsCompat
 import kotlin.math.max
 
 /** One native screen inflated into the container above the WebView. */
-abstract class Screen(protected val activity: Activity, layout: Int) {
-    val view: View = activity.layoutInflater.inflate(layout, FrameLayout(activity), false)
+abstract class Screen(protected val activity: Activity, layout: Int, columns: Int = 0) {
+    /** With [columns] (a two-column row), large text restacks it into one scrolling column (spec 9.3). */
+    val view: View = activity.layoutInflater.inflate(layout, FrameLayout(activity), false).let {
+        if (columns != 0 && LargeText.stacks(activity)) LargeText.stack(it, columns) else it
+    }
     /** Waiting screens dim to 60% after 2 minutes without a touch (spec 9.4). */
     open val waiting: Boolean get() = false
     /** Whether discovery may run while this screen is in front (QR confirmation keeps the network quiet). */

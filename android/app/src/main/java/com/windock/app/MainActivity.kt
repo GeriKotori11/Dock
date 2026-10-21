@@ -523,8 +523,12 @@ class MainActivity : Activity(), ConnectionCoordinator.Listener {
         qrProblem = false
         problem.changed(computer, pinned, presented, hostUi = uiHosts[computer.hostId] == true, onForget = {
             // Removes the pin and session for this host ID only and keeps the nickname.
+            // Phone-side only: the changed certificate cannot carry the old session, so
+            // no DELETE /api/session is sent; the computer's old session expires or is
+            // revoked from its paired-phones page (see ChangedForget).
+            val plan = ChangedForget.plan(computer, at, store.all())
             PinStore.remove(this, computer.hostId)
-            SessionCookies.remove(computer.endpoint)
+            plan.clearCookies.forEach { SessionCookies.remove(it) }
             io.execute {
                 val probe = (HostClient.probe(at) as? HostClient.Result.Answer)?.probe
                 runOnUiThread {

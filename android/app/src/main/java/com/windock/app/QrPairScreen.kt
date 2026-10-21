@@ -18,7 +18,7 @@ import java.util.concurrent.ExecutorService
  * to the scanned host ID; the computer and its pin are saved only after a 200.
  */
 class QrPairScreen(activity: Activity, private val io: ExecutorService, private val callbacks: Callbacks) :
-    Screen(activity, R.layout.screen_qr) {
+    Screen(activity, R.layout.screen_qr, R.id.qr_columns) {
 
     interface Callbacks {
         fun cancelled()

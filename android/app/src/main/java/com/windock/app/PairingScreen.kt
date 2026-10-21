@@ -41,7 +41,7 @@ data class PairingRequest(
  * user just compared.
  */
 class PairingScreen(activity: Activity, private val io: ExecutorService, private val callbacks: Callbacks) :
-    Screen(activity, R.layout.screen_pairing) {
+    Screen(activity, R.layout.screen_pairing, R.id.pair_columns) {
 
     interface Callbacks {
         fun cancelled(request: PairingRequest)

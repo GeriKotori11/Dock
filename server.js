@@ -22,7 +22,7 @@ import { createInputHub } from "./src/input-hub.js";
 import { validateSignature } from "./src/input.js";
 import { createIconCache, FALLBACK_ICON } from "./src/icons.js";
 import { startDiscovery, primaryAddress, DISCOVERY_PORT } from "./src/discovery.js";
-import { startBonjour, buildTxt } from "./src/bonjour.js";
+import { startBonjour, buildTxt, followBonjour } from "./src/bonjour.js";
 import { loadOrCreateTlsIdentity, createSharedPortListener, FIRST_BYTE_TIMEOUT_MS } from "./src/tls.js";
 import { pairingQr } from "./src/qr.js";
 import {
@@ -899,8 +899,10 @@ export async function start({
   env = process.env,
   discoveryPort = DISCOVERY_PORT,
   advertise = startBonjour,
+  lookupAddress = (preferred) => primaryAddress(undefined, preferred),
+  addressCheckMs = ADDRESS_CHECK_MS,
 } = {}) {
-  const address = primaryAddress(undefined, host);
+  const address = lookupAddress(host);
   const transport = transportOptions(env);
   // Sessions load synchronously when the store is built, so they are in place
   // before the server listens; host restarts keep paired devices paired.
@@ -938,12 +940,22 @@ export async function start({
   // Bonjour `_windock._tcp` for phones that cannot broadcast (iPhones). The
   // TXT record is only a hint; phones still verify /health and the pin.
   app.discoveryState.bonjour = env.WINDOCK_BONJOUR === "0" ? "off" : "on";
+  // The advertisement follows the LAN address (see the address timer below):
+  // a new address restarts it with the new TXT `addr`, no address stops it.
+  // The UDP v1 reply needs no restart: it reads app.state.endpoint per probe.
   const bonjour = env.WINDOCK_BONJOUR === "0"
-    ? { kind: "none", stop: async () => {} }
-    : advertise({
+    ? { kind: "none", address: null, setAddress: async () => {}, stop: async () => {}, settled: async () => {} }
+    : followBonjour({
+      advertise,
       name: hostname(),
       port,
-      txt: buildTxt({ hostId: identity.hostId, tls: Boolean(tls), address, hostName: hostname() }),
+      address,
+      txtFor: (addr) => buildTxt({ hostId: identity.hostId, tls: Boolean(tls), address: addr, hostName: hostname() }),
+      // A started advertisement is "on" until it logs; "none" means it failed.
+      // With no address nothing is started and the state is left as it was.
+      onStart: (kind) => {
+        app.discoveryState.bonjour = kind === "none" ? "failed" : "on";
+      },
       // Every line the advertiser logs reports that advertising is off.
       log: (line) => {
         process.stderr.write(`WinDock bonjour: ${line}\n`);
@@ -951,7 +963,6 @@ export async function start({
         app.notifyChanged();
       },
     });
-  if (env.WINDOCK_BONJOUR !== "0" && bonjour.kind === "none") app.discoveryState.bonjour = "failed";
 
   // Follow the LAN address: the status, the advertised endpoint, the UDP
   // reply and the QR code all use the current one.
@@ -959,7 +970,7 @@ export async function start({
   const addressTimer = setInterval(() => {
     let next = null;
     try {
-      next = primaryAddress(undefined, host);
+      next = lookupAddress(host);
     } catch {
       next = null; // WINDOCK_HOST no longer assigned
     }
@@ -977,8 +988,9 @@ export async function start({
     } else {
       app.pairing.touch();
     }
+    bonjour.setAddress(next).then(() => app.notifyChanged());
     app.notifyChanged();
-  }, ADDRESS_CHECK_MS);
+  }, addressCheckMs);
   addressTimer.unref?.();
   app.listener.once("close", () => { clearInterval(addressTimer); bonjour.stop().catch(() => {}); });
   return { ...app, endpoint, secureEndpoint, discovery, bonjour, port };

@@ -1,78 +1,100 @@
-# WinDock Android test app
+# WinDock for Android
 
-The Android app displays the PC's existing dock in a fullscreen landscape
-WebView. Keep the Windows tray running; this app needs a connection to the PC.
+A native Kotlin app for a WinDock host on macOS or Windows. It keeps a list of
+paired computers, finds them on the network (Bonjour and UDP broadcast), pairs
+natively (security code, then PIN, or a QR code scanned with the system
+camera), pins each computer's certificate, and opens the shared landscape dock
+from the computer in a fullscreen WebView.
+
+It has run on a real phone (Samsung Galaxy A40) against a macOS host. There is
+no store or download build. How to install and pair, for users:
+[docs/INSTALL-PHONES.md](../docs/INSTALL-PHONES.md).
 
 ## Build and install
 
-On Windows, install Android Studio with SDK Platform 34 and Build Tools 34.0.0,
-then run `npm run build:android` from the repository root. The script discovers
-Android Studio's JDK and the usual SDK directory; `JAVA_HOME` and `ANDROID_HOME`
-override them. Java 21, Gradle 8.9 and the included SDK 34 setup were verified.
-The wrapper can also be run directly with `bash android/gradlew -p android
-assembleDebug` on Linux with those prerequisites.
+You need JDK 17 or 21 and the Android SDK with Platform 34 and Build Tools
+34.0.0 (Android Studio installs both). Set `ANDROID_HOME`, or `sdk.dir` in
+`android/local.properties`.
 
-Output: `artifacts/WinDock-android-debug.apk`. It supports Android 7/API 24 and
-newer, targets API 34, and uses a local debug signing key. Updating requires the
-same signing key. Production signing and Play Store preparation are separate.
-The current development APK identifies as `0.2.2-preview.1` (version code 4);
-it has not yet replaced the public download.
+On macOS or Linux:
 
-Transfer the APK to the phone, open it and allow installation from the chosen
-browser/file manager if Android asks. Alternatively, enable USB debugging,
-approve the PC on the phone, then use the SDK's `adb install -r` with the APK.
+```sh
+cd android && bash gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-Open WinDock, use the same LAN as the PC, and enter the PIN from the PC tray.
-If discovery misses the PC, enter its full tray URL or IPv4 address/port and tap
-Connect. A bare IP defaults to port 8620. Back closes an open sheet; a second
-Back returns to the connection screen. Android's first fullscreen prompt needs
-one tap on Got it. System-edge swipes can temporarily reveal navigation bars.
+On Windows, run `npm run build:android` from the repository root. The script
+finds Android Studio's JDK and the usual SDK folder (`JAVA_HOME` and
+`ANDROID_HOME` override them), runs the Kotlin unit tests and lint, checks the
+signature, and writes `artifacts/WinDock-android-debug.apk`.
 
-## USB connection (development build)
+The app supports Android 7/API 24 and newer, targets API 34, and is signed with
+the build machine's debug key. Updating over an existing install needs the same
+key; an APK from another machine means uninstalling first and pairing again.
+The version is still `0.2.2-preview.1` (version code 4), inherited from
+upstream.
 
-The new Android build supports USB networking through **USB tethering**. This
-uses the existing Windows host and PIN pairing; USB debugging and developer
-options are not required. A charging-only cable will not work.
+Without adb, copy the APK to the phone, open it, and allow installs from that
+app when Android asks.
 
-1. Connect the phone to the PC with a data-capable USB cable.
-2. Enable **USB tethering** in Android Settings (often under Hotspot & tethering).
-3. Keep WinDock running on Windows. In the Android connection screen, select
-   **Connect by USB → Find USB PC**. Back from the dock returns to that screen.
-4. Pair using the PIN in the Windows tray. If discovery is blocked, enter the
-   PC's IPv4 address on its USB network adapter, rather than its Wi-Fi address.
+## Using it
 
-Allow WinDock through Windows Firewall on the trusted USB connection when
-prompted. Tethering may also share mobile data with Windows; turn mobile data
-off if that is unwanted. Some phones or carrier configurations restrict USB
-tethering. The USB choice is remembered and only searches wired interfaces;
-it does not silently fall back to Wi-Fi during an explicit USB attempt.
-**Connect by Wi-Fi** returns to wireless, using its own remembered PC address.
-On startup, if the wired link is gone, WinDock returns to Wi-Fi automatically.
-The connection screen always shows which mode is selected. If you unplug while
-the dock is open, return to this screen and choose Wi-Fi, or reopen the app.
+- The **Computers** screen lists paired computers and computers found on this
+  network. Its rail has **Scan QR code**, **Add by address**, **Connect by USB**
+  (Windows only) and **This phone**.
+- **Scan QR code** opens a sheet that hands off to the system camera (no camera
+  permission in the app). The `windock://pair` link opens WinDock, which shows
+  a confirmation screen before any network traffic.
+- Pairing by hand: check the security code against the computer, then type the
+  6-digit PIN.
+- In the dock, **Back** opens the switch sheet. The drawer also has **Switch**.
+- If a computer's address changes, the app finds it again by host ID and moves
+  the session over without a new PIN.
+- Android's first fullscreen prompt needs one tap on **Got it**. System-edge
+  swipes can briefly reveal the navigation bars.
+
+## USB connection (Windows host only)
+
+The app can reach a Windows host through **USB tethering**. USB debugging is
+not needed, but a charging-only cable won't work.
+
+1. Connect the phone to the PC with a USB data cable.
+2. Turn on **USB tethering** in Android settings (often under Hotspot &
+   tethering).
+3. Keep WinDock running on Windows. On the Computers screen, choose **Connect by
+   USB → Find computer over USB**.
+4. Pair as usual. If discovery is blocked, add the PC by its address on the USB
+   network adapter, not its Wi-Fi address.
+
+Allow WinDock through Windows Firewall on the USB network when asked. Tethering
+can share the phone's mobile data with the PC; turn mobile data off if you
+don't want that. Some phones or carriers restrict USB tethering. USB mode only
+searches wired interfaces and never falls back to Wi-Fi on its own. On startup,
+if the cable is gone, the app returns to Wi-Fi.
 
 Discovery binds probes to each local interface and uses the responder's source
-address, avoiding a stale Wi-Fi address advertised by a PC with several network
-adapters. Host identity and local-address validation still apply. USB discovery,
-PIN pairing, and PC app control were verified on a Huawei Mate 10 Pro with Wi-Fi
-disabled on October 19, 2026. Other Android OEM interface names and Windows
-firewall configurations still need device-specific verification.
+address, so a PC with several network adapters can't send the phone a stale
+address. Upstream verified USB discovery, pairing and app control on a Huawei
+Mate 10 Pro with Wi-Fi off (October 19, 2026). It has not been re-run since
+the fork.
 
-## Phone display options (development build)
+## This phone: display options
 
-Open **This phone** on the connection screen, or **Appearance → This phone ·
-screen** in the updated shared dock. These preferences stay on this
-phone and do not change the computer's brightness or power settings.
+Open **This phone** on the Computers screen, or **Appearance → This phone ·
+screen** in the dock. These settings stay on the phone and never change the
+computer.
 
 - **Dim after inactivity:** never, 15 seconds, 30 seconds (default), 1 or 2 minutes.
-- **Dim brightness:** 5%, 10% (default), or 20%; never raises an already lower brightness.
+- **Dim brightness:** 5%, 10% (default) or 20%; never raises a brightness that is
+  already lower.
 
-The screen stays on the whole time WinDock is open (connection screen, pairing
-and dock); idle dimming only lowers this window's brightness. No device-admin,
-accessibility service, or global settings permission is used. The first gesture
-on a dimmed dock only wakes it. Leaving the app restores brightness and releases
-keep-awake. Live computer updates do not reset the idle timer. Lower brightness
-reduces prolonged display exposure but cannot guarantee prevention of OLED burn-in.
+The screen stays on the whole time WinDock is open (Computers screen, pairing
+and dock); dimming only lowers this window's brightness. No device-admin,
+accessibility service or system-settings permission is used. The first tap on a
+dimmed dock only wakes it. Leaving the app restores brightness and lets the
+screen turn off normally. Live updates from the computer don't reset the idle
+timer. Dimming reduces long display exposure but can't guarantee there will be
+no OLED burn-in.
 
 ## Verification
 
@@ -104,9 +126,9 @@ launch/focus requests, failed manual address recovery and Activity recreation.
 Screenshots are in the app's external files directory. The first-run Android
 fullscreen explanation is dismissed using UI Automator on the English emulator.
 
-The emulator flow passed on Android 16/API 36.1. It does not establish physical
-LAN broadcast reachability or real Windows app activation. G14 remains pending
-until those actions succeed on the user's phone and PC.
+The emulator flow has passed on API 36.1 and API 37. It does not show physical
+LAN discovery or real app activation on a computer. Real-device results are
+recorded in [docs/V1-PLAN.md](../docs/V1-PLAN.md).
 
 ### USB discovery and idle display regression
 

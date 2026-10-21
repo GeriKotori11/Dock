@@ -12,7 +12,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 
 /** S8 Can't reach, S9 No Wi-Fi and S10 Security code changed (spec 5.8 to 5.10). */
-class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_problem) {
+class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_problem, R.id.problem_columns) {
     enum class Kind { CANT_REACH, NO_WIFI, CHANGED }
 
     private val main = Handler(Looper.getMainLooper())
@@ -51,7 +51,7 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         buttons.visibility = View.VISIBLE
         spacer.visibility = View.VISIBLE
         left.gravity = Gravity.NO_GRAVITY
-        left.layoutParams = left.layoutParams.apply { width = activity.resources.getDimensionPixelSize(R.dimen.split_left) }
+        left.layoutParams = left.layoutParams.apply { width = LargeText.columnWidth(activity, activity.resources.getDimensionPixelSize(R.dimen.split_left)) }
         body.textSize = 15f
         right.gravity = Gravity.NO_GRAVITY
         glyph.setBackgroundResource(R.drawable.bg_glyph_lg)
@@ -201,7 +201,7 @@ class ProblemScreen(activity: Activity) : Screen(activity, R.layout.screen_probl
         body.textSize = 14f
         primary.setText(if (qr) R.string.qr_changed_pair else R.string.changed_forget)
         // The longer Q11 button label needs the wider column of mockup qr-11.
-        if (qr) left.layoutParams = left.layoutParams.apply { width = Ui.dp(activity, 380f).toInt() }
+        if (qr) left.layoutParams = left.layoutParams.apply { width = LargeText.columnWidth(activity, Ui.dp(activity, 380f).toInt()) }
         primary.setBackgroundResource(R.drawable.bg_button_danger)
         primary.setTextColor(activity.getColor(R.color.danger_text))
         primary.setOnClickListener { onForget() }

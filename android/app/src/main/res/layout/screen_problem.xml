@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- S8 Can't reach, S9 No Wi-Fi, S10 Security code changed (mockups 16, 17, 18). -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/problem_columns"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:orientation="horizontal" android:gravity="center_vertical"
     android:paddingTop="32dp" android:paddingBottom="16dp">

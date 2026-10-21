@@ -25,7 +25,7 @@ import android.widget.TextView
  * appeared and discovered rows are appended, so nothing jumps under a finger.
  */
 class ComputersScreen(activity: Activity, private val presence: Presence, private val actions: Actions) :
-    Screen(activity, R.layout.screen_computers) {
+    Screen(activity, R.layout.screen_computers, R.id.hub_columns) {
 
     interface Actions {
         fun open(computer: Computer)

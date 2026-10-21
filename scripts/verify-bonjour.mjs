@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createChecker } from "./lib/assert.mjs";
 import {
   startBonjour,
+  followBonjour,
   instanceName,
   hostLabelFor,
   txtEntries,
@@ -337,6 +338,80 @@ t.equal(startBonjour({ name: "x", port: 0, txt: TXT, platform: "linux", socketFa
 t.equal(startBonjour({ name: "x", port: 1, txt: { "bad=key": 1 }, platform: "darwin", spawn: mac.spawn, log }).kind, "none", "a bad TXT: none, never thrown");
 t.equal(startBonjour({ log }).kind, "none", "no name or port: none, never thrown");
 
+// ---- following the LAN address ----
+logs.length = 0;
+const txtFor = (addr) => buildTxt({ hostId: HOST_ID, tls: true, address: addr, hostName: "Studio-Mac.local", platform: "darwin" });
+const addrOf = (argv) => (argv.find((a) => a.startsWith("addr=")) || "").slice(5) || null;
+{
+  // macOS: every dns-sd started; each stop kills the previous child.
+  const children = [];
+  const spawner = fakeChildSpawner();
+  const spawn = (cmd, argv, options) => { const child = spawner.spawn(cmd, argv, options); children.push({ argv, child }); return child; };
+  const follow = followBonjour({ name: "Studio-Mac.local", port: 18712, address: "192.168.1.40", txtFor, platform: "darwin", spawn, log });
+  t.equal(children.length, 1, "follow: advertising starts with the address");
+  t.equal(addrOf(children[0].argv), "192.168.1.40", "follow: the first advert carries the start address");
+  await follow.setAddress("192.168.1.41");
+  t.deepEqual(children[0].child.killed, ["SIGTERM"], "follow (dns-sd): an address change stops the old advert");
+  t.equal(children.length, 2, "follow (dns-sd): and starts a new one");
+  t.equal(addrOf(children[1].argv), "192.168.1.41", "follow (dns-sd): the new advert carries the new addr");
+  await follow.setAddress("192.168.1.41");
+  t.equal(children.length, 2, "follow: the same address changes nothing");
+  await follow.setAddress(null);
+  t.deepEqual(children[1].child.killed, ["SIGTERM"], "follow (dns-sd): no address stops advertising");
+  t.ok(children.length === 2 && follow.kind === "none", "follow (dns-sd): and starts nothing");
+  await follow.setAddress("192.168.1.42");
+  t.ok(children.length === 3 && addrOf(children[2].argv) === "192.168.1.42", "follow (dns-sd): an address coming back resumes advertising");
+  follow.setAddress("192.168.1.43");
+  follow.setAddress("192.168.1.44");
+  await follow.settled();
+  t.equal(addrOf(children.at(-1).argv), "192.168.1.44", "follow: quick changes end on the latest address");
+  t.ok(children.slice(0, -1).every((c) => c.child.killed.length === 1), "follow: every superseded dns-sd is stopped");
+  await follow.stop();
+  t.deepEqual(children.at(-1).child.killed, ["SIGTERM"], "follow: stop() stops the current advert");
+  await follow.setAddress("192.168.1.45");
+  t.equal(addrOf(children.at(-1).argv), "192.168.1.44", "follow: nothing starts after stop()");
+  t.equal(process.listenerCount("exit"), exitListeners, "follow: no dns-sd exit hooks are left behind");
+}
+{
+  // Windows/Linux: goodbye for the old records, announcement of the new ones.
+  const socks = [];
+  const follow = followBonjour({
+    name: "DESKTOP-1", port: 18713, address: "192.168.1.40", txtFor, platform: "linux",
+    socketFactory: () => { const s = fakeSocket(); socks.push(s); return s; },
+    setTimer: () => ({ unref() {} }),
+    log,
+  });
+  await new Promise((r) => setImmediate(r));
+  const aOf = (packet) => decodePacket(packet).answers.find((r) => r.type === TYPE.A)?.data;
+  const txtAddr = (packet) => (decodePacket(packet).answers.find((r) => r.type === TYPE.TXT)?.data || []).find((e) => e.startsWith("addr="));
+  t.equal(aOf(socks[0].sent[0].packet), "192.168.1.40", "follow (mdns): the first announcement names the start address");
+  await follow.setAddress("192.168.1.41");
+  await new Promise((r) => setImmediate(r));
+  const bye = decodePacket(socks[0].sent.at(-1).packet);
+  t.ok(bye.answers.every((r) => r.ttl === 0) && aOf(socks[0].sent.at(-1).packet) === "192.168.1.40",
+    "follow (mdns): an address change sends a goodbye for the old records");
+  t.ok(socks[0].closed, "follow (mdns): the old responder is closed");
+  t.equal(socks.length, 2, "follow (mdns): a new responder starts");
+  t.deepEqual(socks[1].calls.find((c) => c[0] === "addMembership"), ["addMembership", MDNS_ADDRESS, "192.168.1.41"], "follow (mdns): it joins on the new address");
+  t.equal(aOf(socks[1].sent[0].packet), "192.168.1.41", "follow (mdns): the A record names the new address");
+  t.equal(txtAddr(socks[1].sent[0].packet), "addr=192.168.1.41", "follow (mdns): the TXT addr is the new address");
+  await follow.setAddress(null);
+  t.ok(socks[1].closed && socks.length === 2, "follow (mdns): no address stops advertising");
+  await follow.setAddress("192.168.1.42");
+  await new Promise((r) => setImmediate(r));
+  t.ok(socks.length === 3 && aOf(socks[2].sent[0].packet) === "192.168.1.42", "follow (mdns): an address coming back resumes advertising");
+  await follow.stop();
+  t.ok(socks[2].closed, "follow (mdns): stop() closes the responder");
+}
+{
+  const follow = followBonjour({ name: "x", port: 1, address: null, txtFor, advertise: () => { throw new Error("never"); }, log });
+  t.equal(follow.kind, "none", "follow: no address at start advertises nothing");
+  await follow.setAddress("192.168.1.40");
+  t.equal(follow.kind, "none", "follow: an advertiser that throws is contained");
+  await follow.stop();
+}
+t.equal(logs.length, 0, "following the address logs nothing");
+
 // ---- start() wiring ----
 const { start } = await import("../server.js");
 const scratch = await mkdtemp(join(tmpdir(), "windock-bonjour-"));
@@ -353,17 +428,40 @@ async function shutdown(app) {
 const seen = [];
 let stopped = 0;
 const advertise = (opts) => { seen.push(opts); return { kind: "fake", stop: async () => { stopped += 1; } }; };
-const started = await start({ port: 0, env, discoveryPort: 0, advertise });
+const started = await start({ port: 0, env, discoveryPort: 0, advertise, lookupAddress: () => "192.168.1.40" });
 t.equal(seen.length, 1, "start() advertises once");
 t.equal(seen[0].port, started.port, "the advertised port is the listening port");
 t.equal(seen[0].name, hostname(), "the instance is named after the host name");
 t.equal(seen[0].txt.id, started.identity.hostId, "TXT id is the host ID");
 t.equal(seen[0].txt.tls, "1", "TXT tls=1 with TLS on");
 t.equal(seen[0].txt.api, "1", "TXT api=1");
+t.equal(seen[0].txt.addr, "192.168.1.40", "TXT addr is the LAN address");
 t.equal(started.bonjour.kind, "fake", "start() returns the advertiser");
 await shutdown(started);
 await new Promise((r) => setImmediate(r));
 t.equal(stopped, 1, "closing the server stops advertising");
+// The address timer restarts the advert with the new address, stops it with none.
+{
+  let lan = "192.168.1.40";
+  const adverts = [];
+  const tracked = (opts) => { const a = { opts, stopped: false, kind: "fake" }; a.stop = async () => { a.stopped = true; }; adverts.push(a); return a; };
+  const moving = await start({ port: 0, env, discoveryPort: 0, advertise: tracked, lookupAddress: () => lan, addressCheckMs: 10 });
+  const tick = async () => { await new Promise((r) => setTimeout(r, 40)); await moving.bonjour.settled(); };
+  lan = "192.168.1.41";
+  await tick();
+  t.ok(adverts.length === 2 && adverts[0].stopped && adverts[1].opts.txt.addr === "192.168.1.41", "start(): an address change re-advertises with the new addr");
+  t.ok(moving.state.endpoint.includes("192.168.1.41"), "start(): the UDP reply endpoint follows the address");
+  lan = null;
+  await tick();
+  t.ok(adverts.length === 2 && adverts[1].stopped, "start(): no address stops advertising");
+  t.equal(moving.pairing.closedReason, "no-address", "start(): and pairing closes with no-address");
+  lan = "192.168.1.42";
+  await tick();
+  t.ok(adverts.length === 3 && !adverts[2].stopped && adverts[2].opts.txt.addr === "192.168.1.42", "start(): advertising resumes when an address returns");
+  await shutdown(moving);
+  await new Promise((r) => setImmediate(r));
+  t.ok(adverts[2].stopped, "start(): closing stops the current advert");
+}
 const off = await start({ port: 0, env: { ...env, WINDOCK_BONJOUR: "0" }, discoveryPort: 0, advertise });
 t.ok(seen.length === 1 && off.bonjour.kind === "none", "WINDOCK_BONJOUR=0 turns advertising off");
 await shutdown(off);

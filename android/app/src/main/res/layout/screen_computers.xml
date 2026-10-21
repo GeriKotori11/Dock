@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- S2 / S3 Computers (mockups 04, 05, 07): rail on the left, list on the right. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/hub_columns"
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:orientation="horizontal">
     <LinearLayout android:id="@+id/hub_rail" android:layout_width="@dimen/rail_width"

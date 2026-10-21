@@ -607,3 +607,66 @@ export function startBonjour({
     return NONE;
   }
 }
+
+/**
+ * Keep the advertisement in step with the host's LAN address. The TXT `addr`
+ * (and, for the JS responder, the A record) name the address, so a change
+ * restarts the advertisement: dns-sd is stopped and run again with the new
+ * TXT; the JS responder sends its goodbye for the old records, then announces
+ * the new ones. With no address nothing is advertised (no phone could reach
+ * the host); advertising resumes when an address returns. Changes are applied
+ * one at a time, in order. Never throws.
+ * @param {object} opts
+ * @param {Function} [opts.advertise] startBonjour, or a stand-in for tests
+ * @param {string} opts.name instance name
+ * @param {number} opts.port TCP port
+ * @param {(address: string|null) => object} opts.txtFor the TXT object for an address
+ * @param {string|null} opts.address the address at start
+ * @param {(kind: string) => void} [opts.onStart] hears the kind of each advertisement started
+ * @returns {{kind: string, address: string|null, setAddress(a): Promise<void>, stop(): Promise<void>, settled(): Promise<void>}}
+ */
+export function followBonjour({ advertise = startBonjour, name, port, txtFor, address = null, onStart = () => {}, ...rest } = {}) {
+  let current = NONE;
+  let wanted = address || null;
+  let stopped = false;
+  const launch = (addr) => {
+    if (stopped || !addr) { current = NONE; return; }
+    try {
+      current = advertise({ name, port, txt: txtFor(addr), ...rest }) || NONE;
+    } catch {
+      current = NONE;
+    }
+    try { onStart(current.kind); } catch { /* reporting must not throw */ }
+  };
+  launch(wanted);
+  let chain = Promise.resolve();
+  const enqueue = (step) => {
+    chain = chain.then(step).catch(() => {});
+    return chain;
+  };
+  return {
+    get kind() { return current.kind; },
+    get address() { return wanted; },
+    get current() { return current; },
+    setAddress(next) {
+      const addr = next || null;
+      if (stopped || addr === wanted) return chain;
+      wanted = addr;
+      return enqueue(async () => {
+        const old = current;
+        current = NONE;
+        await old.stop();
+        if (wanted === addr) launch(addr);
+      });
+    },
+    stop() {
+      stopped = true;
+      return enqueue(async () => {
+        const old = current;
+        current = NONE;
+        await old.stop();
+      });
+    },
+    settled() { return chain; },
+  };
+}
