@@ -1,0 +1,6 @@
+// Signing for running on a real iPhone. Committed defaults only: your team
+// lives in Local.xcconfig (git-ignored). Copy Local.xcconfig.example to
+// Local.xcconfig and set DEVELOPMENT_TEAM, or pick a team in Xcode.
+WINDOCK_BUNDLE_ID = dev.gerikotori.windock
+
+#include? "Local.xcconfig"

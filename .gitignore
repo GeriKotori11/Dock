@@ -26,6 +26,7 @@ android/.gradle/
 android/local.properties
 android/**/build/
 ios/WinDock.xcodeproj/
+ios/Local.xcconfig
 ios/build/
 ios/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 macos/WinDockMenu.xcodeproj/

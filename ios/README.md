@@ -63,8 +63,27 @@ verify that launch/focus reached the test host.
 
 `project.yml` is the source of truth; the generated Xcode project, icon PNG and build
 output are ignored. The generated icon uses the existing four-square WinDock brand.
-The bundle ID is `dev.ali-saad.windock`; configure an appropriate team and available
-bundle ID when adding signing. Do not commit certificates, profiles or Apple secrets.
+The bundle ID is `dev.gerikotori.windock`, set in `Signing.xcconfig`. Do not commit
+certificates, profiles or Apple secrets.
+
+## Run on a real iPhone
+
+1. Xcode → Settings → Accounts: add your Apple ID (a free Personal Team works).
+2. On the iPhone: connect it by cable, tap **Trust This Computer**, then turn on
+   Settings → Privacy & Security → **Developer Mode** and restart.
+3. `cp ios/Local.xcconfig.example ios/Local.xcconfig` and set `DEVELOPMENT_TEAM` to
+   your team ID. The file is git-ignored, so `xcodegen generate` keeps your team.
+   (You can also pick the team in Signing & Capabilities, but regenerating the
+   project resets that choice.) If Xcode says the bundle ID is unavailable, set
+   `WINDOCK_BUNDLE_ID` in the same file.
+4. `cd ios && xcodegen generate && open WinDock.xcodeproj`, choose your iPhone in
+   the device menu and press ⌘R.
+5. First launch: if iOS says "Untrusted Developer", go to Settings → General →
+   VPN & Device Management → your Apple ID → Trust. Allow **Local Network** when
+   asked, and keep the phone on the same Wi-Fi as the computer.
+
+With a free Personal Team the app stops opening after 7 days; press ⌘R again to
+renew it. Pairings are kept.
 
 ## First-version boundaries
 

@@ -15,9 +15,12 @@ targets:
     type: application
     platform: iOS
     sources: [Sources, Resources]
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.ali-saad.windock
+        PRODUCT_BUNDLE_IDENTIFIER: $(WINDOCK_BUNDLE_ID)
         INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SUPPORTS_MACCATALYST: NO
@@ -28,9 +31,12 @@ targets:
     sources: [Tests]
     dependencies:
       - target: WinDock
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.ali-saad.windock.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(WINDOCK_BUNDLE_ID).tests
         GENERATE_INFOPLIST_FILE: YES
 schemes:
   WinDock:
