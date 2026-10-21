@@ -109,6 +109,8 @@ html[data-os="macos"][data-container="window"] .h-frame { padding-top: 28px; } /
 .h-main[data-view="pair"] .col-pair, .h-main[data-view="first"] .col-pair { display: block; }
 .h-main[data-view="pair"] .col-home { display: none; }
 .h-main[data-view="first"] .home-only { display: none; }
+.first-only { display: none; }
+.h-main[data-view="first"] .first-only { display: block; }
 .h-main[data-view="pair"] { padding-top: 8px; }
 .hp.view-pair .h-head-main { display: none; }
 .hp.view-pair .h-head-pair { display: flex; }
@@ -326,6 +328,7 @@ html[data-os="windows"] .h-menu [role="menuitem"] { border-radius: 4px; }
   .h-main[data-view] .home-only { display: block; }
   .h-main[data-view] .h-pair-btn { display: none; }
   .h-main[data-view] #banner-slot:empty { display: none; }
+  .h-main[data-view] .first-only { display: none; }
   .h-pair-card { background: var(--row); border-radius: var(--rp); padding: 16px; }
   .h-pair-card .h-count, .h-pair-card .h-group { background: var(--white-4); }
   .h-pair-card .h-kv + .h-kv::before { background: rgba(255, 255, 255, .06); }

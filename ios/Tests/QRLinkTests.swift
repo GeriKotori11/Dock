@@ -154,31 +154,17 @@ final class QRLinkTests: XCTestCase {
         return HostHealth(hostId: try XCTUnwrap(object["hostId"] as? String), fingerprint: try XCTUnwrap(tls["fingerprint"] as? String))
     }
 
-    private static func base64url(_ data: Data) -> String {
-        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    private static func base64url(hex: String) -> String {
-        var bytes = Data()
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            bytes.append(UInt8(hex[index..<next], radix: 16)!)
-            index = next
-        }
-        return base64url(bytes)
-    }
-
-    private func fixtureLink(fingerprint: String, health: HostHealth) -> URL {
-        let id = Self.base64url(hex: health.hostId.replacingOccurrences(of: "-", with: ""))
-        return URL(string: "windock://pair?v=1&id=\(id)&addr=127.0.0.1:18622&fp=\(Self.base64url(hex: fingerprint))&pin=864200&name=Fixture%20PC")!
+    /// The fixture host listens on loopback only, which a scanned `addr` may never be
+    /// (QRPairingTests covers that), so the parsed link is built directly.
+    private func fixtureLink(fingerprint: String, health: HostHealth) -> PairingLink {
+        PairingLink(hostId: health.hostId.lowercased(), endpoint: URL(string: "https://127.0.0.1:18622")!, address: "127.0.0.1:18622",
+                    fingerprint: fingerprint.lowercased(), pin: "864200", name: "Fixture PC")
     }
 
     func testScannedCodePairsWithoutTheSecurityCodeStep() async throws {
         let health = try await hostHealth()
         try await launch()
-        coordinator.handleOpenURL(fixtureLink(fingerprint: health.fingerprint, health: health))
+        coordinator.presentPairingLink(fixtureLink(fingerprint: health.fingerprint, health: health))
         try await waitUntil("Q5") { [self] in qr?.isBeingPresented == false }
         let screen = try XCTUnwrap(qr)
         XCTAssertEqual(screen.titleLabel.text, "Pair with Fixture PC?")
@@ -196,7 +182,7 @@ final class QRLinkTests: XCTestCase {
         let health = try await hostHealth()
         let wrong = String(repeating: "0", count: 63) + "1"
         try await launch()
-        coordinator.handleOpenURL(fixtureLink(fingerprint: wrong, health: health))
+        coordinator.presentPairingLink(fixtureLink(fingerprint: wrong, health: health))
         try await waitUntil("Q5") { [self] in qr?.isBeingPresented == false }
         let screen = try XCTUnwrap(qr)
         screen.primaryButton?.sendActions(for: .touchUpInside)

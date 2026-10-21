@@ -96,6 +96,7 @@ export const COPY = Object.freeze({
   noteShellWin: "Start at login, logs and quit are in the WinDock tray icon.",
   noteTerminalMac: "WinDock was started from Terminal. Stop it there with Control-C.",
   noteTerminalWin: "WinDock was started from a command prompt. Stop it there with Ctrl+C.",
+  noteAttached: "WinDock was started outside this app, so it can’t restart or stop it.",
   closesSoon: "Pairing closes in less than a minute",
   closedNow: "Pairing closed",
 });
@@ -135,10 +136,19 @@ export function discoveryCaption(discovery = {}) {
   return COPY.netOk;
 }
 
+/**
+ * Firewall state: the shell's report ("ok" | "blocked") wins over the host's
+ * own, which is usually "unknown" because node can't see the macOS firewall.
+ */
+export function effectiveFirewall(shellFirewall, statusFirewall) {
+  if (shellFirewall === "ok" || shellFirewall === "blocked") return shellFirewall;
+  return statusFirewall === "ok" || statusFirewall === "blocked" ? statusFirewall : "unknown";
+}
+
 /** Chip state from a status snapshot: only firewall and no address raise it. */
-export function chipState(status) {
+export function chipState(status, shellFirewall = null) {
   if (!status) return "stopped";
-  if (status.firewall === "blocked" || !status.network?.address) return "attention";
+  if (effectiveFirewall(shellFirewall, status.firewall) === "blocked" || !status.network?.address) return "attention";
   return "running";
 }
 
@@ -215,6 +225,31 @@ export function browserNote(statusShell, os) {
   return win ? COPY.noteTerminalWin : COPY.noteTerminalMac;
 }
 
+/** The problem banner Home shows, highest first (section 5.6): "firewall" | "noaddr" | null. */
+export function problemBanner(status, shellFirewall = null) {
+  if (!status) return null;
+  if (effectiveFirewall(shellFirewall, status.firewall) === "blocked") return "firewall";
+  if (!status.network?.address) return "noaddr";
+  return null;
+}
+
+/**
+ * The banner shown above first-run pairing, where Home's banners are hidden. Only the
+ * firewall: no address already has its own state in the pairing column.
+ */
+export function firstRunBanner(status, shellFirewall = null) {
+  return problemBanner(status, shellFirewall) === "firewall" ? "firewall" : null;
+}
+
+/**
+ * Attach mode (section 5.8): a shell is present but the host wasn't spawned by
+ * it (started from Terminal or the LaunchAgent), so the shell can't restart or
+ * stop it. Only known once a status snapshot has arrived.
+ */
+export function isAttached(shellPresent, status) {
+  return Boolean(shellPresent && status && !status.shell);
+}
+
 /** "10.0.0.12 (Ethernet)" for "Also reachable at". */
 export function otherAddressText(other) {
   const kind = other.kind === "wifi" ? "Wi-Fi" : other.kind === "ethernet" ? "Ethernet" : other.interface;
@@ -274,6 +309,7 @@ function startPage() {
     update: null, // { state, version }
     updateDismissed: false,
     restarting: false,
+    firewall: null, // "ok" | "blocked" | "unknown" from the shell
     offline: false,
     lastAnnounce: "",
   };
@@ -527,7 +563,7 @@ function startPage() {
   // ---- header ----
   function renderHeader() {
     const chip = $("chip");
-    let state = chipState(S.status);
+    let state = chipState(S.status, S.firewall);
     let word = state === "attention" ? COPY.chip.attention : COPY.chip.running;
     let a11y = state === "attention" ? COPY.chipA11y.attention : COPY.chipA11y.running;
     if (S.restarting) { state = "busy"; word = COPY.chip.restarting; a11y = COPY.chipA11y.restarting; }
@@ -545,8 +581,10 @@ function startPage() {
     if (cap("openWindow") && container !== "window") items.push({ icon: "window", text: COPY.moreWindow, run: () => post({ type: "openWindow" }) });
     if (cap("logs")) items.push({ icon: "logs", text: COPY.moreLogs, run: () => post({ type: "openLogs" }) });
     if (cap("updates")) items.push({ icon: "dl", text: COPY.moreUpdates, run: () => post({ type: "checkUpdates" }) });
-    if (cap("restart") || cap("quit")) items.push("sep");
-    if (cap("restart")) items.push({ icon: "refresh", text: COPY.moreRestart, run: () => { S.restarting = true; renderHeader(); post({ type: "restart" }); } });
+    // Attached host: the shell didn't start it, so it can't restart it.
+    const canRestart = cap("restart") && !isAttached(true, S.status);
+    if (canRestart || cap("quit")) items.push("sep");
+    if (canRestart) items.push({ icon: "refresh", text: COPY.moreRestart, run: () => { S.restarting = true; renderHeader(); post({ type: "restart" }); } });
     if (cap("quit")) items.push({ icon: "power", text: COPY.moreQuit, run: () => post({ type: "quit" }) });
     while (items[0] === "sep") items.shift();
     return items;
@@ -602,19 +640,33 @@ function startPage() {
 
   // ---- banners (Home): problem → recording → update ----
   let shownProblem = null;
+  let shownFirstProblem = null;
+  function firewallBanner(announced) {
+    return h("div", { class: "h-ban bad", role: announced ? null : "alert" }, icon("shield"),
+      h("div", { class: "txt" }, h("div", { class: "ttl", text: COPY.banFirewallTitle }), h("p", { class: "h-p", text: COPY.banFirewallBody }),
+        cap("firewallSettings") ? h("div", { class: "h-btns" }, h("button", { type: "button", class: "h-btn sm", text: COPY.banFirewallAction, onclick: () => post({ type: "openFirewallSettings" }) })) : null));
+  }
+  function renderFirstBanner() {
+    // Shown only in compact first run (CSS); the wide layout shows Home's banner slot.
+    const slot = $("first-banner-slot");
+    const problem = firstRunBanner(S.status, S.firewall);
+    const announced = shownFirstProblem === problem;
+    shownFirstProblem = problem;
+    const key = problem || "";
+    if (slot.dataset.key === key) return;
+    slot.dataset.key = key;
+    slot.replaceChildren(...(problem === "firewall" ? [firewallBanner(announced)] : []));
+  }
   function renderBanners() {
+    renderFirstBanner();
     const slot = $("banner-slot");
     const s = S.status;
     if (!s) return slot.replaceChildren();
     let banner = null;
-    let problem = null;
-    if (s.firewall === "blocked") {
-      problem = "firewall";
-      banner = h("div", { class: "h-ban bad", role: shownProblem === problem ? null : "alert" }, icon("shield"),
-        h("div", { class: "txt" }, h("div", { class: "ttl", text: COPY.banFirewallTitle }), h("p", { class: "h-p", text: COPY.banFirewallBody }),
-          cap("firewallSettings") ? h("div", { class: "h-btns" }, h("button", { type: "button", class: "h-btn sm", text: COPY.banFirewallAction, onclick: () => post({ type: "openFirewallSettings" }) })) : null));
-    } else if (!s.network.address) {
-      problem = "noaddr";
+    const problem = problemBanner(s, S.firewall);
+    if (problem === "firewall") {
+      banner = firewallBanner(shownProblem === problem);
+    } else if (problem === "noaddr") {
       banner = h("div", { class: "h-ban bad", role: shownProblem === problem ? null : "alert" }, icon("wifi-off"),
         h("div", { class: "txt" }, h("div", { class: "ttl", text: COPY.banNoaddrTitle }),
           h("p", { class: "h-p", text: `Phones can’t reach ${s.hostName} until it joins Wi-Fi or Ethernet.` })));
@@ -1065,11 +1117,15 @@ function startPage() {
 
   function renderNote() {
     const slot = $("note-slot");
-    if (hasShell() || !S.status) return slot.replaceChildren();
-    const text = browserNote(S.status.shell, os);
+    const attached = isAttached(hasShell(), S.status);
+    if (!S.status || (hasShell() && !attached)) {
+      slot.dataset.key = "";
+      return slot.replaceChildren();
+    }
+    const text = attached ? COPY.noteAttached : browserNote(S.status.shell, os);
     if (slot.dataset.key === text) return;
     slot.dataset.key = text;
-    slot.replaceChildren(h("div", { class: "h-note" }, icon(S.status.shell ? "info" : "terminal"), h("p", { class: "h-c", text })));
+    slot.replaceChildren(h("div", { class: "h-note" }, icon(attached || S.status.shell ? "info" : "terminal"), h("p", { class: "h-c", text })));
   }
 
   // ---- keyboard ----
@@ -1109,6 +1165,9 @@ function startPage() {
       S.login = { state: detail.state };
       S.loginBusy = false;
       renderComputer();
+    } else if (detail.type === "firewall") {
+      S.firewall = ["ok", "blocked", "unknown"].includes(detail.state) ? detail.state : null;
+      if (S.status) { renderHeader(); renderBanners(); }
     } else if (detail.type === "update") {
       S.update = { state: detail.state, version: detail.version };
       renderBanners();

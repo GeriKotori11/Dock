@@ -71,8 +71,8 @@ final class QRPairingTests: XCTestCase {
         XCTAssertEqual(long.name.count, Computer.displayLimit)
     }
 
-    func testLoopbackAndEveryPrivateRangeAreAllowed() throws {
-        for address in ["10.0.0.5:8620", "172.16.0.1:1", "172.31.255.254:65535", "192.168.0.1:443", "127.0.0.1:18622"] {
+    func testEveryPrivateRangeIsAllowed() throws {
+        for address in ["10.0.0.5:8620", "172.16.0.1:1", "172.31.255.254:65535", "192.168.0.1:443"] {
             XCTAssertEqual(try link(variant("addr", address)).address, address)
         }
     }
@@ -149,6 +149,7 @@ final class QRPairingTests: XCTestCase {
     func testPublicAndMalformedAddressesAreRejected() {
         for value in [
             "8.8.8.8:8620", "1.1.1.1:443", "172.32.0.1:8620", "192.169.1.1:8620", "11.0.0.1:8620",  // public
+            "127.0.0.1:8620", "127.0.0.1:18622", "127.1.2.3:8620",                                   // loopback
             "localhost:8620", "windock.local:8620", "[::1]:8620", "fe80::1",                    // not dotted IPv4
             "192.168.1.34", "192.168.1.34:", ":8620", "192.168.1.34:0", "192.168.1.34:65536",
             "192.168.1.34:08620", "192.168.1.34:+80", "192.168.1.034:8620", "192.168.1:8620",

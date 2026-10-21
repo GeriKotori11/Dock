@@ -86,14 +86,14 @@ enum PairingLinkParser {
         pin.utf8.count == 6 && pin.utf8.allSatisfy { $0 >= 48 && $0 <= 57 }
     }
 
-    /// `{private dotted IPv4}:{port 1–65535}`, the same host rule as Add by address
-    /// (`EndpointPolicy`), but never a host name and always with an explicit port.
+    /// `{private dotted IPv4}:{port 1–65535}`: 10/8, 172.16/12 or 192.168/16 only (section 9.1),
+    /// never loopback or a host name, and always with an explicit port.
     static func parseAddress(_ raw: String) -> (String, URL)? {
         let parts = raw.split(separator: ":", omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
         let host = String(parts[0]), portText = String(parts[1])
         guard host != "localhost", host.split(separator: ".", omittingEmptySubsequences: false).count == 4,
-              EndpointPolicy.isPrivateHost(host),
+              EndpointPolicy.isPrivateHost(host), !host.hasPrefix("127."),
               (1...5).contains(portText.utf8.count), portText.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
               let port = Int(portText), (1...65535).contains(port), String(port) == portText,
               let endpoint = EndpointPolicy.normalize("https://\(host):\(port)") else { return nil }

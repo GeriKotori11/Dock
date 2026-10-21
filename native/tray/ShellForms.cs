@@ -165,12 +165,12 @@ internal sealed class HostWindowForm : ShellForm
     protected override void OnDpiChanged(DpiChangedEventArgs e)
     {
         base.OnDpiChanged(e);
-        MinimumSize = Scaled(640, 560);
+        MinimumSize = Scaled(400, 480);
     }
 
     private void ApplySize()
     {
-        MinimumSize = Scaled(640, 560);
+        MinimumSize = Scaled(400, 480);
         ClientSize = Scaled(760, 600);
     }
 
