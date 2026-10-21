@@ -43,7 +43,8 @@ final class HostController {
     private(set) var statusKnown = false
 
     private var process: Process?
-    private var generation = 0
+    /// Bumped for every new host instance (start, restart, stop); panes reload when it changes.
+    private(set) var generation = 0
     private var lastError = ""
     private var stopCompletions: [() -> Void] = []
     private var monitorTimer: Timer?

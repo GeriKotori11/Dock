@@ -66,7 +66,7 @@ enum Automation {
         let content: String
         switch app.content {
         case .nothing: content = "nothing"
-        case let .host(restart): content = "host(restart: \(restart))"
+        case let .host(restart, instance): content = "host(restart: \(restart), instance: \(instance))"
         case let .offline(variant, detail): content = "offline(\(variant), \(detail))"
         }
         var state: [String: Any] = [

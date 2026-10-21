@@ -9,7 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     /// What the panes show.
     enum PaneContent: Equatable {
         case nothing
-        case host(restart: Bool)
+        /// `instance` changes with every new host process, so a quick restart still reloads the page.
+        case host(restart: Bool, instance: Int)
         case offline(OfflineVariant, detail: String)
     }
 
@@ -273,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
         switch controller.phase {
         case .running:
             startingWork?.cancel()
-            setContent(.host(restart: controller.mode == .owned))
+            setContent(.host(restart: controller.mode == .owned, instance: controller.generation))
             checkFirewall()
         case .probing, .starting(slow: false):
             // "Starting" appears only after 400 ms, so a quick start never flashes it.
@@ -309,7 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSM
     private func apply(_ content: PaneContent, to pane: WebPane) {
         switch content {
         case .nothing: break
-        case let .host(restart): pane.load(hostRunning: true, capabilities: .init(restart: restart))
+        case let .host(restart, _): pane.load(hostRunning: true, capabilities: .init(restart: restart))
         case .offline: pane.load(hostRunning: false, capabilities: .init(restart: false))
         }
     }
