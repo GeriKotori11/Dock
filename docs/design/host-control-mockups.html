@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinDock host control page</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&family=Roboto+Mono:wght@400;500&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Phone tokens and components: copied from phone-connection-mockups.html so this file stays self-contained. */
+
+/* ------------------------------------------------------------------
+   Tokens. Values reuse the existing native screens (iOS #090E10 / mint
+   #82E8BF / BrandMark) and the web dock (--text, --muted, --live, danger).
+   See docs/design/PHONE-CONNECTION-FLOW.md, section "Tokens".
+------------------------------------------------------------------- */
+:root {
+  --bg: #090E10;
+  --bg-glow: rgba(74, 108, 83, .26);
+  --row: #13191B;
+  --row-pressed: #1A2224;
+  --sheet: #151D20;
+  --field: #171F22;
+  --line: rgba(255, 255, 255, .07);
+  --line-strong: rgba(255, 255, 255, .12);
+  --text: #EEF3F1;
+  --text-2: #A0AFAF;
+  --text-3: #7D8C8E;
+  --idle: #5E6E70;
+  --accent: #82E8BF;
+  --on-accent: #0A1C1A;
+  --accent-tint: rgba(130, 232, 191, .10);
+  --accent-line: rgba(130, 232, 191, .30);
+  --live: #A3E6BE;
+  --danger: #ED9695;
+  --danger-text: #F1AAA6;
+  --danger-tint: rgba(237, 150, 149, .12);
+  --danger-line: rgba(241, 170, 166, .30);
+  --scrim: rgba(3, 7, 9, .62);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --r-control: 12px;
+  --r-group: 16px;
+  --r-sheet: 24px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #040607; color: var(--text); font: 14px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; display: block; }
+
+/* ---------- gallery chrome ---------- */
+.doc { max-width: 1040px; margin: 0 auto; padding: 48px 24px 24px; }
+.doc h1 { font-size: 28px; font-weight: 650; letter-spacing: -.4px; margin: 0 0 8px; }
+.doc p { color: var(--text-2); max-width: 720px; margin: 0 0 8px; }
+.doc .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 16px; color: var(--text-3); font-size: 13px; }
+.group-title { max-width: 1040px; margin: 48px auto 0; padding: 0 24px; font-size: 13px; font-weight: 600; color: var(--text-3); letter-spacing: .02em; }
+figure.frame { margin: 20px auto 0; padding: 0 24px; max-width: 1040px; }
+figure.frame figcaption { display: flex; gap: 12px; align-items: baseline; margin-top: 10px; color: var(--text-2); font-size: 13px; }
+figure.frame figcaption b { color: var(--text); font-weight: 600; }
+figure.frame figcaption code { color: var(--text-3); font-family: var(--mono); font-size: 12px; }
+.device { display: inline-block; padding: 10px; border-radius: 56px; background: #1b1f21; box-shadow: 0 0 0 1px #2a3033, 0 30px 60px #0008; }
+.device.android { border-radius: 40px; }
+
+/* ---------- the screen ---------- */
+.screen { position: relative; overflow: hidden; width: 844px; height: 390px; border-radius: 46px; background: var(--bg); color: var(--text); isolation: isolate; }
+.screen.w932 { width: 932px; height: 430px; border-radius: 52px; }
+.screen.android { border-radius: 30px; font-family: Roboto, system-ui, sans-serif; --mono: "Roboto Mono", ui-monospace, monospace; }
+.screen::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse 60% 70% at 8% -20%, var(--bg-glow), transparent 70%); }
+.screen.no-glow::before { display: none; }
+/* hardware: notch (844 iPhone), island (932 iPhone), punch hole (Android), home indicator */
+.hw-notch { position: absolute; z-index: 50; left: 0; top: calc(50% - 105px); width: 30px; height: 210px; background: #000; border-radius: 0 20px 20px 0; }
+.hw-island { position: absolute; z-index: 50; left: 11px; top: calc(50% - 63px); width: 37px; height: 126px; background: #000; border-radius: 20px; }
+.hw-hole { position: absolute; z-index: 50; left: 14px; top: calc(50% - 7px); width: 14px; height: 14px; background: #000; border-radius: 50%; box-shadow: 0 0 0 2px #0d1112; }
+.hw-home { position: absolute; z-index: 50; left: calc(50% - 90px); bottom: 8px; width: 180px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.38); }
+/* safe content area */
+.safe { position: absolute; inset: 0 47px 21px 47px; display: flex; }
+.w932 .safe { inset: 0 59px 21px 59px; }
+.android .safe { inset: 0 40px 0 44px; }
+
+/* ---------- type ---------- */
+.t-display { font-size: 28px; line-height: 1.15; font-weight: 650; letter-spacing: -.4px; margin: 0; }
+.t-display em { font-style: normal; color: var(--accent); }
+.t-title { font-size: 21px; line-height: 1.25; font-weight: 600; letter-spacing: -.2px; margin: 0; }
+.t-head { font-size: 17px; line-height: 1.3; font-weight: 600; margin: 0; }
+.t-body { font-size: 15px; line-height: 1.45; color: var(--text-2); margin: 0; }
+.t-sub { font-size: 13px; line-height: 1.4; color: var(--text-2); margin: 0; }
+.t-cap { font-size: 12px; line-height: 1.4; color: var(--text-3); margin: 0; }
+.t-label { font-size: 13px; line-height: 1.3; font-weight: 600; color: var(--text-2); margin: 0; }
+.android .t-head { font-size: 16px; font-weight: 500; }
+.android .t-display, .android .t-title { font-weight: 500; letter-spacing: 0; }
+.mono { font-family: var(--mono); }
+.strong { color: var(--text); font-weight: 600; }
+
+/* ---------- brand ---------- */
+.brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; }
+.mark { display: grid; grid-template-columns: 1fr 1fr; gap: 16%; width: 26px; height: 26px; flex-shrink: 0; }
+.mark i { border-radius: 22%; }
+.mark i:nth-child(1) { background: #82E8BF; } .mark i:nth-child(2) { background: #C7FAE8; }
+.mark i:nth-child(3) { background: #80BAFF; } .mark i:nth-child(4) { background: #69D9CC; }
+.mark.lg { width: 44px; height: 44px; }
+
+/* ---------- buttons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 48px; padding: 0 20px; border-radius: var(--r-control); border: 1px solid transparent; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); background: rgba(255,255,255,.07); white-space: nowrap; }
+.btn svg.i { width: 18px; height: 18px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.ghost { background: transparent; color: var(--accent); padding: 0 12px; }
+.btn.danger { background: var(--danger-tint); color: var(--danger-text); border-color: var(--danger-line); }
+.btn.block { width: 100%; }
+.btn.small { height: 36px; padding: 0 14px; font-size: 13px; border-radius: 10px; }
+.btn.disabled { opacity: .4; }
+.btn.focus { outline: 2px solid var(--accent); outline-offset: 3px; }
+.android .btn { font-weight: 500; letter-spacing: .1px; border-radius: 14px; }
+.icon-btn { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: var(--text-2); background: transparent; border: 0; flex-shrink: 0; }
+.icon-btn.filled { background: rgba(255,255,255,.07); color: var(--text); }
+.android .icon-btn { width: 48px; height: 48px; border-radius: 24px; }
+.btn-row { display: flex; gap: 12px; align-items: center; }
+
+/* ---------- rail + content layout ---------- */
+.rail { width: 248px; flex-shrink: 0; display: flex; flex-direction: column; padding: 24px 0 16px; }
+.w932 .rail { width: 268px; padding-top: 28px; }
+.rail .brand { margin-bottom: 28px; }
+.rail .t-display + .t-body, .rail .t-display + .t-sub { margin-top: 10px; }
+.rail-actions { margin-top: auto; display: flex; flex-direction: column; gap: 2px; margin-left: -12px; }
+.rail-link { display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 12px; border-radius: 12px; color: var(--text); font-size: 15px; font-weight: 500; }
+.rail-link svg.i { color: var(--accent); }
+.rail-link small { margin-left: auto; color: var(--text-3); font-size: 12px; }
+.android .rail-link { height: 48px; }
+.content { flex: 1; min-width: 0; margin-left: 32px; padding: 20px 0 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+.w932 .content { margin-left: 40px; padding-top: 24px; }
+.content.fade-bottom::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+
+/* ---------- list ---------- */
+.sec-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px; }
+.sec-head .t-label { flex: 1; }
+.sec-head .t-cap { display: flex; align-items: center; gap: 6px; }
+.group { background: var(--row); border-radius: var(--r-group); overflow: hidden; margin-bottom: 16px; flex-shrink: 0; }
+.row { position: relative; display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 10px 6px 10px 14px; }
+.row + .row::before { content: ""; position: absolute; top: 0; left: 68px; right: 0; height: 1px; background: var(--line); }
+.row.pressed { background: var(--row-pressed); }
+.row.compact { min-height: 56px; }
+.glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: rgba(255,255,255,.06); color: var(--text-2); flex-shrink: 0; }
+.glyph.on { color: var(--accent); background: var(--accent-tint); }
+.glyph.warn { color: var(--danger-text); background: var(--danger-tint); }
+.glyph.lg { width: 56px; height: 56px; border-radius: 16px; }
+.glyph.lg svg.i { width: 26px; height: 26px; }
+.row-text { flex: 1; min-width: 0; }
+.row-title { font-size: 17px; font-weight: 600; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.android .row-title { font-size: 16px; font-weight: 500; }
+.row-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+.row-sub .addr { color: var(--text-3); font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.row-sub .sep { color: var(--text-3); }
+.row-sub.warn { color: var(--danger-text); }
+.row .trail { display: flex; align-items: center; gap: 2px; color: var(--text-3); }
+.row .trail .pill { height: 32px; padding: 0 14px; display: inline-flex; align-items: center; border-radius: 16px; background: var(--accent-tint); color: var(--accent); font-size: 13px; font-weight: 600; margin-right: 8px; }
+.row .check { color: var(--accent); margin-right: 12px; }
+.row-add { color: var(--accent); }
+.row-add .glyph { background: transparent; color: var(--accent); }
+.row-add .row-title { font-weight: 500; font-size: 15px; color: var(--accent); }
+/* status dot: filled = reachable, ring = not found, never colour alone (always paired with text) */
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--live); }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--idle); }
+.dot.warn { background: var(--danger-text); }
+.list-foot { padding: 0 4px 24px; }
+
+/* ---------- spinners ---------- */
+.spin-ios { width: 16px; height: 16px; flex-shrink: 0; }
+.spin-ios line { stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.spin-and { width: 16px; height: 16px; border-radius: 50%; border: 2px solid rgba(130,232,191,.2); border-top-color: var(--accent); border-right-color: var(--accent); flex-shrink: 0; }
+.spin-ios.lg { width: 22px; height: 22px; }
+.spin-and.lg { width: 22px; height: 22px; border-width: 2.5px; }
+
+/* ---------- center stack (connecting / simple states) ---------- */
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.center .mark { margin-bottom: 24px; }
+.status-line { display: inline-flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 15px; color: var(--text-2); }
+.bottom-link { position: absolute; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; }
+
+/* ---------- modal flow (pairing, add by address) ---------- */
+.topbar { position: absolute; z-index: 5; left: 0; right: 0; top: 0; height: 60px; display: flex; align-items: center; gap: 8px; padding-top: 8px; }
+.topbar .t-head { flex: 1; }
+.topbar .t-cap { margin-right: 4px; }
+.steps { margin-top: 20px; display: flex; flex-direction: column; gap: 14px; }
+.step { display: flex; align-items: center; gap: 12px; font-size: 15px; color: var(--text-3); }
+.step b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--idle); font-size: 13px; font-weight: 600; color: var(--text-3); flex-shrink: 0; }
+.step.now { color: var(--text); font-weight: 600; }
+.step.now b { border-color: var(--accent); color: var(--accent); }
+.step.done { color: var(--text-2); }
+.step.done b { border-color: transparent; background: var(--accent-tint); color: var(--accent); }
+.ident { display: flex; align-items: center; gap: 14px; }
+.ident .row-title { font-size: 19px; }
+.code { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: .04em; color: var(--text); line-height: 1.1; white-space: nowrap; }
+.code .dash { color: var(--text-3); margin: 0 .06em; }
+.code.sm { font-size: 19px; }
+.code-card { border-radius: var(--r-group); background: var(--row); padding: 16px 18px; }
+.code-card .k { font-size: 12px; color: var(--text-3); margin-bottom: 4px; }
+.code-card + .code-card { margin-top: 8px; }
+.code-card.now { box-shadow: inset 0 0 0 1px var(--danger-line); }
+.how { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-group); background: var(--row); }
+.how .glyph { width: 32px; height: 32px; border-radius: 10px; }
+.how .glyph svg.i { width: 18px; height: 18px; }
+kbd.k { font: inherit; font-weight: 600; color: var(--text); }
+code.cmd { font-family: var(--mono); font-size: 13px; color: var(--text); background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 6px; }
+
+/* PIN boxes */
+.pin { display: flex; gap: 8px; align-items: center; }
+.pin i { display: grid; place-items: center; width: 46px; height: 56px; border-radius: 12px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line-strong); font: 500 26px/1 var(--mono); font-style: normal; color: var(--text); }
+.pin i.cur { box-shadow: inset 0 0 0 2px var(--accent); }
+.pin i.cur::after { content: ""; width: 2px; height: 26px; background: var(--accent); border-radius: 1px; }
+.pin .gap { width: 10px; }
+.pin.error i { box-shadow: inset 0 0 0 1.5px var(--danger-line); color: var(--danger-text); }
+.msg { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.4; }
+.msg.err { color: var(--danger-text); }
+.msg svg.i { width: 16px; height: 16px; margin-top: 1px; }
+
+/* text field */
+.field { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 14px; border-radius: var(--r-control); background: var(--field); box-shadow: inset 0 0 0 2px var(--accent); font: 400 18px var(--mono); color: var(--text); }
+.field .caret { width: 2px; height: 24px; background: var(--accent); margin-left: -6px; }
+.field .ph { color: var(--text-3); }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); margin: 0 0 8px 2px; }
+
+/* checklist */
+.checks { display: flex; flex-direction: column; gap: 8px; }
+.chk { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-group); background: var(--row); }
+.chk .n { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: rgba(255,255,255,.06); color: var(--text-2); font-size: 13px; font-weight: 600; flex-shrink: 0; margin-top: 1px; }
+.chk.likely { box-shadow: inset 0 0 0 1px var(--accent-line); }
+.chk.likely .n { background: var(--accent-tint); color: var(--accent); }
+.chk .t-head { font-size: 15px; }
+.chk .t-sub { margin-top: 2px; }
+.tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--accent-tint); color: var(--accent); font-size: 11px; font-weight: 600; margin-left: 6px; vertical-align: 2px; }
+
+/* ---------- keyboards (system UI, approximated) ---------- */
+.kbd { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; background: #26292B; padding: 8px 64px 26px; display: grid; gap: 7px; }
+.kbd .r { display: grid; gap: 6px; }
+.kbd .k { height: 34px; border-radius: 6px; background: #55595C; color: #fff; display: grid; place-items: center; font-size: 17px; box-shadow: 0 1px 0 #0008; line-height: 1; }
+.kbd .k.fn { background: #3A3D40; font-size: 14px; }
+.kbd .k.go { background: #0A84FF; color: #fff; font-size: 15px; font-weight: 600; }
+.kbd .k small { display: block; font-size: 8px; letter-spacing: .12em; color: #d4d7d8; margin-top: 2px; }
+.kbd.num { padding: 8px 210px 26px; }
+.kbd.num .r { grid-template-columns: repeat(3, 1fr); }
+.kbd.num .k { height: 36px; display: flex; flex-direction: column; justify-content: center; }
+.kbd.punct .r { grid-template-columns: repeat(10, 1fr); }
+.kbd.punct .r.last { grid-template-columns: 1.6fr 6fr 1.6fr; }
+.kbd.and { background: #1E2123; padding: 8px 120px 10px; }
+.kbd.and .k { background: #3B3F42; border-radius: 10px; box-shadow: none; height: 38px; }
+.kbd.and .k.fn { background: #2C3033; }
+.kbd.and .k.go { background: #82E8BF; border-radius: 19px; }
+.kbd.and.num .r { grid-template-columns: repeat(4, 1fr); }
+
+/* ---------- dock (shared web UI, for context only) ---------- */
+.dock-bg { position: absolute; inset: 0; z-index: 0; background: #0b1720; overflow: hidden; }
+.dock-bg span { position: absolute; border-radius: 50%; filter: blur(42px); opacity: .8; }
+.dock-bg span:nth-child(1) { width: 110%; height: 135%; left: -45%; top: -80%; background: radial-gradient(ellipse, #49876a, transparent 65%); transform: rotate(-25deg); }
+.dock-bg span:nth-child(2) { width: 125%; height: 150%; right: -45%; bottom: -90%; background: radial-gradient(ellipse, #36577a, transparent 66%); }
+.dock-bg span:nth-child(3) { width: 70%; height: 100%; left: 32%; top: -72%; background: radial-gradient(ellipse, #95ab87, transparent 70%); opacity: .4; }
+.tiles { position: absolute; z-index: 1; left: 0; right: 0; top: 0; bottom: 0; display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: 1fr 1fr; place-items: center; padding: 24px 90px 40px; }
+.app { width: 78px; height: 78px; border-radius: 22%; display: grid; place-items: center; box-shadow: 0 12px 13px #0005; }
+.app svg { width: 46%; height: 46%; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.glass { background: rgba(39, 61, 73, .55); border: 1px solid rgba(225, 240, 255, .16); box-shadow: inset 0 1px 0 #ffffff14, 0 20px 75px #0005; backdrop-filter: blur(28px) saturate(1.3); -webkit-backdrop-filter: blur(28px) saturate(1.3); }
+.drawer { position: absolute; z-index: 10; left: calc(50% - 320px); width: 640px; bottom: 14px; border-radius: 29px; padding: 0 20px; color: #f0f6f6; }
+.drawer .grip { height: 29px; display: grid; place-items: center; }
+.drawer .grip span { width: 33px; height: 3px; border-radius: 3px; background: #ebf5f44d; }
+.drawer .acts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 6px 0 12px; }
+.drawer .acts div { display: flex; flex-direction: column; align-items: center; gap: 10px; border-radius: 18px; padding: 15px 6px 13px; background: #ffffff06; font-size: 11px; }
+.drawer .acts svg.i { width: 26px; height: 26px; }
+.drawer .conn { display: flex; align-items: center; gap: 10px; min-height: 48px; margin: 0 -8px 8px; padding: 0 10px 0 12px; border-radius: 14px; border-top: 0; background: #ffffff08; font-size: 13px; }
+.drawer .conn.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.drawer .conn svg.i { width: 18px; height: 18px; color: #d2dedb; }
+.drawer .conn .name { font-weight: 600; flex: 1; }
+.drawer .conn .state { display: inline-flex; align-items: center; gap: 6px; color: var(--live); font-size: 12px; }
+.drawer .conn .switch { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding-left: 12px; border-left: 1px solid #ffffff1a; color: #e6f0ee; font-weight: 600; }
+.drawer .conn .switch svg.i { color: #e6f0ee; }
+.scrim { position: absolute; inset: 0; z-index: 9; background: var(--scrim); }
+.scrim.light { background: rgba(5, 11, 23, .2); }
+
+/* ---------- sheets & dialogs ---------- */
+.sheet { position: absolute; z-index: 30; left: calc(50% - 250px); width: 500px; bottom: 0; border-radius: var(--r-sheet) var(--r-sheet) 0 0; background: var(--sheet); box-shadow: 0 -1px 0 var(--line-strong), 0 -20px 60px #0007; padding: 0 16px 28px; }
+.sheet .handle { height: 20px; display: grid; place-items: center; }
+.sheet .handle span { width: 36px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.22); }
+.sheet .sheet-head { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px 4px; }
+.sheet .sheet-head .t-head { flex: 1; }
+.sheet .group { background: rgba(255,255,255,.04); margin-bottom: 0; }
+.android .sheet { border-radius: 28px 28px 0 0; padding-bottom: 16px; }
+.alert { position: absolute; z-index: 40; left: calc(50% - 135px); top: 50%; transform: translateY(-50%); width: 270px; border-radius: 14px; background: rgba(37, 42, 44, .96); text-align: center; overflow: hidden; backdrop-filter: blur(30px); }
+.alert .a-body { padding: 18px 16px 16px; }
+.alert .a-title { font-size: 17px; font-weight: 600; line-height: 1.3; }
+.alert .a-msg { font-size: 13px; line-height: 1.38; margin-top: 4px; color: #e8ecea; }
+.alert .a-acts { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); }
+.alert .a-acts div { height: 44px; display: grid; place-items: center; font-size: 17px; color: #82E8BF; }
+.alert .a-acts div + div { border-left: 1px solid rgba(255,255,255,.12); }
+.alert .a-acts .destr { color: #FF6B63; font-weight: 600; }
+.menu { position: absolute; z-index: 40; width: 220px; border-radius: 12px; background: rgba(40, 46, 48, .97); box-shadow: 0 20px 50px #0009; overflow: hidden; }
+.menu div { display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 16px; font-size: 17px; }
+.menu div + div { border-top: 1px solid rgba(255,255,255,.08); }
+.menu .destr { color: #FF6B63; }
+.menu svg.i { width: 18px; height: 18px; }
+.android .menu { width: 200px; border-radius: 8px; background: #20282B; padding: 8px 0; }
+.android .menu div { height: 48px; font-size: 15px; border: 0; }
+
+/* ---------- empty / problem layouts ---------- */
+.empty { flex: 1; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding-bottom: 24px; }
+.empty .glyph.lg { margin-bottom: 18px; }
+.empty .t-body { margin-top: 8px; max-width: 420px; }
+.empty .btn-row { margin-top: 22px; }
+.split { flex: 1; display: flex; gap: 40px; align-items: center; }
+.split > .l { width: 300px; flex-shrink: 0; }
+.split > .r { flex: 1; min-width: 0; }
+.w932 .split > .l { width: 330px; }
+
+
+
+/* ==================================================================
+   HOST CONTROL PAGE (computer side). Spec: docs/design/HOST-CONTROL-PAGE.md
+   Same colour tokens as the phone screens above; desktop sizes below.
+   Everything is prefixed h- so it never collides with the phone classes.
+================================================================== */
+.hp {
+  --font: -apple-system, "SF Pro Text", system-ui, sans-serif;
+  --hmono: ui-monospace, "SF Mono", Menlo, monospace;
+  --fs: 13px; --fs-title: 15px; --fs-cap: 12px;
+  --rc: 8px; --rg: 10px; --rp: 12px;
+  --h-btn: 36px; --h-row: 48px; --h-kv: 36px;
+  position: relative; width: 380px; background: var(--bg); color: var(--text);
+  font: var(--fs)/1.45 var(--font); -webkit-font-smoothing: antialiased; isolation: isolate; overflow: hidden;
+}
+.hp::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse 70% 40% at 0% -6%, var(--bg-glow), transparent 70%); }
+.hp.win {
+  --font: "Segoe UI Variable Text", "Segoe UI", "Open Sans", system-ui, sans-serif;
+  --hmono: "Cascadia Mono", Consolas, "Roboto Mono", monospace;
+  --fs: 14px; --fs-title: 16px; --fs-cap: 12px;
+  --rc: 4px; --rg: 8px; --rp: 8px;
+}
+.hp.wide { width: auto; }
+.hp svg.i { width: 16px; height: 16px; stroke-width: 1.75; }
+.h-mono { font-family: var(--hmono); }
+
+/* header */
+.h-head { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 16px; }
+.h-brand { display: flex; align-items: center; gap: 8px; font-size: var(--fs); font-weight: 600; }
+.h-brand .mark { width: 18px; height: 18px; }
+.h-head .h-title-c { flex: 1; font-weight: 600; font-size: var(--fs); }
+.h-chip { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px;
+  background: var(--accent-tint); color: var(--live); font-size: var(--fs-cap); font-weight: 600; white-space: nowrap; }
+.h-chip.bad { background: var(--danger-tint); color: var(--danger-text); }
+.h-chip.idle { background: rgba(255,255,255,.06); color: var(--text-2); }
+.h-chip .dot { width: 6px; height: 6px; }
+.h-ib { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: var(--rc); color: var(--text-2); flex-shrink: 0; }
+.h-ib.on { background: rgba(255,255,255,.08); color: var(--text); }
+.h-ib.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.h-body { padding: 4px 16px 16px; }
+.h-body.scroll-fade { position: relative; }
+.h-fade { position: absolute; left: 0; right: 0; bottom: 0; height: 32px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+
+/* type */
+.h-t { font-size: var(--fs-title); font-weight: 600; line-height: 1.3; margin: 0; letter-spacing: -.1px; }
+.h-d { font-size: 22px; font-weight: 650; letter-spacing: -.3px; line-height: 1.2; margin: 0; }
+.h-d em { font-style: normal; color: var(--accent); }
+.h-p { font-size: var(--fs); color: var(--text-2); margin: 0; line-height: 1.45; }
+.h-c { font-size: var(--fs-cap); color: var(--text-3); margin: 0; line-height: 1.4; }
+.h-c b, .h-p b { color: var(--text); font-weight: 600; }
+.win .h-t { font-weight: 600; letter-spacing: 0; }
+
+/* identity block */
+.h-ident { display: flex; align-items: flex-start; gap: 12px; padding: 4px 0 16px; }
+.h-ident .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; margin-top: 2px; font-size: var(--fs-cap); color: var(--text-3); }
+.h-ident .meta .sep { color: var(--idle); }
+.h-ident .meta .h-mono { color: var(--text-2); }
+.h-link { color: var(--accent); font-weight: 600; font-size: var(--fs-cap); display: inline-flex; align-items: center; gap: 2px; }
+.h-link svg.i { width: 14px; height: 14px; }
+
+/* buttons */
+.h-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--h-btn); padding: 0 14px; border-radius: var(--rc);
+  font: 600 var(--fs) var(--font); color: var(--text); background: rgba(255,255,255,.08); border: 1px solid transparent; white-space: nowrap; }
+.h-btn.primary { background: var(--accent); color: var(--on-accent); }
+.h-btn.ghost { background: transparent; color: var(--accent); padding: 0 8px; }
+.h-btn.danger { background: var(--danger-tint); color: var(--danger-text); border-color: var(--danger-line); }
+.h-btn.block { width: 100%; }
+.h-btn.sm { height: 28px; padding: 0 10px; font-size: var(--fs-cap); }
+.h-btn.ghost.sm { padding: 0 6px; }
+.h-btn.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.win .h-btn { font-weight: 600; }
+.h-btns { display: flex; gap: 8px; align-items: center; }
+.h-btns.end { justify-content: flex-end; }
+
+/* sections and groups */
+.h-sec { display: flex; align-items: baseline; gap: 6px; margin: 20px 2px 8px; font-size: var(--fs-cap); font-weight: 600; color: var(--text-2); }
+.h-sec .n { color: var(--text-3); font-weight: 500; }
+.h-sec .h-btn { margin-left: auto; }
+.h-group { background: var(--row); border-radius: var(--rg); overflow: hidden; }
+.h-row { position: relative; display: flex; align-items: center; gap: 12px; min-height: var(--h-row); padding: 7px 6px 7px 12px; }
+.h-row + .h-row::before { content: ""; position: absolute; top: 0; left: 52px; right: 0; height: 1px; background: var(--line); }
+.h-row.hover { background: rgba(255,255,255,.04); }
+.h-row.danger-zone { background: var(--danger-tint); }
+.h-row .txt { flex: 1; min-width: 0; }
+.h-row .ttl { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.35; }
+.h-row .sub { display: flex; align-items: center; gap: 5px; font-size: var(--fs-cap); color: var(--text-2); white-space: nowrap; overflow: hidden; line-height: 1.4; margin-top: 1px; }
+.h-row .sub .sep { color: var(--idle); }
+.h-row .sub.warn { color: var(--danger-text); white-space: normal; }
+.h-row .sub .dot { width: 6px; height: 6px; }
+.h-gl { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--rc); background: rgba(255,255,255,.06); color: var(--text-2); flex-shrink: 0; }
+.h-gl.on { background: var(--accent-tint); color: var(--accent); }
+.h-gl.warn { background: var(--danger-tint); color: var(--danger-text); }
+.h-gl.lg { width: 40px; height: 40px; border-radius: var(--rg); }
+.h-gl.lg svg.i { width: 20px; height: 20px; }
+.h-row .h-ib { width: 28px; height: 28px; color: var(--text-3); }
+.h-foot-act { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* switch: off state carries an idle outline so the control reads at 3:1 */
+.h-sw { position: relative; width: 32px; height: 18px; border-radius: 9px; background: transparent; box-shadow: inset 0 0 0 1.5px var(--idle); flex-shrink: 0; margin-right: 6px; }
+.h-sw::after { content: ""; position: absolute; top: 4px; left: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }
+.h-sw.on { background: var(--accent); box-shadow: none; }
+.h-sw.on::after { left: 16px; top: 2px; width: 14px; height: 14px; background: var(--on-accent); }
+.win .h-sw { width: 40px; height: 20px; border-radius: 10px; }
+.win .h-sw::after { top: 5px; left: 5px; }
+.win .h-sw.on::after { left: 23px; top: 3px; }
+
+/* inline field (rename) */
+.h-field { display: flex; align-items: center; height: 30px; padding: 0 8px; border-radius: 6px; background: var(--field); box-shadow: inset 0 0 0 2px var(--accent); font-weight: 600; color: var(--text); }
+.h-field .caret { width: 1.5px; height: 16px; background: var(--accent); margin-left: 1px; }
+.h-field .sel { background: rgba(130,232,191,.28); border-radius: 2px; }
+
+/* QR + pairing */
+.h-qr-wrap { display: flex; justify-content: center; padding: 4px 0 0; }
+.h-qr { width: 228px; height: 228px; border-radius: var(--rp); overflow: hidden; background: #fff; flex-shrink: 0; }
+.h-qr svg { display: block; width: 228px; height: 228px; shape-rendering: crispEdges; }
+.h-qr.closed { background: var(--row); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 20px; box-shadow: inset 0 0 0 1px var(--line); }
+.h-scan-cap { text-align: center; margin: 10px 12px 0; }
+.h-count { display: flex; align-items: center; gap: 8px; height: 36px; margin-top: 10px; padding: 0 4px 0 12px; border-radius: var(--rg); background: var(--row); font-size: var(--fs-cap); color: var(--text-2); }
+.h-count svg.i { color: var(--accent); width: 15px; height: 15px; }
+.h-count .grow { flex: 1; }
+.h-count b { color: var(--text); font-weight: 600; }
+.h-kv { display: flex; align-items: center; gap: 12px; min-height: var(--h-kv); padding: 4px 6px 4px 12px; position: relative; }
+.h-kv + .h-kv::before { content: ""; position: absolute; top: 0; left: 12px; right: 0; height: 1px; background: var(--line); }
+.h-kv .k { width: 96px; flex-shrink: 0; font-size: var(--fs-cap); color: var(--text-2); }
+.h-kv .v { flex: 1; min-width: 0; font-family: var(--hmono); font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-kv .v .dash { color: var(--text-3); }
+.h-kv .v.pin { font-size: 20px; font-weight: 500; letter-spacing: .06em; }
+.h-kv .v.pin .gap { display: inline-block; width: .2em; }
+.h-kv .h-ib { width: 28px; height: 28px; color: var(--text-3); }
+
+/* banners */
+.h-ban { display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 12px; border-radius: var(--rg); background: var(--row); margin-bottom: 12px; }
+.h-ban svg.i { margin-top: 2px; flex-shrink: 0; }
+.h-ban .txt { flex: 1; min-width: 0; }
+.h-ban .ttl { font-weight: 600; line-height: 1.35; }
+.h-ban .h-c, .h-ban .h-p { margin-top: 2px; }
+.h-ban .h-btn { margin-top: 8px; }
+.h-ban.ok { background: var(--accent-tint); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.h-ban.ok svg.i { color: var(--accent); }
+.h-ban.bad { background: var(--danger-tint); box-shadow: inset 0 0 0 1px var(--danger-line); }
+.h-ban.bad svg.i, .h-ban.bad .ttl { color: var(--danger-text); }
+.h-ban .side { align-self: center; margin: 0; }
+.rec { width: 10px; height: 10px; border-radius: 50%; background: #F1AAA6; box-shadow: 0 0 0 3px rgba(241,170,166,.2); margin: 4px 3px 0 1px; flex-shrink: 0; }
+
+/* in-page menu and dialog */
+.h-menu { position: absolute; z-index: 20; min-width: 168px; padding: 4px; border-radius: 8px; background: var(--row-pressed);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 12px 32px rgba(0,0,0,.55); }
+.h-menu div { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 10px; border-radius: 5px; font-size: var(--fs); }
+.h-menu div.hl { background: rgba(255,255,255,.08); }
+.h-menu div .kb { margin-left: auto; color: var(--text-3); font-size: var(--fs-cap); }
+.h-menu div.destr { color: var(--danger-text); }
+.h-menu hr { border: 0; height: 1px; background: var(--line-strong); margin: 4px 6px; }
+.win .h-menu div { height: 32px; border-radius: 4px; }
+.h-scrim { position: absolute; inset: 0; z-index: 30; background: var(--scrim); }
+.h-dialog { position: absolute; z-index: 31; left: 24px; right: 24px; top: 50%; transform: translateY(-50%); padding: 20px; border-radius: var(--rp);
+  background: var(--sheet); box-shadow: 0 0 0 1px var(--line-strong), 0 24px 60px rgba(0,0,0,.6); }
+.h-dialog .h-p { margin: 6px 0 18px; }
+
+/* wide layout (window, browser) */
+.h-wide { display: grid; grid-template-columns: 340px 1fr; gap: 24px; padding: 8px 24px 24px; align-items: start; }
+.h-card { background: var(--row); border-radius: var(--rp); padding: 16px; }
+.h-card .h-count, .h-card .h-group { background: rgba(255,255,255,.04); }
+.h-card .h-kv + .h-kv::before { background: rgba(255,255,255,.06); }
+.wide .h-head { height: 56px; padding: 0 16px 0 24px; }
+.h-dl { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: var(--fs-cap); margin-top: 12px; }
+.h-dl dt { color: var(--text-2); margin: 0; }
+.h-dl dd { margin: 0; color: var(--text); font-family: var(--hmono); font-size: 12px; }
+.h-dl dd.plain { font-family: var(--font); color: var(--text-2); }
+.h-note { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border-radius: var(--rg); box-shadow: inset 0 0 0 1px var(--line-strong); margin-top: 16px; }
+.h-note svg.i { color: var(--text-3); margin-top: 1px; }
+
+/* spinner (desktop) */
+.h-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(130,232,191,.2); border-top-color: var(--accent); flex-shrink: 0; }
+
+/* ---------- desktop context (not part of the page) ---------- */
+.desk { position: relative; overflow: hidden; background: #1b2a30;
+  background-image: radial-gradient(ellipse 80% 60% at 20% 10%, #2f4a4a 0%, transparent 60%), radial-gradient(ellipse 70% 70% at 90% 90%, #22324a 0%, transparent 60%), linear-gradient(160deg, #1d2b31, #141c24); }
+.menubar { position: absolute; left: 0; right: 0; top: 0; height: 26px; background: rgba(20,26,30,.72); backdrop-filter: blur(20px); display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 0 12px; color: #e8eeec; font: 500 13px -apple-system, system-ui, sans-serif; }
+.menubar .mi { display: inline-grid; place-items: center; height: 22px; padding: 0 6px; border-radius: 5px; }
+.menubar .mi.on { background: rgba(255,255,255,.18); }
+.menubar svg.i { width: 15px; height: 15px; stroke-width: 1.8; }
+.sbmark { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 14px; height: 14px; }
+.sbmark i { border-radius: 2px; background: #eef3f1; }
+.sbmark.outline i:nth-child(4) { background: transparent; box-shadow: inset 0 0 0 1.4px #eef3f1; }
+.pop { position: absolute; border-radius: 12px; box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 18px 50px rgba(0,0,0,.55); }
+.pop > .hp { border-radius: 12px; }
+.pop .arrow { position: absolute; top: -7px; width: 16px; height: 8px; overflow: hidden; }
+.pop .arrow::before { content: ""; position: absolute; left: 2px; top: 3px; width: 11px; height: 11px; background: #0d1517; transform: rotate(45deg); box-shadow: 0 0 0 1px rgba(255,255,255,.12); }
+.taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: rgba(28,32,34,.92); backdrop-filter: blur(30px); border-top: 1px solid rgba(255,255,255,.06);
+  display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 10px; color: #e8eeec; font: 12px "Open Sans", "Segoe UI", system-ui, sans-serif; }
+.taskbar .ti { display: inline-grid; place-items: center; height: 40px; min-width: 32px; padding: 0 6px; border-radius: 4px; }
+.taskbar .ti.on { background: rgba(255,255,255,.09); }
+.taskbar svg.i { width: 16px; height: 16px; }
+.taskbar .clock { text-align: right; line-height: 1.3; padding: 0 8px; }
+.flyout { position: absolute; right: 12px; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.10), 0 24px 60px rgba(0,0,0,.6); }
+.flyout > .hp { border-radius: 8px; }
+.win-menu { position: absolute; padding: 4px; border-radius: 8px; background: #2b2b2b; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 16px 40px rgba(0,0,0,.55); color: #f3f3f3; font: 14px "Open Sans", "Segoe UI", system-ui, sans-serif; min-width: 248px; }
+.win-menu div { display: flex; align-items: center; gap: 12px; height: 32px; padding: 0 12px; border-radius: 4px; }
+.win-menu div.hl { background: rgba(255,255,255,.07); }
+.win-menu div.def { font-weight: 700; }
+.win-menu div .chev { margin-left: auto; }
+.win-menu div.dis { color: #8c8c8c; }
+.win-menu hr { border: 0; height: 1px; background: rgba(255,255,255,.09); margin: 4px 0; }
+.win-menu svg.i { width: 16px; height: 16px; }
+.mac-menu { position: absolute; padding: 5px; border-radius: 9px; background: rgba(40,44,46,.94); backdrop-filter: blur(30px); box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 16px 40px rgba(0,0,0,.5); color: #f0f2f2; font: 13px -apple-system, system-ui, sans-serif; min-width: 236px; }
+.mac-menu div { display: flex; align-items: center; height: 22px; padding: 0 10px 0 22px; border-radius: 4px; }
+.mac-menu div.hl { background: #2d6b57; }
+.mac-menu div.dis { color: #8d9596; }
+.mac-menu div .kb { margin-left: auto; color: #a8b0b1; }
+.mac-menu hr { border: 0; height: 1px; background: rgba(255,255,255,.12); margin: 5px 10px; }
+.browser { position: absolute; inset: 0; display: flex; flex-direction: column; background: #0b1012; }
+.browser .bar { height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: #1c2224; border-bottom: 1px solid rgba(255,255,255,.06); font: 12px -apple-system, system-ui, sans-serif; color: #c9d1d0; }
+.browser .lights { display: flex; gap: 7px; }
+.browser .lights i { width: 11px; height: 11px; border-radius: 50%; background: #4a5254; }
+.browser .url { flex: 1; max-width: 460px; margin: 0 auto; height: 26px; border-radius: 7px; background: #2a3133; display: flex; align-items: center; gap: 6px; padding: 0 10px; }
+.browser .url b { color: #eef3f1; font-weight: 500; }
+.browser .page { flex: 1; overflow: hidden; }
+.label-tag { position: absolute; left: 12px; bottom: 10px; font: 600 11px system-ui; color: rgba(238,243,241,.55); letter-spacing: .02em; }
+
+/* camera feed (phone scanner mockup) */
+.cam { position: absolute; inset: 0; z-index: 0; overflow: hidden; background: #2a2622;
+  background-image: radial-gradient(ellipse 60% 70% at 62% 45%, #4a4540 0%, transparent 70%), linear-gradient(180deg, #3a3530 0%, #24201c 100%); }
+.cam .laptop { position: absolute; left: 472px; top: 84px; width: 400px; height: 270px; transform: perspective(900px) rotateY(-8deg) rotateX(4deg); border-radius: 12px; background: #0a0e10; box-shadow: 0 0 0 8px #1a1c1d, 0 30px 60px rgba(0,0,0,.5); filter: blur(.35px) saturate(.9); }
+.cam .laptop .hp { position: absolute; transform-origin: 0 0; transform: scale(.62); left: 10px; top: 6px; }
+.cam .shade { position: absolute; inset: 0; background: rgba(0,0,0,.46); -webkit-mask: radial-gradient(circle at var(--vx) var(--vy), transparent 0, transparent 0) ; }
+.vf { position: absolute; width: 214px; height: 214px; }
+.vf i { position: absolute; width: 30px; height: 30px; border: 3px solid var(--accent); }
+.vf i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; border-radius: 12px 0 0 0; }
+.vf i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; border-radius: 0 12px 0 0; }
+.vf i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 12px; }
+.vf i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; border-radius: 0 0 12px 0; }
+.scan-rail { position: absolute; z-index: 5; left: 0; top: 0; bottom: 0; width: 380px; padding: 64px 32px 21px 47px; display: flex; flex-direction: column;
+  background: linear-gradient(90deg, rgba(9,14,16,.94) 0%, rgba(9,14,16,.88) 78%, rgba(9,14,16,0) 100%); }
+.kvcard { border-radius: var(--r-group); background: var(--row); overflow: hidden; }
+.kvcard .kvr { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0 16px; position: relative; }
+.kvcard .kvr + .kvr::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--line); }
+.kvcard .kvr .k { width: 112px; font-size: 13px; color: var(--text-2); }
+.kvcard .kvr .v { font-family: var(--mono); font-size: 15px; color: var(--text); }
+.kvcard .kvr .v .dash { color: var(--text-3); }
+
+/* solo mode for the desk frames */
+body.solo .desk { border-radius: 0; }
+
+/* solo mode for screenshots: #solo=<id> */
+body.solo { background: var(--bg); }
+body.solo .doc, body.solo .group-title, body.solo figure.frame:not(.is-solo) { display: none; }
+body.solo figure.frame.is-solo { margin: 0; padding: 0; max-width: none; }
+body.solo figure.frame.is-solo figcaption { display: none; }
+body.solo .device { padding: 0; border-radius: 0; box-shadow: none; background: none; }
+body.solo .screen { border-radius: 0; }
+figure.frame { max-width: 1100px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24"><path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-more-v" viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="18" r="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 8.8a14 14 0 0 1 19 0M5.5 12.2a9.5 9.5 0 0 1 13 0M8.7 15.5a5 5 0 0 1 6.6 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-wifi-off" viewBox="0 0 24 24"><path d="M2.5 8.8a14 14 0 0 1 4.3-2.7M10.5 4.6a14 14 0 0 1 11 4.2M5.5 12.2a9.5 9.5 0 0 1 4-2.2M8.7 15.5a5 5 0 0 1 6.6 0M3.5 3.5l17 17"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.2c0 4.6-3.1 8.4-7.5 9.8-4.4-1.4-7.5-5.2-7.5-9.8V6z"/><path d="M12 8v4.5"/><circle cx="12" cy="15.8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-usb" viewBox="0 0 24 24"><path d="M12 21V4.5M9.5 7L12 4.5 14.5 7M12 16l-4.2-2.2V11M12 13.5l4.2-2V9"/><circle cx="7.8" cy="10" r="1.3"/><rect x="15" y="6.6" width="2.4" height="2.4" rx=".4"/><circle cx="12" cy="20" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-net" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><circle cx="18.5" cy="18" r="2.2"/><path d="M10.9 7.5l-4.3 8.5M13.1 7.5l4.3 8.5M7.7 18h8.6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.8"/><path d="M12 2.8v2M12 19.2v2M2.8 12h2M19.2 12h2M5.5 5.5l1.4 1.4M17.1 17.1l1.4 1.4M5.5 18.5l1.4-1.4M17.1 6.9l1.4-1.4"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4.5 19.5l3.8-.9L19 7.9a1.9 1.9 0 0 0-2.7-2.7L5.6 15.9z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12 17h7"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="5" y="5" width="5" height="5" rx="1"/><rect x="14" y="5" width="5" height="5" rx="1"/><rect x="5" y="14" width="5" height="5" rx="1"/><rect x="14" y="14" width="5" height="5" rx="1"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M7 6h10M7 10h10M7 14h6"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8.5 7L4 12l4.5 5M15.5 7L20 12l-4.5 5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.5 5.4 3.5 8.5s-1 5.9-3.5 8.5c-2.5-2.6-3.5-5.4-3.5-8.5s1-5.9 3.5-8.5z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></symbol>
+  <symbol id="i-settings-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/></symbol>
+</svg>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h2.5v2.5H14zM17.5 17.5H20V20h-2.5zM14 19.5V20M20 14v.5"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v7"/><path d="M7.2 6.6a7.5 7.5 0 1 0 9.6 0"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-chev-l" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+  <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="M6.5 9.5l5.5 5.5 5.5-5.5"/></symbol>
+  <symbol id="i-logs" viewBox="0 0 24 24"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></symbol>
+  <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".9" fill="currentColor"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 8.5a2 2 0 0 1 2-2h2l1.5-2h5l1.5 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M3.5 9h17"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7a7 7 0 0 1 0 10"/></symbol>
+  <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2.5" y="7.5" width="17" height="9" rx="2"/><path d="M21.5 10.5v3"/><rect x="4.5" y="9.5" width="11" height="5" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 14l5-5 5 5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+</svg>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="qr-mac" viewBox="-4 -4 57 57"><rect x="-4" y="-4" width="57" height="57" fill="#fff"/><path fill="#090E10" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM11 0h1v1h-1zM12 0h1v1h-1zM17 0h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM21 0h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM28 0h1v1h-1zM30 0h1v1h-1zM31 0h1v1h-1zM32 0h1v1h-1zM33 0h1v1h-1zM35 0h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM40 0h1v1h-1zM42 0h1v1h-1zM43 0h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM47 0h1v1h-1zM48 0h1v1h-1zM0 1h1v1h-1zM6 1h1v1h-1zM10 1h1v1h-1zM17 1h1v1h-1zM18 1h1v1h-1zM20 1h1v1h-1zM22 1h1v1h-1zM26 1h1v1h-1zM28 1h1v1h-1zM34 1h1v1h-1zM35 1h1v1h-1zM36 1h1v1h-1zM37 1h1v1h-1zM38 1h1v1h-1zM39 1h1v1h-1zM40 1h1v1h-1zM42 1h1v1h-1zM48 1h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM10 2h1v1h-1zM12 2h1v1h-1zM13 2h1v1h-1zM15 2h1v1h-1zM17 2h1v1h-1zM19 2h1v1h-1zM21 2h1v1h-1zM26 2h1v1h-1zM27 2h1v1h-1zM29 2h1v1h-1zM31 2h1v1h-1zM32 2h1v1h-1zM39 2h1v1h-1zM40 2h1v1h-1zM42 2h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM46 2h1v1h-1zM48 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM15 3h1v1h-1zM16 3h1v1h-1zM18 3h1v1h-1zM19 3h1v1h-1zM21 3h1v1h-1zM23 3h1v1h-1zM24 3h1v1h-1zM25 3h1v1h-1zM29 3h1v1h-1zM30 3h1v1h-1zM31 3h1v1h-1zM33 3h1v1h-1zM34 3h1v1h-1zM35 3h1v1h-1zM36 3h1v1h-1zM37 3h1v1h-1zM39 3h1v1h-1zM42 3h1v1h-1zM44 3h1v1h-1zM45 3h1v1h-1zM46 3h1v1h-1zM48 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM6 4h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM12 4h1v1h-1zM15 4h1v1h-1zM16 4h1v1h-1zM17 4h1v1h-1zM18 4h1v1h-1zM21 4h1v1h-1zM22 4h1v1h-1zM23 4h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 4h1v1h-1zM29 4h1v1h-1zM30 4h1v1h-1zM32 4h1v1h-1zM33 4h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM42 4h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1zM48 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM13 5h1v1h-1zM15 5h1v1h-1zM19 5h1v1h-1zM21 5h1v1h-1zM22 5h1v1h-1zM26 5h1v1h-1zM27 5h1v1h-1zM28 5h1v1h-1zM29 5h1v1h-1zM30 5h1v1h-1zM32 5h1v1h-1zM34 5h1v1h-1zM37 5h1v1h-1zM38 5h1v1h-1zM42 5h1v1h-1zM48 5h1v1h-1zM0 6h1v1h-1zM1 6h1v1h-1zM2 6h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h1v1h-1zM28 6h1v1h-1zM30 6h1v1h-1zM32 6h1v1h-1zM34 6h1v1h-1zM36 6h1v1h-1zM38 6h1v1h-1zM40 6h1v1h-1zM42 6h1v1h-1zM43 6h1v1h-1zM44 6h1v1h-1zM45 6h1v1h-1zM46 6h1v1h-1zM47 6h1v1h-1zM48 6h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM17 7h1v1h-1zM18 7h1v1h-1zM22 7h1v1h-1zM26 7h1v1h-1zM28 7h1v1h-1zM29 7h1v1h-1zM32 7h1v1h-1zM34 7h1v1h-1zM37 7h1v1h-1zM40 7h1v1h-1zM0 8h1v1h-1zM2 8h1v1h-1zM3 8h1v1h-1zM4 8h1v1h-1zM5 8h1v1h-1zM6 8h1v1h-1zM9 8h1v1h-1zM11 8h1v1h-1zM12 8h1v1h-1zM14 8h1v1h-1zM16 8h1v1h-1zM17 8h1v1h-1zM22 8h1v1h-1zM23 8h1v1h-1zM24 8h1v1h-1zM25 8h1v1h-1zM26 8h1v1h-1zM27 8h1v1h-1zM33 8h1v1h-1zM34 8h1v1h-1zM36 8h1v1h-1zM40 8h1v1h-1zM42 8h1v1h-1zM43 8h1v1h-1zM44 8h1v1h-1zM45 8h1v1h-1zM46 8h1v1h-1zM0 9h1v1h-1zM1 9h1v1h-1zM2 9h1v1h-1zM3 9h1v1h-1zM5 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM14 9h1v1h-1zM15 9h1v1h-1zM16 9h1v1h-1zM19 9h1v1h-1zM22 9h1v1h-1zM23 9h1v1h-1zM24 9h1v1h-1zM25 9h1v1h-1zM27 9h1v1h-1zM28 9h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM33 9h1v1h-1zM37 9h1v1h-1zM39 9h1v1h-1zM42 9h1v1h-1zM45 9h1v1h-1zM46 9h1v1h-1zM3 10h1v1h-1zM4 10h1v1h-1zM5 10h1v1h-1zM6 10h1v1h-1zM8 10h1v1h-1zM10 10h1v1h-1zM13 10h1v1h-1zM15 10h1v1h-1zM18 10h1v1h-1zM19 10h1v1h-1zM21 10h1v1h-1zM24 10h1v1h-1zM25 10h1v1h-1zM26 10h1v1h-1zM29 10h1v1h-1zM34 10h1v1h-1zM36 10h1v1h-1zM37 10h1v1h-1zM38 10h1v1h-1zM41 10h1v1h-1zM43 10h1v1h-1zM45 10h1v1h-1zM46 10h1v1h-1zM47 10h1v1h-1zM48 10h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM9 11h1v1h-1zM17 11h1v1h-1zM18 11h1v1h-1zM27 11h1v1h-1zM28 11h1v1h-1zM29 11h1v1h-1zM30 11h1v1h-1zM31 11h1v1h-1zM32 11h1v1h-1zM34 11h1v1h-1zM35 11h1v1h-1zM37 11h1v1h-1zM38 11h1v1h-1zM39 11h1v1h-1zM42 11h1v1h-1zM43 11h1v1h-1zM44 11h1v1h-1zM0 12h1v1h-1zM1 12h1v1h-1zM3 12h1v1h-1zM6 12h1v1h-1zM9 12h1v1h-1zM10 12h1v1h-1zM13 12h1v1h-1zM14 12h1v1h-1zM16 12h1v1h-1zM17 12h1v1h-1zM21 12h1v1h-1zM23 12h1v1h-1zM24 12h1v1h-1zM26 12h1v1h-1zM30 12h1v1h-1zM34 12h1v1h-1zM35 12h1v1h-1zM36 12h1v1h-1zM38 12h1v1h-1zM39 12h1v1h-1zM40 12h1v1h-1zM41 12h1v1h-1zM43 12h1v1h-1zM45 12h1v1h-1zM47 12h1v1h-1zM48 12h1v1h-1zM0 13h1v1h-1zM1 13h1v1h-1zM2 13h1v1h-1zM4 13h1v1h-1zM9 13h1v1h-1zM11 13h1v1h-1zM14 13h1v1h-1zM15 13h1v1h-1zM17 13h1v1h-1zM18 13h1v1h-1zM19 13h1v1h-1zM20 13h1v1h-1zM21 13h1v1h-1zM22 13h1v1h-1zM23 13h1v1h-1zM28 13h1v1h-1zM29 13h1v1h-1zM30 13h1v1h-1zM35 13h1v1h-1zM37 13h1v1h-1zM41 13h1v1h-1zM42 13h1v1h-1zM43 13h1v1h-1zM44 13h1v1h-1zM45 13h1v1h-1zM2 14h1v1h-1zM3 14h1v1h-1zM4 14h1v1h-1zM5 14h1v1h-1zM6 14h1v1h-1zM9 14h1v1h-1zM10 14h1v1h-1zM11 14h1v1h-1zM14 14h1v1h-1zM17 14h1v1h-1zM20 14h1v1h-1zM23 14h1v1h-1zM24 14h1v1h-1zM25 14h1v1h-1zM26 14h1v1h-1zM28 14h1v1h-1zM29 14h1v1h-1zM30 14h1v1h-1zM31 14h1v1h-1zM33 14h1v1h-1zM35 14h1v1h-1zM37 14h1v1h-1zM43 14h1v1h-1zM45 14h1v1h-1zM47 14h1v1h-1zM48 14h1v1h-1zM0 15h1v1h-1zM1 15h1v1h-1zM7 15h1v1h-1zM10 15h1v1h-1zM12 15h1v1h-1zM13 15h1v1h-1zM18 15h1v1h-1zM19 15h1v1h-1zM20 15h1v1h-1zM23 15h1v1h-1zM25 15h1v1h-1zM26 15h1v1h-1zM27 15h1v1h-1zM28 15h1v1h-1zM29 15h1v1h-1zM31 15h1v1h-1zM32 15h1v1h-1zM34 15h1v1h-1zM42 15h1v1h-1zM47 15h1v1h-1zM1 16h1v1h-1zM2 16h1v1h-1zM3 16h1v1h-1zM4 16h1v1h-1zM5 16h1v1h-1zM6 16h1v1h-1zM8 16h1v1h-1zM9 16h1v1h-1zM11 16h1v1h-1zM13 16h1v1h-1zM15 16h1v1h-1zM16 16h1v1h-1zM17 16h1v1h-1zM19 16h1v1h-1zM20 16h1v1h-1zM22 16h1v1h-1zM23 16h1v1h-1zM24 16h1v1h-1zM29 16h1v1h-1zM30 16h1v1h-1zM31 16h1v1h-1zM35 16h1v1h-1zM36 16h1v1h-1zM37 16h1v1h-1zM38 16h1v1h-1zM39 16h1v1h-1zM40 16h1v1h-1zM41 16h1v1h-1zM42 16h1v1h-1zM43 16h1v1h-1zM45 16h1v1h-1zM46 16h1v1h-1zM47 16h1v1h-1zM48 16h1v1h-1zM0 17h1v1h-1zM1 17h1v1h-1zM3 17h1v1h-1zM4 17h1v1h-1zM10 17h1v1h-1zM15 17h1v1h-1zM17 17h1v1h-1zM19 17h1v1h-1zM25 17h1v1h-1zM27 17h1v1h-1zM28 17h1v1h-1zM29 17h1v1h-1zM30 17h1v1h-1zM31 17h1v1h-1zM35 17h1v1h-1zM36 17h1v1h-1zM42 17h1v1h-1zM45 17h1v1h-1zM46 17h1v1h-1zM47 17h1v1h-1zM2 18h1v1h-1zM3 18h1v1h-1zM5 18h1v1h-1zM6 18h1v1h-1zM8 18h1v1h-1zM9 18h1v1h-1zM10 18h1v1h-1zM13 18h1v1h-1zM14 18h1v1h-1zM16 18h1v1h-1zM19 18h1v1h-1zM21 18h1v1h-1zM22 18h1v1h-1zM23 18h1v1h-1zM24 18h1v1h-1zM27 18h1v1h-1zM30 18h1v1h-1zM32 18h1v1h-1zM33 18h1v1h-1zM35 18h1v1h-1zM38 18h1v1h-1zM39 18h1v1h-1zM44 18h1v1h-1zM47 18h1v1h-1zM48 18h1v1h-1zM1 19h1v1h-1zM4 19h1v1h-1zM5 19h1v1h-1zM9 19h1v1h-1zM10 19h1v1h-1zM11 19h1v1h-1zM15 19h1v1h-1zM20 19h1v1h-1zM23 19h1v1h-1zM24 19h1v1h-1zM25 19h1v1h-1zM26 19h1v1h-1zM27 19h1v1h-1zM29 19h1v1h-1zM30 19h1v1h-1zM31 19h1v1h-1zM34 19h1v1h-1zM35 19h1v1h-1zM44 19h1v1h-1zM0 20h1v1h-1zM2 20h1v1h-1zM3 20h1v1h-1zM4 20h1v1h-1zM6 20h1v1h-1zM9 20h1v1h-1zM10 20h1v1h-1zM11 20h1v1h-1zM12 20h1v1h-1zM15 20h1v1h-1zM16 20h1v1h-1zM19 20h1v1h-1zM20 20h1v1h-1zM21 20h1v1h-1zM22 20h1v1h-1zM23 20h1v1h-1zM24 20h1v1h-1zM25 20h1v1h-1zM26 20h1v1h-1zM29 20h1v1h-1zM31 20h1v1h-1zM35 20h1v1h-1zM36 20h1v1h-1zM39 20h1v1h-1zM40 20h1v1h-1zM42 20h1v1h-1zM43 20h1v1h-1zM45 20h1v1h-1zM46 20h1v1h-1zM47 20h1v1h-1zM48 20h1v1h-1zM0 21h1v1h-1zM1 21h1v1h-1zM3 21h1v1h-1zM7 21h1v1h-1zM14 21h1v1h-1zM22 21h1v1h-1zM24 21h1v1h-1zM25 21h1v1h-1zM28 21h1v1h-1zM29 21h1v1h-1zM30 21h1v1h-1zM32 21h1v1h-1zM33 21h1v1h-1zM37 21h1v1h-1zM39 21h1v1h-1zM42 21h1v1h-1zM43 21h1v1h-1zM44 21h1v1h-1zM45 21h1v1h-1zM46 21h1v1h-1zM48 21h1v1h-1zM2 22h1v1h-1zM3 22h1v1h-1zM4 22h1v1h-1zM5 22h1v1h-1zM6 22h1v1h-1zM7 22h1v1h-1zM8 22h1v1h-1zM11 22h1v1h-1zM12 22h1v1h-1zM15 22h1v1h-1zM17 22h1v1h-1zM19 22h1v1h-1zM20 22h1v1h-1zM21 22h1v1h-1zM22 22h1v1h-1zM23 22h1v1h-1zM24 22h1v1h-1zM25 22h1v1h-1zM26 22h1v1h-1zM29 22h1v1h-1zM31 22h1v1h-1zM34 22h1v1h-1zM36 22h1v1h-1zM38 22h1v1h-1zM40 22h1v1h-1zM41 22h1v1h-1zM42 22h1v1h-1zM43 22h1v1h-1zM44 22h1v1h-1zM46 22h1v1h-1zM47 22h1v1h-1zM48 22h1v1h-1zM4 23h1v1h-1zM8 23h1v1h-1zM9 23h1v1h-1zM16 23h1v1h-1zM17 23h1v1h-1zM18 23h1v1h-1zM19 23h1v1h-1zM22 23h1v1h-1zM26 23h1v1h-1zM28 23h1v1h-1zM30 23h1v1h-1zM31 23h1v1h-1zM32 23h1v1h-1zM33 23h1v1h-1zM35 23h1v1h-1zM40 23h1v1h-1zM44 23h1v1h-1zM45 23h1v1h-1zM48 23h1v1h-1zM1 24h1v1h-1zM2 24h1v1h-1zM3 24h1v1h-1zM4 24h1v1h-1zM6 24h1v1h-1zM8 24h1v1h-1zM9 24h1v1h-1zM11 24h1v1h-1zM13 24h1v1h-1zM17 24h1v1h-1zM19 24h1v1h-1zM21 24h1v1h-1zM22 24h1v1h-1zM24 24h1v1h-1zM26 24h1v1h-1zM27 24h1v1h-1zM29 24h1v1h-1zM36 24h1v1h-1zM38 24h1v1h-1zM40 24h1v1h-1zM42 24h1v1h-1zM44 24h1v1h-1zM46 24h1v1h-1zM0 25h1v1h-1zM1 25h1v1h-1zM3 25h1v1h-1zM4 25h1v1h-1zM8 25h1v1h-1zM12 25h1v1h-1zM14 25h1v1h-1zM15 25h1v1h-1zM16 25h1v1h-1zM19 25h1v1h-1zM22 25h1v1h-1zM26 25h1v1h-1zM27 25h1v1h-1zM30 25h1v1h-1zM32 25h1v1h-1zM33 25h1v1h-1zM35 25h1v1h-1zM36 25h1v1h-1zM40 25h1v1h-1zM44 25h1v1h-1zM46 25h1v1h-1zM47 25h1v1h-1zM1 26h1v1h-1zM3 26h1v1h-1zM4 26h1v1h-1zM5 26h1v1h-1zM6 26h1v1h-1zM7 26h1v1h-1zM8 26h1v1h-1zM10 26h1v1h-1zM11 26h1v1h-1zM14 26h1v1h-1zM18 26h1v1h-1zM20 26h1v1h-1zM22 26h1v1h-1zM23 26h1v1h-1zM24 26h1v1h-1zM25 26h1v1h-1zM26 26h1v1h-1zM27 26h1v1h-1zM28 26h1v1h-1zM29 26h1v1h-1zM31 26h1v1h-1zM32 26h1v1h-1zM34 26h1v1h-1zM37 26h1v1h-1zM38 26h1v1h-1zM40 26h1v1h-1zM41 26h1v1h-1zM42 26h1v1h-1zM43 26h1v1h-1zM44 26h1v1h-1zM46 26h1v1h-1zM47 26h1v1h-1zM48 26h1v1h-1zM2 27h1v1h-1zM3 27h1v1h-1zM4 27h1v1h-1zM7 27h1v1h-1zM8 27h1v1h-1zM9 27h1v1h-1zM12 27h1v1h-1zM13 27h1v1h-1zM17 27h1v1h-1zM18 27h1v1h-1zM19 27h1v1h-1zM20 27h1v1h-1zM23 27h1v1h-1zM24 27h1v1h-1zM26 27h1v1h-1zM27 27h1v1h-1zM30 27h1v1h-1zM32 27h1v1h-1zM34 27h1v1h-1zM35 27h1v1h-1zM37 27h1v1h-1zM41 27h1v1h-1zM43 27h1v1h-1zM44 27h1v1h-1zM47 27h1v1h-1zM6 28h1v1h-1zM8 28h1v1h-1zM9 28h1v1h-1zM14 28h1v1h-1zM15 28h1v1h-1zM17 28h1v1h-1zM18 28h1v1h-1zM19 28h1v1h-1zM22 28h1v1h-1zM24 28h1v1h-1zM26 28h1v1h-1zM30 28h1v1h-1zM31 28h1v1h-1zM36 28h1v1h-1zM37 28h1v1h-1zM39 28h1v1h-1zM40 28h1v1h-1zM43 28h1v1h-1zM44 28h1v1h-1zM46 28h1v1h-1zM48 28h1v1h-1zM1 29h1v1h-1zM3 29h1v1h-1zM4 29h1v1h-1zM5 29h1v1h-1zM8 29h1v1h-1zM11 29h1v1h-1zM13 29h1v1h-1zM15 29h1v1h-1zM16 29h1v1h-1zM17 29h1v1h-1zM21 29h1v1h-1zM23 29h1v1h-1zM24 29h1v1h-1zM27 29h1v1h-1zM29 29h1v1h-1zM30 29h1v1h-1zM31 29h1v1h-1zM37 29h1v1h-1zM39 29h1v1h-1zM42 29h1v1h-1zM45 29h1v1h-1zM46 29h1v1h-1zM47 29h1v1h-1zM1 30h1v1h-1zM2 30h1v1h-1zM3 30h1v1h-1zM5 30h1v1h-1zM6 30h1v1h-1zM7 30h1v1h-1zM9 30h1v1h-1zM11 30h1v1h-1zM12 30h1v1h-1zM18 30h1v1h-1zM19 30h1v1h-1zM21 30h1v1h-1zM22 30h1v1h-1zM23 30h1v1h-1zM24 30h1v1h-1zM25 30h1v1h-1zM27 30h1v1h-1zM29 30h1v1h-1zM30 30h1v1h-1zM32 30h1v1h-1zM33 30h1v1h-1zM36 30h1v1h-1zM37 30h1v1h-1zM38 30h1v1h-1zM40 30h1v1h-1zM42 30h1v1h-1zM43 30h1v1h-1zM47 30h1v1h-1zM48 30h1v1h-1zM1 31h1v1h-1zM4 31h1v1h-1zM7 31h1v1h-1zM9 31h1v1h-1zM11 31h1v1h-1zM14 31h1v1h-1zM15 31h1v1h-1zM16 31h1v1h-1zM18 31h1v1h-1zM21 31h1v1h-1zM22 31h1v1h-1zM23 31h1v1h-1zM27 31h1v1h-1zM29 31h1v1h-1zM32 31h1v1h-1zM37 31h1v1h-1zM40 31h1v1h-1zM41 31h1v1h-1zM43 31h1v1h-1zM44 31h1v1h-1zM48 31h1v1h-1zM0 32h1v1h-1zM2 32h1v1h-1zM3 32h1v1h-1zM6 32h1v1h-1zM8 32h1v1h-1zM9 32h1v1h-1zM15 32h1v1h-1zM16 32h1v1h-1zM18 32h1v1h-1zM19 32h1v1h-1zM20 32h1v1h-1zM23 32h1v1h-1zM29 32h1v1h-1zM30 32h1v1h-1zM31 32h1v1h-1zM34 32h1v1h-1zM35 32h1v1h-1zM36 32h1v1h-1zM38 32h1v1h-1zM39 32h1v1h-1zM40 32h1v1h-1zM43 32h1v1h-1zM44 32h1v1h-1zM45 32h1v1h-1zM46 32h1v1h-1zM47 32h1v1h-1zM48 32h1v1h-1zM0 33h1v1h-1zM1 33h1v1h-1zM3 33h1v1h-1zM4 33h1v1h-1zM5 33h1v1h-1zM7 33h1v1h-1zM8 33h1v1h-1zM9 33h1v1h-1zM10 33h1v1h-1zM13 33h1v1h-1zM17 33h1v1h-1zM18 33h1v1h-1zM21 33h1v1h-1zM24 33h1v1h-1zM28 33h1v1h-1zM29 33h1v1h-1zM30 33h1v1h-1zM32 33h1v1h-1zM35 33h1v1h-1zM36 33h1v1h-1zM37 33h1v1h-1zM39 33h1v1h-1zM40 33h1v1h-1zM41 33h1v1h-1zM43 33h1v1h-1zM46 33h1v1h-1zM1 34h1v1h-1zM2 34h1v1h-1zM3 34h1v1h-1zM5 34h1v1h-1zM6 34h1v1h-1zM7 34h1v1h-1zM9 34h1v1h-1zM11 34h1v1h-1zM12 34h1v1h-1zM16 34h1v1h-1zM17 34h1v1h-1zM19 34h1v1h-1zM20 34h1v1h-1zM21 34h1v1h-1zM27 34h1v1h-1zM33 34h1v1h-1zM34 34h1v1h-1zM36 34h1v1h-1zM38 34h1v1h-1zM39 34h1v1h-1zM42 34h1v1h-1zM45 34h1v1h-1zM46 34h1v1h-1zM48 34h1v1h-1zM2 35h1v1h-1zM5 35h1v1h-1zM11 35h1v1h-1zM12 35h1v1h-1zM13 35h1v1h-1zM14 35h1v1h-1zM15 35h1v1h-1zM16 35h1v1h-1zM19 35h1v1h-1zM21 35h1v1h-1zM23 35h1v1h-1zM24 35h1v1h-1zM26 35h1v1h-1zM27 35h1v1h-1zM29 35h1v1h-1zM30 35h1v1h-1zM32 35h1v1h-1zM33 35h1v1h-1zM40 35h1v1h-1zM41 35h1v1h-1zM44 35h1v1h-1zM47 35h1v1h-1zM48 35h1v1h-1zM0 36h1v1h-1zM1 36h1v1h-1zM2 36h1v1h-1zM3 36h1v1h-1zM6 36h1v1h-1zM8 36h1v1h-1zM11 36h1v1h-1zM12 36h1v1h-1zM13 36h1v1h-1zM14 36h1v1h-1zM17 36h1v1h-1zM21 36h1v1h-1zM25 36h1v1h-1zM26 36h1v1h-1zM29 36h1v1h-1zM31 36h1v1h-1zM35 36h1v1h-1zM36 36h1v1h-1zM37 36h1v1h-1zM39 36h1v1h-1zM40 36h1v1h-1zM41 36h1v1h-1zM42 36h1v1h-1zM43 36h1v1h-1zM44 36h1v1h-1zM45 36h1v1h-1zM46 36h1v1h-1zM47 36h1v1h-1zM48 36h1v1h-1zM0 37h1v1h-1zM2 37h1v1h-1zM3 37h1v1h-1zM4 37h1v1h-1zM5 37h1v1h-1zM7 37h1v1h-1zM8 37h1v1h-1zM9 37h1v1h-1zM11 37h1v1h-1zM13 37h1v1h-1zM14 37h1v1h-1zM16 37h1v1h-1zM19 37h1v1h-1zM21 37h1v1h-1zM22 37h1v1h-1zM23 37h1v1h-1zM24 37h1v1h-1zM25 37h1v1h-1zM26 37h1v1h-1zM28 37h1v1h-1zM30 37h1v1h-1zM31 37h1v1h-1zM33 37h1v1h-1zM36 37h1v1h-1zM37 37h1v1h-1zM39 37h1v1h-1zM45 37h1v1h-1zM47 37h1v1h-1zM1 38h1v1h-1zM5 38h1v1h-1zM6 38h1v1h-1zM7 38h1v1h-1zM8 38h1v1h-1zM10 38h1v1h-1zM13 38h1v1h-1zM14 38h1v1h-1zM15 38h1v1h-1zM16 38h1v1h-1zM17 38h1v1h-1zM19 38h1v1h-1zM21 38h1v1h-1zM22 38h1v1h-1zM25 38h1v1h-1zM29 38h1v1h-1zM31 38h1v1h-1zM33 38h1v1h-1zM34 38h1v1h-1zM35 38h1v1h-1zM36 38h1v1h-1zM38 38h1v1h-1zM39 38h1v1h-1zM41 38h1v1h-1zM42 38h1v1h-1zM44 38h1v1h-1zM45 38h1v1h-1zM46 38h1v1h-1zM48 38h1v1h-1zM1 39h1v1h-1zM2 39h1v1h-1zM3 39h1v1h-1zM10 39h1v1h-1zM12 39h1v1h-1zM14 39h1v1h-1zM15 39h1v1h-1zM16 39h1v1h-1zM20 39h1v1h-1zM21 39h1v1h-1zM23 39h1v1h-1zM24 39h1v1h-1zM25 39h1v1h-1zM28 39h1v1h-1zM29 39h1v1h-1zM30 39h1v1h-1zM32 39h1v1h-1zM35 39h1v1h-1zM37 39h1v1h-1zM38 39h1v1h-1zM48 39h1v1h-1zM0 40h1v1h-1zM1 40h1v1h-1zM2 40h1v1h-1zM6 40h1v1h-1zM9 40h1v1h-1zM12 40h1v1h-1zM13 40h1v1h-1zM14 40h1v1h-1zM17 40h1v1h-1zM20 40h1v1h-1zM21 40h1v1h-1zM22 40h1v1h-1zM23 40h1v1h-1zM24 40h1v1h-1zM25 40h1v1h-1zM26 40h1v1h-1zM27 40h1v1h-1zM30 40h1v1h-1zM33 40h1v1h-1zM34 40h1v1h-1zM36 40h1v1h-1zM37 40h1v1h-1zM39 40h1v1h-1zM40 40h1v1h-1zM41 40h1v1h-1zM42 40h1v1h-1zM43 40h1v1h-1zM44 40h1v1h-1zM48 40h1v1h-1zM8 41h1v1h-1zM10 41h1v1h-1zM15 41h1v1h-1zM18 41h1v1h-1zM19 41h1v1h-1zM22 41h1v1h-1zM26 41h1v1h-1zM27 41h1v1h-1zM28 41h1v1h-1zM30 41h1v1h-1zM33 41h1v1h-1zM35 41h1v1h-1zM36 41h1v1h-1zM39 41h1v1h-1zM40 41h1v1h-1zM44 41h1v1h-1zM48 41h1v1h-1zM0 42h1v1h-1zM1 42h1v1h-1zM2 42h1v1h-1zM3 42h1v1h-1zM4 42h1v1h-1zM5 42h1v1h-1zM6 42h1v1h-1zM10 42h1v1h-1zM12 42h1v1h-1zM14 42h1v1h-1zM15 42h1v1h-1zM16 42h1v1h-1zM20 42h1v1h-1zM21 42h1v1h-1zM22 42h1v1h-1zM24 42h1v1h-1zM26 42h1v1h-1zM27 42h1v1h-1zM28 42h1v1h-1zM29 42h1v1h-1zM32 42h1v1h-1zM34 42h1v1h-1zM36 42h1v1h-1zM37 42h1v1h-1zM38 42h1v1h-1zM40 42h1v1h-1zM42 42h1v1h-1zM44 42h1v1h-1zM45 42h1v1h-1zM47 42h1v1h-1zM48 42h1v1h-1zM0 43h1v1h-1zM6 43h1v1h-1zM8 43h1v1h-1zM11 43h1v1h-1zM16 43h1v1h-1zM18 43h1v1h-1zM19 43h1v1h-1zM21 43h1v1h-1zM22 43h1v1h-1zM26 43h1v1h-1zM32 43h1v1h-1zM33 43h1v1h-1zM34 43h1v1h-1zM35 43h1v1h-1zM39 43h1v1h-1zM40 43h1v1h-1zM44 43h1v1h-1zM48 43h1v1h-1zM0 44h1v1h-1zM2 44h1v1h-1zM3 44h1v1h-1zM4 44h1v1h-1zM6 44h1v1h-1zM8 44h1v1h-1zM9 44h1v1h-1zM11 44h1v1h-1zM12 44h1v1h-1zM15 44h1v1h-1zM16 44h1v1h-1zM17 44h1v1h-1zM22 44h1v1h-1zM23 44h1v1h-1zM24 44h1v1h-1zM25 44h1v1h-1zM26 44h1v1h-1zM29 44h1v1h-1zM30 44h1v1h-1zM31 44h1v1h-1zM33 44h1v1h-1zM34 44h1v1h-1zM35 44h1v1h-1zM36 44h1v1h-1zM37 44h1v1h-1zM38 44h1v1h-1zM40 44h1v1h-1zM41 44h1v1h-1zM42 44h1v1h-1zM43 44h1v1h-1zM44 44h1v1h-1zM48 44h1v1h-1zM0 45h1v1h-1zM2 45h1v1h-1zM3 45h1v1h-1zM4 45h1v1h-1zM6 45h1v1h-1zM8 45h1v1h-1zM11 45h1v1h-1zM13 45h1v1h-1zM14 45h1v1h-1zM16 45h1v1h-1zM17 45h1v1h-1zM19 45h1v1h-1zM20 45h1v1h-1zM21 45h1v1h-1zM22 45h1v1h-1zM23 45h1v1h-1zM24 45h1v1h-1zM26 45h1v1h-1zM27 45h1v1h-1zM28 45h1v1h-1zM29 45h1v1h-1zM30 45h1v1h-1zM32 45h1v1h-1zM35 45h1v1h-1zM36 45h1v1h-1zM40 45h1v1h-1zM41 45h1v1h-1zM42 45h1v1h-1zM44 45h1v1h-1zM46 45h1v1h-1zM47 45h1v1h-1zM48 45h1v1h-1zM0 46h1v1h-1zM2 46h1v1h-1zM3 46h1v1h-1zM4 46h1v1h-1zM6 46h1v1h-1zM8 46h1v1h-1zM9 46h1v1h-1zM11 46h1v1h-1zM12 46h1v1h-1zM13 46h1v1h-1zM16 46h1v1h-1zM20 46h1v1h-1zM21 46h1v1h-1zM23 46h1v1h-1zM24 46h1v1h-1zM25 46h1v1h-1zM26 46h1v1h-1zM29 46h1v1h-1zM31 46h1v1h-1zM33 46h1v1h-1zM34 46h1v1h-1zM37 46h1v1h-1zM38 46h1v1h-1zM39 46h1v1h-1zM43 46h1v1h-1zM45 46h1v1h-1zM46 46h1v1h-1zM0 47h1v1h-1zM6 47h1v1h-1zM9 47h1v1h-1zM10 47h1v1h-1zM11 47h1v1h-1zM12 47h1v1h-1zM13 47h1v1h-1zM15 47h1v1h-1zM17 47h1v1h-1zM19 47h1v1h-1zM20 47h1v1h-1zM21 47h1v1h-1zM27 47h1v1h-1zM28 47h1v1h-1zM30 47h1v1h-1zM31 47h1v1h-1zM32 47h1v1h-1zM37 47h1v1h-1zM38 47h1v1h-1zM39 47h1v1h-1zM40 47h1v1h-1zM41 47h1v1h-1zM42 47h1v1h-1zM45 47h1v1h-1zM48 47h1v1h-1zM0 48h1v1h-1zM1 48h1v1h-1zM2 48h1v1h-1zM3 48h1v1h-1zM4 48h1v1h-1zM5 48h1v1h-1zM6 48h1v1h-1zM8 48h1v1h-1zM9 48h1v1h-1zM12 48h1v1h-1zM15 48h1v1h-1zM18 48h1v1h-1zM20 48h1v1h-1zM24 48h1v1h-1zM26 48h1v1h-1zM29 48h1v1h-1zM30 48h1v1h-1zM31 48h1v1h-1zM35 48h1v1h-1zM36 48h1v1h-1zM38 48h1v1h-1zM39 48h1v1h-1zM42 48h1v1h-1zM43 48h1v1h-1zM46 48h1v1h-1zM47 48h1v1h-1zM48 48h1v1h-1z"/></symbol>
+<symbol id="qr-mac2" viewBox="-4 -4 57 57"><rect x="-4" y="-4" width="57" height="57" fill="#fff"/><path fill="#090E10" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM11 0h1v1h-1zM12 0h1v1h-1zM17 0h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM21 0h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM28 0h1v1h-1zM30 0h1v1h-1zM31 0h1v1h-1zM32 0h1v1h-1zM33 0h1v1h-1zM35 0h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM40 0h1v1h-1zM42 0h1v1h-1zM43 0h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM47 0h1v1h-1zM48 0h1v1h-1zM0 1h1v1h-1zM6 1h1v1h-1zM10 1h1v1h-1zM17 1h1v1h-1zM18 1h1v1h-1zM20 1h1v1h-1zM22 1h1v1h-1zM26 1h1v1h-1zM28 1h1v1h-1zM34 1h1v1h-1zM35 1h1v1h-1zM36 1h1v1h-1zM37 1h1v1h-1zM38 1h1v1h-1zM39 1h1v1h-1zM40 1h1v1h-1zM42 1h1v1h-1zM48 1h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM10 2h1v1h-1zM12 2h1v1h-1zM13 2h1v1h-1zM15 2h1v1h-1zM17 2h1v1h-1zM19 2h1v1h-1zM21 2h1v1h-1zM26 2h1v1h-1zM27 2h1v1h-1zM29 2h1v1h-1zM31 2h1v1h-1zM32 2h1v1h-1zM39 2h1v1h-1zM40 2h1v1h-1zM42 2h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM46 2h1v1h-1zM48 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM10 3h1v1h-1zM11 3h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM16 3h1v1h-1zM18 3h1v1h-1zM19 3h1v1h-1zM21 3h1v1h-1zM23 3h1v1h-1zM24 3h1v1h-1zM25 3h1v1h-1zM29 3h1v1h-1zM30 3h1v1h-1zM31 3h1v1h-1zM33 3h1v1h-1zM34 3h1v1h-1zM35 3h1v1h-1zM36 3h1v1h-1zM37 3h1v1h-1zM39 3h1v1h-1zM42 3h1v1h-1zM44 3h1v1h-1zM45 3h1v1h-1zM46 3h1v1h-1zM48 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM6 4h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM11 4h1v1h-1zM15 4h1v1h-1zM17 4h1v1h-1zM18 4h1v1h-1zM21 4h1v1h-1zM22 4h1v1h-1zM23 4h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 4h1v1h-1zM29 4h1v1h-1zM30 4h1v1h-1zM32 4h1v1h-1zM33 4h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM42 4h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1zM48 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM13 5h1v1h-1zM16 5h1v1h-1zM19 5h1v1h-1zM21 5h1v1h-1zM22 5h1v1h-1zM26 5h1v1h-1zM27 5h1v1h-1zM28 5h1v1h-1zM29 5h1v1h-1zM30 5h1v1h-1zM32 5h1v1h-1zM34 5h1v1h-1zM37 5h1v1h-1zM38 5h1v1h-1zM42 5h1v1h-1zM48 5h1v1h-1zM0 6h1v1h-1zM1 6h1v1h-1zM2 6h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h1v1h-1zM28 6h1v1h-1zM30 6h1v1h-1zM32 6h1v1h-1zM34 6h1v1h-1zM36 6h1v1h-1zM38 6h1v1h-1zM40 6h1v1h-1zM42 6h1v1h-1zM43 6h1v1h-1zM44 6h1v1h-1zM45 6h1v1h-1zM46 6h1v1h-1zM47 6h1v1h-1zM48 6h1v1h-1zM8 7h1v1h-1zM9 7h1v1h-1zM10 7h1v1h-1zM11 7h1v1h-1zM15 7h1v1h-1zM17 7h1v1h-1zM18 7h1v1h-1zM22 7h1v1h-1zM26 7h1v1h-1zM28 7h1v1h-1zM29 7h1v1h-1zM32 7h1v1h-1zM34 7h1v1h-1zM37 7h1v1h-1zM40 7h1v1h-1zM0 8h1v1h-1zM2 8h1v1h-1zM3 8h1v1h-1zM4 8h1v1h-1zM5 8h1v1h-1zM6 8h1v1h-1zM9 8h1v1h-1zM11 8h1v1h-1zM12 8h1v1h-1zM14 8h1v1h-1zM16 8h1v1h-1zM17 8h1v1h-1zM22 8h1v1h-1zM23 8h1v1h-1zM24 8h1v1h-1zM25 8h1v1h-1zM26 8h1v1h-1zM27 8h1v1h-1zM33 8h1v1h-1zM34 8h1v1h-1zM36 8h1v1h-1zM40 8h1v1h-1zM42 8h1v1h-1zM43 8h1v1h-1zM44 8h1v1h-1zM45 8h1v1h-1zM46 8h1v1h-1zM0 9h1v1h-1zM1 9h1v1h-1zM2 9h1v1h-1zM3 9h1v1h-1zM4 9h1v1h-1zM8 9h1v1h-1zM9 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM12 9h1v1h-1zM13 9h1v1h-1zM14 9h1v1h-1zM15 9h1v1h-1zM16 9h1v1h-1zM19 9h1v1h-1zM22 9h1v1h-1zM23 9h1v1h-1zM24 9h1v1h-1zM25 9h1v1h-1zM27 9h1v1h-1zM28 9h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM33 9h1v1h-1zM37 9h1v1h-1zM39 9h1v1h-1zM42 9h1v1h-1zM43 9h1v1h-1zM45 9h1v1h-1zM46 9h1v1h-1zM3 10h1v1h-1zM4 10h1v1h-1zM5 10h1v1h-1zM6 10h1v1h-1zM7 10h1v1h-1zM8 10h1v1h-1zM9 10h1v1h-1zM10 10h1v1h-1zM15 10h1v1h-1zM18 10h1v1h-1zM19 10h1v1h-1zM21 10h1v1h-1zM24 10h1v1h-1zM25 10h1v1h-1zM26 10h1v1h-1zM29 10h1v1h-1zM34 10h1v1h-1zM36 10h1v1h-1zM37 10h1v1h-1zM38 10h1v1h-1zM39 10h1v1h-1zM40 10h1v1h-1zM41 10h1v1h-1zM44 10h1v1h-1zM45 10h1v1h-1zM46 10h1v1h-1zM47 10h1v1h-1zM48 10h1v1h-1zM1 11h1v1h-1zM2 11h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM9 11h1v1h-1zM18 11h1v1h-1zM27 11h1v1h-1zM28 11h1v1h-1zM29 11h1v1h-1zM30 11h1v1h-1zM31 11h1v1h-1zM32 11h1v1h-1zM34 11h1v1h-1zM35 11h1v1h-1zM37 11h1v1h-1zM38 11h1v1h-1zM42 11h1v1h-1zM43 11h1v1h-1zM44 11h1v1h-1zM0 12h1v1h-1zM1 12h1v1h-1zM2 12h1v1h-1zM6 12h1v1h-1zM10 12h1v1h-1zM13 12h1v1h-1zM16 12h1v1h-1zM21 12h1v1h-1zM23 12h1v1h-1zM24 12h1v1h-1zM26 12h1v1h-1zM30 12h1v1h-1zM34 12h1v1h-1zM35 12h1v1h-1zM36 12h1v1h-1zM38 12h1v1h-1zM39 12h1v1h-1zM40 12h1v1h-1zM41 12h1v1h-1zM43 12h1v1h-1zM45 12h1v1h-1zM47 12h1v1h-1zM48 12h1v1h-1zM0 13h1v1h-1zM1 13h1v1h-1zM4 13h1v1h-1zM10 13h1v1h-1zM11 13h1v1h-1zM14 13h1v1h-1zM15 13h1v1h-1zM19 13h1v1h-1zM20 13h1v1h-1zM21 13h1v1h-1zM22 13h1v1h-1zM23 13h1v1h-1zM28 13h1v1h-1zM29 13h1v1h-1zM30 13h1v1h-1zM35 13h1v1h-1zM37 13h1v1h-1zM41 13h1v1h-1zM42 13h1v1h-1zM43 13h1v1h-1zM44 13h1v1h-1zM45 13h1v1h-1zM2 14h1v1h-1zM4 14h1v1h-1zM5 14h1v1h-1zM6 14h1v1h-1zM9 14h1v1h-1zM10 14h1v1h-1zM11 14h1v1h-1zM14 14h1v1h-1zM17 14h1v1h-1zM20 14h1v1h-1zM23 14h1v1h-1zM24 14h1v1h-1zM25 14h1v1h-1zM26 14h1v1h-1zM28 14h1v1h-1zM29 14h1v1h-1zM30 14h1v1h-1zM31 14h1v1h-1zM33 14h1v1h-1zM35 14h1v1h-1zM37 14h1v1h-1zM43 14h1v1h-1zM45 14h1v1h-1zM47 14h1v1h-1zM48 14h1v1h-1zM0 15h1v1h-1zM1 15h1v1h-1zM3 15h1v1h-1zM7 15h1v1h-1zM10 15h1v1h-1zM12 15h1v1h-1zM13 15h1v1h-1zM18 15h1v1h-1zM19 15h1v1h-1zM20 15h1v1h-1zM23 15h1v1h-1zM25 15h1v1h-1zM26 15h1v1h-1zM27 15h1v1h-1zM28 15h1v1h-1zM29 15h1v1h-1zM31 15h1v1h-1zM32 15h1v1h-1zM34 15h1v1h-1zM37 15h1v1h-1zM42 15h1v1h-1zM47 15h1v1h-1zM1 16h1v1h-1zM2 16h1v1h-1zM3 16h1v1h-1zM4 16h1v1h-1zM5 16h1v1h-1zM6 16h1v1h-1zM8 16h1v1h-1zM9 16h1v1h-1zM11 16h1v1h-1zM13 16h1v1h-1zM15 16h1v1h-1zM16 16h1v1h-1zM17 16h1v1h-1zM19 16h1v1h-1zM20 16h1v1h-1zM22 16h1v1h-1zM23 16h1v1h-1zM24 16h1v1h-1zM29 16h1v1h-1zM30 16h1v1h-1zM31 16h1v1h-1zM35 16h1v1h-1zM36 16h1v1h-1zM39 16h1v1h-1zM40 16h1v1h-1zM41 16h1v1h-1zM42 16h1v1h-1zM43 16h1v1h-1zM45 16h1v1h-1zM46 16h1v1h-1zM47 16h1v1h-1zM48 16h1v1h-1zM0 17h1v1h-1zM1 17h1v1h-1zM3 17h1v1h-1zM4 17h1v1h-1zM10 17h1v1h-1zM15 17h1v1h-1zM17 17h1v1h-1zM19 17h1v1h-1zM25 17h1v1h-1zM27 17h1v1h-1zM28 17h1v1h-1zM29 17h1v1h-1zM30 17h1v1h-1zM31 17h1v1h-1zM35 17h1v1h-1zM36 17h1v1h-1zM42 17h1v1h-1zM45 17h1v1h-1zM46 17h1v1h-1zM47 17h1v1h-1zM0 18h1v1h-1zM2 18h1v1h-1zM3 18h1v1h-1zM5 18h1v1h-1zM6 18h1v1h-1zM8 18h1v1h-1zM9 18h1v1h-1zM10 18h1v1h-1zM13 18h1v1h-1zM14 18h1v1h-1zM16 18h1v1h-1zM19 18h1v1h-1zM21 18h1v1h-1zM22 18h1v1h-1zM23 18h1v1h-1zM24 18h1v1h-1zM27 18h1v1h-1zM30 18h1v1h-1zM32 18h1v1h-1zM33 18h1v1h-1zM35 18h1v1h-1zM38 18h1v1h-1zM39 18h1v1h-1zM44 18h1v1h-1zM47 18h1v1h-1zM48 18h1v1h-1zM4 19h1v1h-1zM5 19h1v1h-1zM9 19h1v1h-1zM10 19h1v1h-1zM11 19h1v1h-1zM15 19h1v1h-1zM20 19h1v1h-1zM23 19h1v1h-1zM24 19h1v1h-1zM25 19h1v1h-1zM26 19h1v1h-1zM27 19h1v1h-1zM29 19h1v1h-1zM30 19h1v1h-1zM31 19h1v1h-1zM34 19h1v1h-1zM35 19h1v1h-1zM44 19h1v1h-1zM1 20h1v1h-1zM2 20h1v1h-1zM3 20h1v1h-1zM4 20h1v1h-1zM6 20h1v1h-1zM9 20h1v1h-1zM10 20h1v1h-1zM19 20h1v1h-1zM20 20h1v1h-1zM21 20h1v1h-1zM22 20h1v1h-1zM23 20h1v1h-1zM24 20h1v1h-1zM25 20h1v1h-1zM26 20h1v1h-1zM29 20h1v1h-1zM31 20h1v1h-1zM35 20h1v1h-1zM36 20h1v1h-1zM39 20h1v1h-1zM40 20h1v1h-1zM42 20h1v1h-1zM43 20h1v1h-1zM45 20h1v1h-1zM46 20h1v1h-1zM47 20h1v1h-1zM48 20h1v1h-1zM0 21h1v1h-1zM1 21h1v1h-1zM3 21h1v1h-1zM7 21h1v1h-1zM12 21h1v1h-1zM14 21h1v1h-1zM22 21h1v1h-1zM24 21h1v1h-1zM25 21h1v1h-1zM28 21h1v1h-1zM29 21h1v1h-1zM30 21h1v1h-1zM32 21h1v1h-1zM33 21h1v1h-1zM37 21h1v1h-1zM39 21h1v1h-1zM42 21h1v1h-1zM43 21h1v1h-1zM44 21h1v1h-1zM45 21h1v1h-1zM46 21h1v1h-1zM48 21h1v1h-1zM2 22h1v1h-1zM3 22h1v1h-1zM4 22h1v1h-1zM5 22h1v1h-1zM6 22h1v1h-1zM7 22h1v1h-1zM8 22h1v1h-1zM12 22h1v1h-1zM17 22h1v1h-1zM19 22h1v1h-1zM20 22h1v1h-1zM21 22h1v1h-1zM22 22h1v1h-1zM23 22h1v1h-1zM24 22h1v1h-1zM25 22h1v1h-1zM26 22h1v1h-1zM29 22h1v1h-1zM31 22h1v1h-1zM34 22h1v1h-1zM36 22h1v1h-1zM38 22h1v1h-1zM40 22h1v1h-1zM41 22h1v1h-1zM42 22h1v1h-1zM43 22h1v1h-1zM44 22h1v1h-1zM46 22h1v1h-1zM47 22h1v1h-1zM48 22h1v1h-1zM4 23h1v1h-1zM8 23h1v1h-1zM9 23h1v1h-1zM11 23h1v1h-1zM12 23h1v1h-1zM16 23h1v1h-1zM17 23h1v1h-1zM18 23h1v1h-1zM19 23h1v1h-1zM22 23h1v1h-1zM26 23h1v1h-1zM28 23h1v1h-1zM30 23h1v1h-1zM31 23h1v1h-1zM32 23h1v1h-1zM33 23h1v1h-1zM35 23h1v1h-1zM40 23h1v1h-1zM44 23h1v1h-1zM45 23h1v1h-1zM48 23h1v1h-1zM1 24h1v1h-1zM2 24h1v1h-1zM3 24h1v1h-1zM4 24h1v1h-1zM6 24h1v1h-1zM8 24h1v1h-1zM9 24h1v1h-1zM11 24h1v1h-1zM13 24h1v1h-1zM17 24h1v1h-1zM19 24h1v1h-1zM21 24h1v1h-1zM22 24h1v1h-1zM24 24h1v1h-1zM26 24h1v1h-1zM27 24h1v1h-1zM29 24h1v1h-1zM36 24h1v1h-1zM38 24h1v1h-1zM40 24h1v1h-1zM42 24h1v1h-1zM44 24h1v1h-1zM46 24h1v1h-1zM0 25h1v1h-1zM1 25h1v1h-1zM3 25h1v1h-1zM4 25h1v1h-1zM8 25h1v1h-1zM12 25h1v1h-1zM14 25h1v1h-1zM15 25h1v1h-1zM16 25h1v1h-1zM19 25h1v1h-1zM22 25h1v1h-1zM26 25h1v1h-1zM27 25h1v1h-1zM30 25h1v1h-1zM32 25h1v1h-1zM33 25h1v1h-1zM35 25h1v1h-1zM36 25h1v1h-1zM40 25h1v1h-1zM44 25h1v1h-1zM46 25h1v1h-1zM47 25h1v1h-1zM1 26h1v1h-1zM3 26h1v1h-1zM4 26h1v1h-1zM5 26h1v1h-1zM6 26h1v1h-1zM7 26h1v1h-1zM8 26h1v1h-1zM9 26h1v1h-1zM10 26h1v1h-1zM11 26h1v1h-1zM13 26h1v1h-1zM17 26h1v1h-1zM20 26h1v1h-1zM22 26h1v1h-1zM23 26h1v1h-1zM24 26h1v1h-1zM25 26h1v1h-1zM26 26h1v1h-1zM27 26h1v1h-1zM28 26h1v1h-1zM29 26h1v1h-1zM31 26h1v1h-1zM32 26h1v1h-1zM34 26h1v1h-1zM37 26h1v1h-1zM38 26h1v1h-1zM40 26h1v1h-1zM41 26h1v1h-1zM42 26h1v1h-1zM43 26h1v1h-1zM44 26h1v1h-1zM46 26h1v1h-1zM47 26h1v1h-1zM48 26h1v1h-1zM2 27h1v1h-1zM3 27h1v1h-1zM4 27h1v1h-1zM7 27h1v1h-1zM8 27h1v1h-1zM9 27h1v1h-1zM12 27h1v1h-1zM17 27h1v1h-1zM18 27h1v1h-1zM19 27h1v1h-1zM20 27h1v1h-1zM23 27h1v1h-1zM24 27h1v1h-1zM26 27h1v1h-1zM27 27h1v1h-1zM30 27h1v1h-1zM32 27h1v1h-1zM34 27h1v1h-1zM35 27h1v1h-1zM37 27h1v1h-1zM41 27h1v1h-1zM43 27h1v1h-1zM44 27h1v1h-1zM47 27h1v1h-1zM2 28h1v1h-1zM4 28h1v1h-1zM6 28h1v1h-1zM8 28h1v1h-1zM9 28h1v1h-1zM10 28h1v1h-1zM14 28h1v1h-1zM15 28h1v1h-1zM17 28h1v1h-1zM19 28h1v1h-1zM22 28h1v1h-1zM24 28h1v1h-1zM26 28h1v1h-1zM30 28h1v1h-1zM31 28h1v1h-1zM36 28h1v1h-1zM37 28h1v1h-1zM39 28h1v1h-1zM40 28h1v1h-1zM42 28h1v1h-1zM43 28h1v1h-1zM44 28h1v1h-1zM46 28h1v1h-1zM48 28h1v1h-1zM1 29h1v1h-1zM2 29h1v1h-1zM4 29h1v1h-1zM5 29h1v1h-1zM7 29h1v1h-1zM8 29h1v1h-1zM9 29h1v1h-1zM11 29h1v1h-1zM13 29h1v1h-1zM14 29h1v1h-1zM15 29h1v1h-1zM16 29h1v1h-1zM17 29h1v1h-1zM21 29h1v1h-1zM23 29h1v1h-1zM24 29h1v1h-1zM27 29h1v1h-1zM29 29h1v1h-1zM30 29h1v1h-1zM31 29h1v1h-1zM37 29h1v1h-1zM39 29h1v1h-1zM42 29h1v1h-1zM45 29h1v1h-1zM46 29h1v1h-1zM47 29h1v1h-1zM1 30h1v1h-1zM3 30h1v1h-1zM4 30h1v1h-1zM5 30h1v1h-1zM6 30h1v1h-1zM8 30h1v1h-1zM9 30h1v1h-1zM11 30h1v1h-1zM12 30h1v1h-1zM18 30h1v1h-1zM19 30h1v1h-1zM21 30h1v1h-1zM22 30h1v1h-1zM23 30h1v1h-1zM24 30h1v1h-1zM25 30h1v1h-1zM27 30h1v1h-1zM29 30h1v1h-1zM30 30h1v1h-1zM32 30h1v1h-1zM33 30h1v1h-1zM36 30h1v1h-1zM37 30h1v1h-1zM38 30h1v1h-1zM39 30h1v1h-1zM40 30h1v1h-1zM42 30h1v1h-1zM43 30h1v1h-1zM47 30h1v1h-1zM48 30h1v1h-1zM1 31h1v1h-1zM3 31h1v1h-1zM7 31h1v1h-1zM8 31h1v1h-1zM9 31h1v1h-1zM11 31h1v1h-1zM14 31h1v1h-1zM15 31h1v1h-1zM16 31h1v1h-1zM18 31h1v1h-1zM21 31h1v1h-1zM22 31h1v1h-1zM23 31h1v1h-1zM27 31h1v1h-1zM29 31h1v1h-1zM32 31h1v1h-1zM37 31h1v1h-1zM40 31h1v1h-1zM41 31h1v1h-1zM43 31h1v1h-1zM44 31h1v1h-1zM48 31h1v1h-1zM0 32h1v1h-1zM2 32h1v1h-1zM3 32h1v1h-1zM6 32h1v1h-1zM8 32h1v1h-1zM9 32h1v1h-1zM15 32h1v1h-1zM16 32h1v1h-1zM18 32h1v1h-1zM19 32h1v1h-1zM20 32h1v1h-1zM23 32h1v1h-1zM29 32h1v1h-1zM30 32h1v1h-1zM31 32h1v1h-1zM34 32h1v1h-1zM35 32h1v1h-1zM36 32h1v1h-1zM38 32h1v1h-1zM39 32h1v1h-1zM40 32h1v1h-1zM43 32h1v1h-1zM44 32h1v1h-1zM45 32h1v1h-1zM46 32h1v1h-1zM47 32h1v1h-1zM48 32h1v1h-1zM0 33h1v1h-1zM1 33h1v1h-1zM3 33h1v1h-1zM4 33h1v1h-1zM5 33h1v1h-1zM7 33h1v1h-1zM8 33h1v1h-1zM9 33h1v1h-1zM10 33h1v1h-1zM13 33h1v1h-1zM17 33h1v1h-1zM18 33h1v1h-1zM21 33h1v1h-1zM24 33h1v1h-1zM28 33h1v1h-1zM29 33h1v1h-1zM30 33h1v1h-1zM32 33h1v1h-1zM35 33h1v1h-1zM36 33h1v1h-1zM37 33h1v1h-1zM39 33h1v1h-1zM40 33h1v1h-1zM41 33h1v1h-1zM43 33h1v1h-1zM46 33h1v1h-1zM0 34h1v1h-1zM2 34h1v1h-1zM3 34h1v1h-1zM5 34h1v1h-1zM6 34h1v1h-1zM7 34h1v1h-1zM9 34h1v1h-1zM11 34h1v1h-1zM12 34h1v1h-1zM16 34h1v1h-1zM17 34h1v1h-1zM19 34h1v1h-1zM20 34h1v1h-1zM21 34h1v1h-1zM27 34h1v1h-1zM33 34h1v1h-1zM34 34h1v1h-1zM36 34h1v1h-1zM38 34h1v1h-1zM39 34h1v1h-1zM42 34h1v1h-1zM45 34h1v1h-1zM46 34h1v1h-1zM48 34h1v1h-1zM1 35h1v1h-1zM2 35h1v1h-1zM5 35h1v1h-1zM11 35h1v1h-1zM12 35h1v1h-1zM13 35h1v1h-1zM14 35h1v1h-1zM15 35h1v1h-1zM16 35h1v1h-1zM19 35h1v1h-1zM21 35h1v1h-1zM23 35h1v1h-1zM24 35h1v1h-1zM26 35h1v1h-1zM27 35h1v1h-1zM29 35h1v1h-1zM30 35h1v1h-1zM32 35h1v1h-1zM33 35h1v1h-1zM40 35h1v1h-1zM41 35h1v1h-1zM44 35h1v1h-1zM47 35h1v1h-1zM48 35h1v1h-1zM2 36h1v1h-1zM3 36h1v1h-1zM6 36h1v1h-1zM8 36h1v1h-1zM12 36h1v1h-1zM13 36h1v1h-1zM14 36h1v1h-1zM16 36h1v1h-1zM17 36h1v1h-1zM21 36h1v1h-1zM25 36h1v1h-1zM26 36h1v1h-1zM29 36h1v1h-1zM31 36h1v1h-1zM35 36h1v1h-1zM36 36h1v1h-1zM37 36h1v1h-1zM39 36h1v1h-1zM40 36h1v1h-1zM41 36h1v1h-1zM42 36h1v1h-1zM43 36h1v1h-1zM44 36h1v1h-1zM45 36h1v1h-1zM46 36h1v1h-1zM47 36h1v1h-1zM48 36h1v1h-1zM2 37h1v1h-1zM3 37h1v1h-1zM4 37h1v1h-1zM5 37h1v1h-1zM7 37h1v1h-1zM8 37h1v1h-1zM9 37h1v1h-1zM11 37h1v1h-1zM12 37h1v1h-1zM13 37h1v1h-1zM14 37h1v1h-1zM16 37h1v1h-1zM19 37h1v1h-1zM21 37h1v1h-1zM22 37h1v1h-1zM23 37h1v1h-1zM24 37h1v1h-1zM25 37h1v1h-1zM26 37h1v1h-1zM28 37h1v1h-1zM30 37h1v1h-1zM31 37h1v1h-1zM33 37h1v1h-1zM36 37h1v1h-1zM37 37h1v1h-1zM39 37h1v1h-1zM45 37h1v1h-1zM47 37h1v1h-1zM1 38h1v1h-1zM5 38h1v1h-1zM6 38h1v1h-1zM7 38h1v1h-1zM8 38h1v1h-1zM10 38h1v1h-1zM12 38h1v1h-1zM13 38h1v1h-1zM14 38h1v1h-1zM17 38h1v1h-1zM19 38h1v1h-1zM21 38h1v1h-1zM22 38h1v1h-1zM25 38h1v1h-1zM29 38h1v1h-1zM31 38h1v1h-1zM33 38h1v1h-1zM34 38h1v1h-1zM35 38h1v1h-1zM36 38h1v1h-1zM38 38h1v1h-1zM39 38h1v1h-1zM41 38h1v1h-1zM42 38h1v1h-1zM44 38h1v1h-1zM45 38h1v1h-1zM46 38h1v1h-1zM48 38h1v1h-1zM1 39h1v1h-1zM2 39h1v1h-1zM3 39h1v1h-1zM10 39h1v1h-1zM12 39h1v1h-1zM14 39h1v1h-1zM15 39h1v1h-1zM20 39h1v1h-1zM21 39h1v1h-1zM23 39h1v1h-1zM24 39h1v1h-1zM25 39h1v1h-1zM28 39h1v1h-1zM29 39h1v1h-1zM30 39h1v1h-1zM32 39h1v1h-1zM35 39h1v1h-1zM37 39h1v1h-1zM38 39h1v1h-1zM48 39h1v1h-1zM0 40h1v1h-1zM1 40h1v1h-1zM2 40h1v1h-1zM6 40h1v1h-1zM9 40h1v1h-1zM12 40h1v1h-1zM13 40h1v1h-1zM14 40h1v1h-1zM17 40h1v1h-1zM20 40h1v1h-1zM21 40h1v1h-1zM22 40h1v1h-1zM23 40h1v1h-1zM24 40h1v1h-1zM25 40h1v1h-1zM26 40h1v1h-1zM27 40h1v1h-1zM30 40h1v1h-1zM33 40h1v1h-1zM34 40h1v1h-1zM36 40h1v1h-1zM37 40h1v1h-1zM39 40h1v1h-1zM40 40h1v1h-1zM41 40h1v1h-1zM42 40h1v1h-1zM43 40h1v1h-1zM44 40h1v1h-1zM48 40h1v1h-1zM8 41h1v1h-1zM10 41h1v1h-1zM15 41h1v1h-1zM18 41h1v1h-1zM19 41h1v1h-1zM22 41h1v1h-1zM26 41h1v1h-1zM27 41h1v1h-1zM28 41h1v1h-1zM30 41h1v1h-1zM33 41h1v1h-1zM35 41h1v1h-1zM36 41h1v1h-1zM39 41h1v1h-1zM40 41h1v1h-1zM44 41h1v1h-1zM48 41h1v1h-1zM0 42h1v1h-1zM1 42h1v1h-1zM2 42h1v1h-1zM3 42h1v1h-1zM4 42h1v1h-1zM5 42h1v1h-1zM6 42h1v1h-1zM10 42h1v1h-1zM12 42h1v1h-1zM14 42h1v1h-1zM15 42h1v1h-1zM16 42h1v1h-1zM18 42h1v1h-1zM20 42h1v1h-1zM21 42h1v1h-1zM22 42h1v1h-1zM24 42h1v1h-1zM26 42h1v1h-1zM27 42h1v1h-1zM28 42h1v1h-1zM29 42h1v1h-1zM32 42h1v1h-1zM34 42h1v1h-1zM36 42h1v1h-1zM37 42h1v1h-1zM38 42h1v1h-1zM40 42h1v1h-1zM42 42h1v1h-1zM44 42h1v1h-1zM45 42h1v1h-1zM47 42h1v1h-1zM48 42h1v1h-1zM0 43h1v1h-1zM6 43h1v1h-1zM8 43h1v1h-1zM11 43h1v1h-1zM13 43h1v1h-1zM16 43h1v1h-1zM18 43h1v1h-1zM19 43h1v1h-1zM21 43h1v1h-1zM22 43h1v1h-1zM26 43h1v1h-1zM32 43h1v1h-1zM33 43h1v1h-1zM34 43h1v1h-1zM35 43h1v1h-1zM39 43h1v1h-1zM40 43h1v1h-1zM44 43h1v1h-1zM48 43h1v1h-1zM0 44h1v1h-1zM2 44h1v1h-1zM3 44h1v1h-1zM4 44h1v1h-1zM6 44h1v1h-1zM8 44h1v1h-1zM9 44h1v1h-1zM10 44h1v1h-1zM11 44h1v1h-1zM12 44h1v1h-1zM13 44h1v1h-1zM14 44h1v1h-1zM15 44h1v1h-1zM16 44h1v1h-1zM18 44h1v1h-1zM22 44h1v1h-1zM23 44h1v1h-1zM24 44h1v1h-1zM25 44h1v1h-1zM26 44h1v1h-1zM29 44h1v1h-1zM30 44h1v1h-1zM31 44h1v1h-1zM33 44h1v1h-1zM34 44h1v1h-1zM35 44h1v1h-1zM36 44h1v1h-1zM37 44h1v1h-1zM38 44h1v1h-1zM40 44h1v1h-1zM41 44h1v1h-1zM42 44h1v1h-1zM43 44h1v1h-1zM44 44h1v1h-1zM48 44h1v1h-1zM0 45h1v1h-1zM2 45h1v1h-1zM3 45h1v1h-1zM4 45h1v1h-1zM6 45h1v1h-1zM8 45h1v1h-1zM10 45h1v1h-1zM11 45h1v1h-1zM13 45h1v1h-1zM14 45h1v1h-1zM16 45h1v1h-1zM17 45h1v1h-1zM19 45h1v1h-1zM20 45h1v1h-1zM21 45h1v1h-1zM22 45h1v1h-1zM23 45h1v1h-1zM24 45h1v1h-1zM26 45h1v1h-1zM27 45h1v1h-1zM28 45h1v1h-1zM29 45h1v1h-1zM30 45h1v1h-1zM32 45h1v1h-1zM35 45h1v1h-1zM36 45h1v1h-1zM40 45h1v1h-1zM41 45h1v1h-1zM42 45h1v1h-1zM44 45h1v1h-1zM46 45h1v1h-1zM47 45h1v1h-1zM48 45h1v1h-1zM0 46h1v1h-1zM2 46h1v1h-1zM3 46h1v1h-1zM4 46h1v1h-1zM6 46h1v1h-1zM8 46h1v1h-1zM9 46h1v1h-1zM11 46h1v1h-1zM12 46h1v1h-1zM13 46h1v1h-1zM16 46h1v1h-1zM20 46h1v1h-1zM21 46h1v1h-1zM23 46h1v1h-1zM24 46h1v1h-1zM25 46h1v1h-1zM26 46h1v1h-1zM29 46h1v1h-1zM31 46h1v1h-1zM33 46h1v1h-1zM34 46h1v1h-1zM37 46h1v1h-1zM38 46h1v1h-1zM39 46h1v1h-1zM43 46h1v1h-1zM45 46h1v1h-1zM46 46h1v1h-1zM0 47h1v1h-1zM6 47h1v1h-1zM9 47h1v1h-1zM10 47h1v1h-1zM11 47h1v1h-1zM12 47h1v1h-1zM13 47h1v1h-1zM15 47h1v1h-1zM17 47h1v1h-1zM19 47h1v1h-1zM20 47h1v1h-1zM21 47h1v1h-1zM27 47h1v1h-1zM28 47h1v1h-1zM30 47h1v1h-1zM31 47h1v1h-1zM32 47h1v1h-1zM37 47h1v1h-1zM38 47h1v1h-1zM40 47h1v1h-1zM41 47h1v1h-1zM42 47h1v1h-1zM45 47h1v1h-1zM48 47h1v1h-1zM0 48h1v1h-1zM1 48h1v1h-1zM2 48h1v1h-1zM3 48h1v1h-1zM4 48h1v1h-1zM5 48h1v1h-1zM6 48h1v1h-1zM8 48h1v1h-1zM9 48h1v1h-1zM12 48h1v1h-1zM15 48h1v1h-1zM18 48h1v1h-1zM20 48h1v1h-1zM24 48h1v1h-1zM26 48h1v1h-1zM29 48h1v1h-1zM30 48h1v1h-1zM31 48h1v1h-1zM35 48h1v1h-1zM36 48h1v1h-1zM38 48h1v1h-1zM42 48h1v1h-1zM43 48h1v1h-1zM46 48h1v1h-1zM47 48h1v1h-1zM48 48h1v1h-1z"/></symbol>
+<symbol id="qr-win" viewBox="-4 -4 57 57"><rect x="-4" y="-4" width="57" height="57" fill="#fff"/><path fill="#090E10" d="M0 0h1v1h-1zM1 0h1v1h-1zM2 0h1v1h-1zM3 0h1v1h-1zM4 0h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM10 0h1v1h-1zM13 0h1v1h-1zM16 0h1v1h-1zM18 0h1v1h-1zM19 0h1v1h-1zM23 0h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM27 0h1v1h-1zM28 0h1v1h-1zM29 0h1v1h-1zM30 0h1v1h-1zM33 0h1v1h-1zM35 0h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM40 0h1v1h-1zM42 0h1v1h-1zM43 0h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM47 0h1v1h-1zM48 0h1v1h-1zM0 1h1v1h-1zM6 1h1v1h-1zM9 1h1v1h-1zM11 1h1v1h-1zM14 1h1v1h-1zM15 1h1v1h-1zM16 1h1v1h-1zM22 1h1v1h-1zM24 1h1v1h-1zM27 1h1v1h-1zM30 1h1v1h-1zM31 1h1v1h-1zM34 1h1v1h-1zM35 1h1v1h-1zM36 1h1v1h-1zM37 1h1v1h-1zM38 1h1v1h-1zM39 1h1v1h-1zM40 1h1v1h-1zM42 1h1v1h-1zM48 1h1v1h-1zM0 2h1v1h-1zM2 2h1v1h-1zM3 2h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM9 2h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM15 2h1v1h-1zM16 2h1v1h-1zM17 2h1v1h-1zM21 2h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM27 2h1v1h-1zM28 2h1v1h-1zM29 2h1v1h-1zM31 2h1v1h-1zM39 2h1v1h-1zM40 2h1v1h-1zM42 2h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM46 2h1v1h-1zM48 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM3 3h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM8 3h1v1h-1zM9 3h1v1h-1zM10 3h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM17 3h1v1h-1zM19 3h1v1h-1zM21 3h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM29 3h1v1h-1zM30 3h1v1h-1zM31 3h1v1h-1zM33 3h1v1h-1zM34 3h1v1h-1zM35 3h1v1h-1zM36 3h1v1h-1zM37 3h1v1h-1zM39 3h1v1h-1zM42 3h1v1h-1zM44 3h1v1h-1zM45 3h1v1h-1zM46 3h1v1h-1zM48 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM3 4h1v1h-1zM4 4h1v1h-1zM6 4h1v1h-1zM8 4h1v1h-1zM10 4h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM15 4h1v1h-1zM21 4h1v1h-1zM22 4h1v1h-1zM23 4h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 4h1v1h-1zM30 4h1v1h-1zM31 4h1v1h-1zM33 4h1v1h-1zM35 4h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM42 4h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1zM48 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM8 5h1v1h-1zM10 5h1v1h-1zM11 5h1v1h-1zM12 5h1v1h-1zM15 5h1v1h-1zM19 5h1v1h-1zM21 5h1v1h-1zM22 5h1v1h-1zM26 5h1v1h-1zM29 5h1v1h-1zM34 5h1v1h-1zM35 5h1v1h-1zM36 5h1v1h-1zM37 5h1v1h-1zM38 5h1v1h-1zM42 5h1v1h-1zM48 5h1v1h-1zM0 6h1v1h-1zM1 6h1v1h-1zM2 6h1v1h-1zM3 6h1v1h-1zM4 6h1v1h-1zM5 6h1v1h-1zM6 6h1v1h-1zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h1v1h-1zM24 6h1v1h-1zM26 6h1v1h-1zM28 6h1v1h-1zM30 6h1v1h-1zM32 6h1v1h-1zM34 6h1v1h-1zM36 6h1v1h-1zM38 6h1v1h-1zM40 6h1v1h-1zM42 6h1v1h-1zM43 6h1v1h-1zM44 6h1v1h-1zM45 6h1v1h-1zM46 6h1v1h-1zM47 6h1v1h-1zM48 6h1v1h-1zM8 7h1v1h-1zM12 7h1v1h-1zM13 7h1v1h-1zM14 7h1v1h-1zM15 7h1v1h-1zM18 7h1v1h-1zM22 7h1v1h-1zM26 7h1v1h-1zM28 7h1v1h-1zM29 7h1v1h-1zM32 7h1v1h-1zM34 7h1v1h-1zM37 7h1v1h-1zM40 7h1v1h-1zM0 8h1v1h-1zM2 8h1v1h-1zM3 8h1v1h-1zM4 8h1v1h-1zM5 8h1v1h-1zM6 8h1v1h-1zM10 8h1v1h-1zM12 8h1v1h-1zM13 8h1v1h-1zM14 8h1v1h-1zM15 8h1v1h-1zM16 8h1v1h-1zM20 8h1v1h-1zM22 8h1v1h-1zM23 8h1v1h-1zM24 8h1v1h-1zM25 8h1v1h-1zM26 8h1v1h-1zM27 8h1v1h-1zM33 8h1v1h-1zM34 8h1v1h-1zM36 8h1v1h-1zM40 8h1v1h-1zM42 8h1v1h-1zM43 8h1v1h-1zM44 8h1v1h-1zM45 8h1v1h-1zM46 8h1v1h-1zM0 9h1v1h-1zM1 9h1v1h-1zM3 9h1v1h-1zM5 9h1v1h-1zM10 9h1v1h-1zM11 9h1v1h-1zM14 9h1v1h-1zM16 9h1v1h-1zM19 9h1v1h-1zM21 9h1v1h-1zM24 9h1v1h-1zM27 9h1v1h-1zM28 9h1v1h-1zM30 9h1v1h-1zM31 9h1v1h-1zM33 9h1v1h-1zM37 9h1v1h-1zM39 9h1v1h-1zM42 9h1v1h-1zM43 9h1v1h-1zM44 9h1v1h-1zM46 9h1v1h-1zM4 10h1v1h-1zM6 10h1v1h-1zM8 10h1v1h-1zM10 10h1v1h-1zM11 10h1v1h-1zM12 10h1v1h-1zM13 10h1v1h-1zM14 10h1v1h-1zM15 10h1v1h-1zM16 10h1v1h-1zM18 10h1v1h-1zM19 10h1v1h-1zM23 10h1v1h-1zM25 10h1v1h-1zM26 10h1v1h-1zM29 10h1v1h-1zM34 10h1v1h-1zM36 10h1v1h-1zM37 10h1v1h-1zM38 10h1v1h-1zM39 10h1v1h-1zM41 10h1v1h-1zM46 10h1v1h-1zM47 10h1v1h-1zM48 10h1v1h-1zM3 11h1v1h-1zM4 11h1v1h-1zM5 11h1v1h-1zM8 11h1v1h-1zM11 11h1v1h-1zM12 11h1v1h-1zM15 11h1v1h-1zM16 11h1v1h-1zM17 11h1v1h-1zM18 11h1v1h-1zM23 11h1v1h-1zM28 11h1v1h-1zM31 11h1v1h-1zM32 11h1v1h-1zM35 11h1v1h-1zM37 11h1v1h-1zM38 11h1v1h-1zM39 11h1v1h-1zM40 11h1v1h-1zM42 11h1v1h-1zM44 11h1v1h-1zM48 11h1v1h-1zM2 12h1v1h-1zM4 12h1v1h-1zM6 12h1v1h-1zM9 12h1v1h-1zM10 12h1v1h-1zM11 12h1v1h-1zM12 12h1v1h-1zM15 12h1v1h-1zM16 12h1v1h-1zM17 12h1v1h-1zM22 12h1v1h-1zM24 12h1v1h-1zM26 12h1v1h-1zM30 12h1v1h-1zM33 12h1v1h-1zM35 12h1v1h-1zM36 12h1v1h-1zM38 12h1v1h-1zM39 12h1v1h-1zM41 12h1v1h-1zM43 12h1v1h-1zM45 12h1v1h-1zM46 12h1v1h-1zM0 13h1v1h-1zM3 13h1v1h-1zM4 13h1v1h-1zM10 13h1v1h-1zM11 13h1v1h-1zM15 13h1v1h-1zM16 13h1v1h-1zM18 13h1v1h-1zM19 13h1v1h-1zM20 13h1v1h-1zM22 13h1v1h-1zM24 13h1v1h-1zM27 13h1v1h-1zM29 13h1v1h-1zM30 13h1v1h-1zM33 13h1v1h-1zM35 13h1v1h-1zM37 13h1v1h-1zM41 13h1v1h-1zM42 13h1v1h-1zM44 13h1v1h-1zM45 13h1v1h-1zM0 14h1v1h-1zM2 14h1v1h-1zM3 14h1v1h-1zM4 14h1v1h-1zM6 14h1v1h-1zM10 14h1v1h-1zM11 14h1v1h-1zM12 14h1v1h-1zM15 14h1v1h-1zM17 14h1v1h-1zM18 14h1v1h-1zM20 14h1v1h-1zM21 14h1v1h-1zM22 14h1v1h-1zM25 14h1v1h-1zM26 14h1v1h-1zM27 14h1v1h-1zM28 14h1v1h-1zM29 14h1v1h-1zM30 14h1v1h-1zM31 14h1v1h-1zM34 14h1v1h-1zM35 14h1v1h-1zM38 14h1v1h-1zM40 14h1v1h-1zM45 14h1v1h-1zM47 14h1v1h-1zM48 14h1v1h-1zM0 15h1v1h-1zM2 15h1v1h-1zM5 15h1v1h-1zM7 15h1v1h-1zM8 15h1v1h-1zM14 15h1v1h-1zM15 15h1v1h-1zM17 15h1v1h-1zM19 15h1v1h-1zM20 15h1v1h-1zM22 15h1v1h-1zM23 15h1v1h-1zM25 15h1v1h-1zM26 15h1v1h-1zM28 15h1v1h-1zM29 15h1v1h-1zM31 15h1v1h-1zM34 15h1v1h-1zM39 15h1v1h-1zM41 15h1v1h-1zM42 15h1v1h-1zM44 15h1v1h-1zM47 15h1v1h-1zM0 16h1v1h-1zM1 16h1v1h-1zM2 16h1v1h-1zM3 16h1v1h-1zM4 16h1v1h-1zM6 16h1v1h-1zM10 16h1v1h-1zM11 16h1v1h-1zM12 16h1v1h-1zM15 16h1v1h-1zM16 16h1v1h-1zM17 16h1v1h-1zM21 16h1v1h-1zM23 16h1v1h-1zM24 16h1v1h-1zM25 16h1v1h-1zM27 16h1v1h-1zM29 16h1v1h-1zM31 16h1v1h-1zM35 16h1v1h-1zM36 16h1v1h-1zM39 16h1v1h-1zM40 16h1v1h-1zM41 16h1v1h-1zM43 16h1v1h-1zM45 16h1v1h-1zM46 16h1v1h-1zM47 16h1v1h-1zM48 16h1v1h-1zM2 17h1v1h-1zM3 17h1v1h-1zM4 17h1v1h-1zM7 17h1v1h-1zM8 17h1v1h-1zM9 17h1v1h-1zM10 17h1v1h-1zM11 17h1v1h-1zM12 17h1v1h-1zM15 17h1v1h-1zM16 17h1v1h-1zM17 17h1v1h-1zM19 17h1v1h-1zM21 17h1v1h-1zM22 17h1v1h-1zM27 17h1v1h-1zM29 17h1v1h-1zM30 17h1v1h-1zM31 17h1v1h-1zM32 17h1v1h-1zM35 17h1v1h-1zM36 17h1v1h-1zM42 17h1v1h-1zM45 17h1v1h-1zM46 17h1v1h-1zM47 17h1v1h-1zM3 18h1v1h-1zM4 18h1v1h-1zM6 18h1v1h-1zM7 18h1v1h-1zM9 18h1v1h-1zM10 18h1v1h-1zM11 18h1v1h-1zM12 18h1v1h-1zM13 18h1v1h-1zM14 18h1v1h-1zM16 18h1v1h-1zM20 18h1v1h-1zM23 18h1v1h-1zM24 18h1v1h-1zM25 18h1v1h-1zM26 18h1v1h-1zM27 18h1v1h-1zM28 18h1v1h-1zM29 18h1v1h-1zM30 18h1v1h-1zM32 18h1v1h-1zM33 18h1v1h-1zM35 18h1v1h-1zM38 18h1v1h-1zM39 18h1v1h-1zM47 18h1v1h-1zM48 18h1v1h-1zM2 19h1v1h-1zM3 19h1v1h-1zM7 19h1v1h-1zM9 19h1v1h-1zM10 19h1v1h-1zM12 19h1v1h-1zM13 19h1v1h-1zM16 19h1v1h-1zM18 19h1v1h-1zM19 19h1v1h-1zM23 19h1v1h-1zM26 19h1v1h-1zM27 19h1v1h-1zM28 19h1v1h-1zM30 19h1v1h-1zM31 19h1v1h-1zM32 19h1v1h-1zM34 19h1v1h-1zM41 19h1v1h-1zM42 19h1v1h-1zM44 19h1v1h-1zM1 20h1v1h-1zM3 20h1v1h-1zM6 20h1v1h-1zM8 20h1v1h-1zM13 20h1v1h-1zM14 20h1v1h-1zM16 20h1v1h-1zM20 20h1v1h-1zM24 20h1v1h-1zM25 20h1v1h-1zM26 20h1v1h-1zM30 20h1v1h-1zM31 20h1v1h-1zM35 20h1v1h-1zM36 20h1v1h-1zM39 20h1v1h-1zM40 20h1v1h-1zM41 20h1v1h-1zM42 20h1v1h-1zM43 20h1v1h-1zM45 20h1v1h-1zM46 20h1v1h-1zM47 20h1v1h-1zM48 20h1v1h-1zM1 21h1v1h-1zM2 21h1v1h-1zM3 21h1v1h-1zM5 21h1v1h-1zM7 21h1v1h-1zM8 21h1v1h-1zM9 21h1v1h-1zM12 21h1v1h-1zM16 21h1v1h-1zM17 21h1v1h-1zM18 21h1v1h-1zM19 21h1v1h-1zM22 21h1v1h-1zM25 21h1v1h-1zM27 21h1v1h-1zM29 21h1v1h-1zM30 21h1v1h-1zM33 21h1v1h-1zM36 21h1v1h-1zM37 21h1v1h-1zM39 21h1v1h-1zM41 21h1v1h-1zM42 21h1v1h-1zM43 21h1v1h-1zM44 21h1v1h-1zM45 21h1v1h-1zM46 21h1v1h-1zM3 22h1v1h-1zM4 22h1v1h-1zM5 22h1v1h-1zM6 22h1v1h-1zM7 22h1v1h-1zM8 22h1v1h-1zM11 22h1v1h-1zM14 22h1v1h-1zM16 22h1v1h-1zM17 22h1v1h-1zM20 22h1v1h-1zM21 22h1v1h-1zM22 22h1v1h-1zM23 22h1v1h-1zM24 22h1v1h-1zM25 22h1v1h-1zM26 22h1v1h-1zM27 22h1v1h-1zM30 22h1v1h-1zM32 22h1v1h-1zM34 22h1v1h-1zM36 22h1v1h-1zM38 22h1v1h-1zM40 22h1v1h-1zM41 22h1v1h-1zM42 22h1v1h-1zM43 22h1v1h-1zM44 22h1v1h-1zM47 22h1v1h-1zM48 22h1v1h-1zM4 23h1v1h-1zM8 23h1v1h-1zM9 23h1v1h-1zM10 23h1v1h-1zM12 23h1v1h-1zM13 23h1v1h-1zM18 23h1v1h-1zM22 23h1v1h-1zM26 23h1v1h-1zM28 23h1v1h-1zM30 23h1v1h-1zM31 23h1v1h-1zM32 23h1v1h-1zM33 23h1v1h-1zM35 23h1v1h-1zM40 23h1v1h-1zM44 23h1v1h-1zM48 23h1v1h-1zM0 24h1v1h-1zM4 24h1v1h-1zM6 24h1v1h-1zM8 24h1v1h-1zM9 24h1v1h-1zM11 24h1v1h-1zM12 24h1v1h-1zM13 24h1v1h-1zM16 24h1v1h-1zM20 24h1v1h-1zM21 24h1v1h-1zM22 24h1v1h-1zM24 24h1v1h-1zM26 24h1v1h-1zM27 24h1v1h-1zM36 24h1v1h-1zM38 24h1v1h-1zM40 24h1v1h-1zM42 24h1v1h-1zM44 24h1v1h-1zM0 25h1v1h-1zM4 25h1v1h-1zM8 25h1v1h-1zM9 25h1v1h-1zM10 25h1v1h-1zM12 25h1v1h-1zM13 25h1v1h-1zM15 25h1v1h-1zM19 25h1v1h-1zM22 25h1v1h-1zM26 25h1v1h-1zM27 25h1v1h-1zM30 25h1v1h-1zM32 25h1v1h-1zM33 25h1v1h-1zM35 25h1v1h-1zM36 25h1v1h-1zM40 25h1v1h-1zM44 25h1v1h-1zM45 25h1v1h-1zM46 25h1v1h-1zM47 25h1v1h-1zM1 26h1v1h-1zM3 26h1v1h-1zM4 26h1v1h-1zM5 26h1v1h-1zM6 26h1v1h-1zM7 26h1v1h-1zM8 26h1v1h-1zM9 26h1v1h-1zM15 26h1v1h-1zM16 26h1v1h-1zM17 26h1v1h-1zM18 26h1v1h-1zM19 26h1v1h-1zM20 26h1v1h-1zM22 26h1v1h-1zM23 26h1v1h-1zM24 26h1v1h-1zM25 26h1v1h-1zM26 26h1v1h-1zM27 26h1v1h-1zM28 26h1v1h-1zM29 26h1v1h-1zM31 26h1v1h-1zM32 26h1v1h-1zM34 26h1v1h-1zM37 26h1v1h-1zM38 26h1v1h-1zM40 26h1v1h-1zM41 26h1v1h-1zM42 26h1v1h-1zM43 26h1v1h-1zM44 26h1v1h-1zM45 26h1v1h-1zM46 26h1v1h-1zM48 26h1v1h-1zM0 27h1v1h-1zM1 27h1v1h-1zM5 27h1v1h-1zM9 27h1v1h-1zM10 27h1v1h-1zM14 27h1v1h-1zM15 27h1v1h-1zM16 27h1v1h-1zM17 27h1v1h-1zM21 27h1v1h-1zM24 27h1v1h-1zM25 27h1v1h-1zM28 27h1v1h-1zM30 27h1v1h-1zM32 27h1v1h-1zM33 27h1v1h-1zM35 27h1v1h-1zM41 27h1v1h-1zM43 27h1v1h-1zM44 27h1v1h-1zM47 27h1v1h-1zM48 27h1v1h-1zM1 28h1v1h-1zM3 28h1v1h-1zM6 28h1v1h-1zM7 28h1v1h-1zM8 28h1v1h-1zM10 28h1v1h-1zM11 28h1v1h-1zM13 28h1v1h-1zM15 28h1v1h-1zM18 28h1v1h-1zM19 28h1v1h-1zM21 28h1v1h-1zM24 28h1v1h-1zM29 28h1v1h-1zM31 28h1v1h-1zM33 28h1v1h-1zM36 28h1v1h-1zM37 28h1v1h-1zM39 28h1v1h-1zM40 28h1v1h-1zM42 28h1v1h-1zM43 28h1v1h-1zM44 28h1v1h-1zM47 28h1v1h-1zM48 28h1v1h-1zM3 29h1v1h-1zM4 29h1v1h-1zM5 29h1v1h-1zM11 29h1v1h-1zM12 29h1v1h-1zM15 29h1v1h-1zM17 29h1v1h-1zM21 29h1v1h-1zM22 29h1v1h-1zM23 29h1v1h-1zM24 29h1v1h-1zM26 29h1v1h-1zM29 29h1v1h-1zM30 29h1v1h-1zM31 29h1v1h-1zM40 29h1v1h-1zM41 29h1v1h-1zM42 29h1v1h-1zM45 29h1v1h-1zM46 29h1v1h-1zM47 29h1v1h-1zM1 30h1v1h-1zM3 30h1v1h-1zM4 30h1v1h-1zM6 30h1v1h-1zM7 30h1v1h-1zM12 30h1v1h-1zM13 30h1v1h-1zM18 30h1v1h-1zM19 30h1v1h-1zM21 30h1v1h-1zM22 30h1v1h-1zM23 30h1v1h-1zM24 30h1v1h-1zM25 30h1v1h-1zM27 30h1v1h-1zM28 30h1v1h-1zM30 30h1v1h-1zM32 30h1v1h-1zM33 30h1v1h-1zM36 30h1v1h-1zM37 30h1v1h-1zM38 30h1v1h-1zM39 30h1v1h-1zM40 30h1v1h-1zM42 30h1v1h-1zM43 30h1v1h-1zM47 30h1v1h-1zM48 30h1v1h-1zM2 31h1v1h-1zM7 31h1v1h-1zM9 31h1v1h-1zM11 31h1v1h-1zM13 31h1v1h-1zM14 31h1v1h-1zM16 31h1v1h-1zM21 31h1v1h-1zM27 31h1v1h-1zM30 31h1v1h-1zM37 31h1v1h-1zM40 31h1v1h-1zM41 31h1v1h-1zM43 31h1v1h-1zM44 31h1v1h-1zM4 32h1v1h-1zM5 32h1v1h-1zM6 32h1v1h-1zM8 32h1v1h-1zM9 32h1v1h-1zM11 32h1v1h-1zM15 32h1v1h-1zM16 32h1v1h-1zM17 32h1v1h-1zM20 32h1v1h-1zM21 32h1v1h-1zM23 32h1v1h-1zM24 32h1v1h-1zM30 32h1v1h-1zM31 32h1v1h-1zM33 32h1v1h-1zM35 32h1v1h-1zM36 32h1v1h-1zM38 32h1v1h-1zM39 32h1v1h-1zM40 32h1v1h-1zM43 32h1v1h-1zM45 32h1v1h-1zM46 32h1v1h-1zM48 32h1v1h-1zM0 33h1v1h-1zM3 33h1v1h-1zM5 33h1v1h-1zM8 33h1v1h-1zM9 33h1v1h-1zM10 33h1v1h-1zM11 33h1v1h-1zM14 33h1v1h-1zM17 33h1v1h-1zM18 33h1v1h-1zM19 33h1v1h-1zM21 33h1v1h-1zM22 33h1v1h-1zM23 33h1v1h-1zM24 33h1v1h-1zM28 33h1v1h-1zM30 33h1v1h-1zM31 33h1v1h-1zM32 33h1v1h-1zM35 33h1v1h-1zM36 33h1v1h-1zM37 33h1v1h-1zM39 33h1v1h-1zM40 33h1v1h-1zM41 33h1v1h-1zM43 33h1v1h-1zM46 33h1v1h-1zM0 34h1v1h-1zM2 34h1v1h-1zM3 34h1v1h-1zM4 34h1v1h-1zM6 34h1v1h-1zM7 34h1v1h-1zM8 34h1v1h-1zM12 34h1v1h-1zM13 34h1v1h-1zM16 34h1v1h-1zM17 34h1v1h-1zM19 34h1v1h-1zM21 34h1v1h-1zM24 34h1v1h-1zM33 34h1v1h-1zM36 34h1v1h-1zM38 34h1v1h-1zM39 34h1v1h-1zM42 34h1v1h-1zM43 34h1v1h-1zM44 34h1v1h-1zM45 34h1v1h-1zM46 34h1v1h-1zM48 34h1v1h-1zM0 35h1v1h-1zM2 35h1v1h-1zM5 35h1v1h-1zM10 35h1v1h-1zM11 35h1v1h-1zM14 35h1v1h-1zM15 35h1v1h-1zM16 35h1v1h-1zM18 35h1v1h-1zM19 35h1v1h-1zM21 35h1v1h-1zM22 35h1v1h-1zM26 35h1v1h-1zM29 35h1v1h-1zM30 35h1v1h-1zM31 35h1v1h-1zM32 35h1v1h-1zM33 35h1v1h-1zM35 35h1v1h-1zM40 35h1v1h-1zM41 35h1v1h-1zM47 35h1v1h-1zM3 36h1v1h-1zM5 36h1v1h-1zM6 36h1v1h-1zM7 36h1v1h-1zM8 36h1v1h-1zM10 36h1v1h-1zM13 36h1v1h-1zM14 36h1v1h-1zM16 36h1v1h-1zM17 36h1v1h-1zM18 36h1v1h-1zM21 36h1v1h-1zM22 36h1v1h-1zM31 36h1v1h-1zM36 36h1v1h-1zM37 36h1v1h-1zM39 36h1v1h-1zM40 36h1v1h-1zM41 36h1v1h-1zM42 36h1v1h-1zM43 36h1v1h-1zM45 36h1v1h-1zM46 36h1v1h-1zM0 37h1v1h-1zM1 37h1v1h-1zM2 37h1v1h-1zM4 37h1v1h-1zM5 37h1v1h-1zM10 37h1v1h-1zM11 37h1v1h-1zM14 37h1v1h-1zM15 37h1v1h-1zM17 37h1v1h-1zM18 37h1v1h-1zM19 37h1v1h-1zM21 37h1v1h-1zM22 37h1v1h-1zM23 37h1v1h-1zM24 37h1v1h-1zM27 37h1v1h-1zM29 37h1v1h-1zM30 37h1v1h-1zM31 37h1v1h-1zM33 37h1v1h-1zM35 37h1v1h-1zM37 37h1v1h-1zM39 37h1v1h-1zM43 37h1v1h-1zM48 37h1v1h-1zM1 38h1v1h-1zM5 38h1v1h-1zM6 38h1v1h-1zM12 38h1v1h-1zM17 38h1v1h-1zM18 38h1v1h-1zM19 38h1v1h-1zM20 38h1v1h-1zM22 38h1v1h-1zM25 38h1v1h-1zM29 38h1v1h-1zM31 38h1v1h-1zM33 38h1v1h-1zM34 38h1v1h-1zM35 38h1v1h-1zM38 38h1v1h-1zM39 38h1v1h-1zM41 38h1v1h-1zM42 38h1v1h-1zM44 38h1v1h-1zM46 38h1v1h-1zM47 38h1v1h-1zM48 38h1v1h-1zM1 39h1v1h-1zM2 39h1v1h-1zM3 39h1v1h-1zM8 39h1v1h-1zM12 39h1v1h-1zM13 39h1v1h-1zM15 39h1v1h-1zM17 39h1v1h-1zM18 39h1v1h-1zM19 39h1v1h-1zM20 39h1v1h-1zM22 39h1v1h-1zM23 39h1v1h-1zM24 39h1v1h-1zM25 39h1v1h-1zM26 39h1v1h-1zM28 39h1v1h-1zM30 39h1v1h-1zM32 39h1v1h-1zM35 39h1v1h-1zM37 39h1v1h-1zM38 39h1v1h-1zM47 39h1v1h-1zM0 40h1v1h-1zM1 40h1v1h-1zM2 40h1v1h-1zM6 40h1v1h-1zM7 40h1v1h-1zM8 40h1v1h-1zM10 40h1v1h-1zM11 40h1v1h-1zM12 40h1v1h-1zM13 40h1v1h-1zM15 40h1v1h-1zM16 40h1v1h-1zM17 40h1v1h-1zM19 40h1v1h-1zM20 40h1v1h-1zM22 40h1v1h-1zM23 40h1v1h-1zM24 40h1v1h-1zM25 40h1v1h-1zM26 40h1v1h-1zM27 40h1v1h-1zM30 40h1v1h-1zM33 40h1v1h-1zM34 40h1v1h-1zM36 40h1v1h-1zM37 40h1v1h-1zM39 40h1v1h-1zM40 40h1v1h-1zM41 40h1v1h-1zM42 40h1v1h-1zM43 40h1v1h-1zM44 40h1v1h-1zM45 40h1v1h-1zM46 40h1v1h-1zM48 40h1v1h-1zM8 41h1v1h-1zM14 41h1v1h-1zM17 41h1v1h-1zM22 41h1v1h-1zM26 41h1v1h-1zM27 41h1v1h-1zM28 41h1v1h-1zM30 41h1v1h-1zM33 41h1v1h-1zM35 41h1v1h-1zM36 41h1v1h-1zM39 41h1v1h-1zM40 41h1v1h-1zM44 41h1v1h-1zM45 41h1v1h-1zM48 41h1v1h-1zM0 42h1v1h-1zM1 42h1v1h-1zM2 42h1v1h-1zM3 42h1v1h-1zM4 42h1v1h-1zM5 42h1v1h-1zM6 42h1v1h-1zM10 42h1v1h-1zM11 42h1v1h-1zM13 42h1v1h-1zM14 42h1v1h-1zM16 42h1v1h-1zM19 42h1v1h-1zM22 42h1v1h-1zM24 42h1v1h-1zM26 42h1v1h-1zM27 42h1v1h-1zM28 42h1v1h-1zM29 42h1v1h-1zM32 42h1v1h-1zM34 42h1v1h-1zM36 42h1v1h-1zM37 42h1v1h-1zM38 42h1v1h-1zM40 42h1v1h-1zM42 42h1v1h-1zM44 42h1v1h-1zM46 42h1v1h-1zM47 42h1v1h-1zM48 42h1v1h-1zM0 43h1v1h-1zM6 43h1v1h-1zM8 43h1v1h-1zM10 43h1v1h-1zM11 43h1v1h-1zM12 43h1v1h-1zM13 43h1v1h-1zM14 43h1v1h-1zM15 43h1v1h-1zM18 43h1v1h-1zM21 43h1v1h-1zM22 43h1v1h-1zM26 43h1v1h-1zM32 43h1v1h-1zM33 43h1v1h-1zM35 43h1v1h-1zM38 43h1v1h-1zM39 43h1v1h-1zM40 43h1v1h-1zM44 43h1v1h-1zM0 44h1v1h-1zM2 44h1v1h-1zM3 44h1v1h-1zM4 44h1v1h-1zM6 44h1v1h-1zM8 44h1v1h-1zM10 44h1v1h-1zM11 44h1v1h-1zM13 44h1v1h-1zM14 44h1v1h-1zM16 44h1v1h-1zM17 44h1v1h-1zM18 44h1v1h-1zM22 44h1v1h-1zM23 44h1v1h-1zM24 44h1v1h-1zM25 44h1v1h-1zM26 44h1v1h-1zM30 44h1v1h-1zM31 44h1v1h-1zM34 44h1v1h-1zM35 44h1v1h-1zM36 44h1v1h-1zM40 44h1v1h-1zM41 44h1v1h-1zM42 44h1v1h-1zM43 44h1v1h-1zM44 44h1v1h-1zM47 44h1v1h-1zM0 45h1v1h-1zM2 45h1v1h-1zM3 45h1v1h-1zM4 45h1v1h-1zM6 45h1v1h-1zM8 45h1v1h-1zM10 45h1v1h-1zM11 45h1v1h-1zM12 45h1v1h-1zM15 45h1v1h-1zM16 45h1v1h-1zM18 45h1v1h-1zM19 45h1v1h-1zM20 45h1v1h-1zM23 45h1v1h-1zM24 45h1v1h-1zM27 45h1v1h-1zM28 45h1v1h-1zM30 45h1v1h-1zM32 45h1v1h-1zM33 45h1v1h-1zM35 45h1v1h-1zM36 45h1v1h-1zM37 45h1v1h-1zM40 45h1v1h-1zM41 45h1v1h-1zM42 45h1v1h-1zM44 45h1v1h-1zM46 45h1v1h-1zM47 45h1v1h-1zM48 45h1v1h-1zM0 46h1v1h-1zM2 46h1v1h-1zM3 46h1v1h-1zM4 46h1v1h-1zM6 46h1v1h-1zM8 46h1v1h-1zM9 46h1v1h-1zM13 46h1v1h-1zM15 46h1v1h-1zM16 46h1v1h-1zM20 46h1v1h-1zM21 46h1v1h-1zM22 46h1v1h-1zM23 46h1v1h-1zM24 46h1v1h-1zM25 46h1v1h-1zM29 46h1v1h-1zM31 46h1v1h-1zM34 46h1v1h-1zM38 46h1v1h-1zM39 46h1v1h-1zM41 46h1v1h-1zM43 46h1v1h-1zM45 46h1v1h-1zM46 46h1v1h-1zM0 47h1v1h-1zM6 47h1v1h-1zM12 47h1v1h-1zM19 47h1v1h-1zM20 47h1v1h-1zM23 47h1v1h-1zM28 47h1v1h-1zM29 47h1v1h-1zM31 47h1v1h-1zM37 47h1v1h-1zM38 47h1v1h-1zM42 47h1v1h-1zM45 47h1v1h-1zM48 47h1v1h-1zM0 48h1v1h-1zM1 48h1v1h-1zM2 48h1v1h-1zM3 48h1v1h-1zM4 48h1v1h-1zM5 48h1v1h-1zM6 48h1v1h-1zM8 48h1v1h-1zM9 48h1v1h-1zM14 48h1v1h-1zM16 48h1v1h-1zM17 48h1v1h-1zM20 48h1v1h-1zM25 48h1v1h-1zM26 48h1v1h-1zM27 48h1v1h-1zM29 48h1v1h-1zM30 48h1v1h-1zM31 48h1v1h-1zM35 48h1v1h-1zM36 48h1v1h-1zM38 48h1v1h-1zM41 48h1v1h-1zM43 48h1v1h-1zM46 48h1v1h-1zM47 48h1v1h-1zM48 48h1v1h-1z"/></symbol>
+</svg>
+<header class="doc" style="max-width:1100px">
+  <h1>WinDock: host control page and QR pairing</h1>
+  <p>The computer-side page shown in the macOS menu-bar popover, the Windows tray flyout, a detached window and a plain browser, plus the phone screens added for QR pairing. Spec: <code class="cmd">docs/design/HOST-CONTROL-PAGE.md</code>. Native menus, the camera feed and the desktop around the popover are drawn approximately.</p>
+  <p>The QR codes are real and scannable: they encode the sample payloads in spec section 9 (version 8, error correction M). Screenshot one frame: open this file with <code class="cmd">#solo=&lt;id&gt;</code> at the frame’s size.</p>
+  <div class="legend"><span>Popover and flyout: 380 px wide</span><span>Wide layout: 640 px and up</span><span>Sample computers: Geris-MacBook-Air (macOS, 192.168.1.34), DESKTOP-7H2KQ9L (Windows, 192.168.1.20)</span><span>Windows type is drawn with Open Sans standing in for Segoe UI</span></div>
+</header>
+<h2 class="group-title">Host: macOS menu-bar popover</h2><figure class="frame" id="host-01-mac-first-run" data-w="440" data-h="730">
+  <div class="desk mac" style="width:440px;height:730px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac" style="height:680px">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <p class="h-t">Pair your first phone</p>
+    <p class="h-p" style="margin-top:4px">In WinDock on your phone, tap <b>Scan QR code</b>, or point the phone’s camera at this code.</p>
+    <div style="height:14px"></div>
+    <div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-mac" width="228" height="228"/></svg></div></div>
+    <div class="h-count"><svg class="i"><use href="#i-clock"/></svg><span class="grow">Open for <b>10 more minutes</b></span><span class="h-btn ghost sm">Stop pairing</span></div>
+    <div class="h-sec">Or enter these on the phone</div>
+    <div class="h-group">
+  <div class="h-kv"><span class="k">Address</span><span class="v">192.168.1.34:8620</span><span class="h-ib" aria-label="Copy address"><svg class="i"><use href="#i-copy"/></svg></span></div>
+  <div class="h-kv"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div>
+  <div class="h-kv"><span class="k">PIN</span><span class="v pin">482<span class="gap"></span>913</span></div>
+</div>
+    <p class="h-c" style="margin:8px 2px 0">Each PIN pairs one phone. A new one appears after each pairing.</p>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div></div><span class="h-sw" role="switch" aria-checked="false"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+  <div class="h-fade"></div>
+</div></div>
+</div>
+  <figcaption><b>01 · First run, no phones paired</b> <code>#solo=host-01-mac-first-run</code> macOS popover, 380 wide. Opening WinDock with no phones paired opens pairing and shows the code. The list scrolls; Start at login is just below the fold.</figcaption>
+</figure><figure class="frame" id="host-02-mac-home" data-w="440" data-h="620">
+  <div class="desk mac" style="width:440px;height:620px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">Geris-MacBook-Air</p><div class="meta"><span class="h-mono">192.168.1.34</span><span class="sep">·</span>macOS<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">3</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub"><span class="dot"></span>Connected now <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Pixel 8</div><div class="sub">Seen yesterday <span class="sep">·</span> Paired 12 Oct</div></div><span class="h-ib" aria-label="More for Pixel 8"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">SM-A405FN</div><div class="sub">Seen 3 Oct <span class="sep">·</span> Paired 3 Oct</div></div><span class="h-ib" aria-label="More for SM-A405FN"><svg class="i"><use href="#i-more"/></svg></span></div></div><div class="h-foot-act"><span class="h-btn ghost sm" style="color:var(--text-2)">Remove all phones…</span></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>02 · Home, three phones paired</b> <code>#solo=host-02-mac-home</code> Pairing is closed (the normal state). Names come from the phones; SM-A405FN is what a Galaxy A40 reports, which is why renaming exists.</figcaption>
+</figure><figure class="frame" id="host-03-mac-pair" data-w="440" data-h="620">
+  <div class="desk mac" style="width:440px;height:620px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head" style="padding-left:8px"><span class="h-ib" aria-label="Back"><svg class="i"><use href="#i-chev-l"/></svg></span><span class="h-title-c">Pair a new phone</span></div>
+  <div class="h-body" style="padding-top:8px">
+    <div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-mac" width="228" height="228"/></svg></div></div>
+    <p class="h-c h-scan-cap">Scan with the phone’s camera, or tap <b>Scan QR code</b> in WinDock on the phone.</p>
+    <div class="h-count"><svg class="i"><use href="#i-clock"/></svg><span class="grow">Open for <b>9 more minutes</b></span><span class="h-btn ghost sm">Stop pairing</span></div>
+    <div class="h-sec">Or enter these on the phone</div>
+    <div class="h-group">
+  <div class="h-kv"><span class="k">Address</span><span class="v">192.168.1.34:8620</span><span class="h-ib" aria-label="Copy address"><svg class="i"><use href="#i-copy"/></svg></span></div>
+  <div class="h-kv"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div>
+  <div class="h-kv"><span class="k">PIN</span><span class="v pin">482<span class="gap"></span>913</span></div>
+</div>
+    <p class="h-c" style="margin:8px 2px 0">Each PIN pairs one phone. A new one appears after each pairing.</p>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>03 · Pair a new phone</b> <code>#solo=host-03-mac-pair</code> Opening this view opens pairing for 10 minutes. The QR always encodes the current PIN; the manual details follow the phone’s order: address (only if it isn’t found), security code, PIN.</figcaption>
+</figure><figure class="frame" id="host-04-mac-paired" data-w="440" data-h="640">
+  <div class="desk mac" style="width:440px;height:640px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head" style="padding-left:8px"><span class="h-ib" aria-label="Back"><svg class="i"><use href="#i-chev-l"/></svg></span><span class="h-title-c">Pair a new phone</span></div>
+  <div class="h-body" style="padding-top:8px">
+    <div class="h-ban ok" role="status"><svg class="i"><use href="#i-check"/></svg><div class="txt"><div class="ttl">Pixel 8 is paired</div><p class="h-c">The code below is new. Scan it to pair another phone.</p></div><span class="h-btn sm side">Done</span></div>
+    <div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-mac2" width="228" height="228"/></svg></div></div>
+    <div class="h-count"><svg class="i"><use href="#i-clock"/></svg><span class="grow">Open for <b>6 more minutes</b></span><span class="h-btn ghost sm">Stop pairing</span></div>
+    <div class="h-sec">Or enter these on the phone</div>
+    <div class="h-group">
+  <div class="h-kv"><span class="k">Address</span><span class="v">192.168.1.34:8620</span><span class="h-ib" aria-label="Copy address"><svg class="i"><use href="#i-copy"/></svg></span></div>
+  <div class="h-kv"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div>
+  <div class="h-kv"><span class="k">PIN</span><span class="v pin">907<span class="gap"></span>164</span></div>
+</div>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>04 · A phone just paired</b> <code>#solo=host-04-mac-paired</code> The PIN rotated, so the QR and PIN swap instantly (no animation: a half-faded QR would not scan). The countdown keeps running; it is not extended.</figcaption>
+</figure><figure class="frame" id="host-05-mac-locked" data-w="440" data-h="500">
+  <div class="desk mac" style="width:440px;height:500px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head" style="padding-left:8px"><span class="h-ib" aria-label="Back"><svg class="i"><use href="#i-chev-l"/></svg></span><span class="h-title-c">Pair a new phone</span></div>
+  <div class="h-body" style="padding-top:8px">
+    <div class="h-qr-wrap"><div class="h-qr closed"><span class="h-gl lg warn"><svg class="i"><use href="#i-shield"/></svg></span><p class="h-c">No code while pairing is closed</p></div></div>
+    <p class="h-t" style="margin-top:16px">Pairing closed after 10 wrong PINs</p>
+    <p class="h-p" style="margin-top:4px">The PIN has been changed. Someone on this network may have been guessing. If it wasn’t you, check that every paired phone is yours.</p>
+    <div class="h-btns" style="margin-top:16px"><span class="h-btn primary">Open pairing again</span><span class="h-btn">See paired phones</span></div>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>05 · Pairing closed after 10 wrong PINs</b> <code>#solo=host-05-mac-locked</code> The QR is removed, not dimmed: a dimmed QR still scans. The timeout variant uses a clock glyph, “Pairing is closed” and Open pairing for 10 minutes.</figcaption>
+</figure><figure class="frame" id="host-06-mac-row-menu" data-w="440" data-h="620">
+  <div class="desk mac" style="width:440px;height:620px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">Geris-MacBook-Air</p><div class="meta"><span class="h-mono">192.168.1.34</span><span class="sep">·</span>macOS<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">3</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub"><span class="dot"></span>Connected now <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row hover"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Pixel 8</div><div class="sub">Seen yesterday <span class="sep">·</span> Paired 12 Oct</div></div><span class="h-ib" aria-label="More for Pixel 8"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">SM-A405FN</div><div class="sub">Seen 3 Oct <span class="sep">·</span> Paired 3 Oct</div></div><span class="h-ib" aria-label="More for SM-A405FN"><svg class="i"><use href="#i-more"/></svg></span></div></div><div class="h-foot-act"><span class="h-btn ghost sm" style="color:var(--text-2)">Remove all phones…</span></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+  <div class="h-menu" style="right:20px;top:228px" role="menu"><div class="hl" role="menuitem"><svg class="i"><use href="#i-pencil"/></svg>Rename…</div><div class="destr" role="menuitem"><svg class="i"><use href="#i-close"/></svg>Remove…</div></div>
+</div></div>
+</div>
+  <figcaption><b>06 · Phone row menu</b> <code>#solo=host-06-mac-row-menu</code> The ⋯ button (or right-click on the row) opens Rename and Remove. Arrow keys move, Return picks, Escape closes and returns focus to ⋯.</figcaption>
+</figure><figure class="frame" id="host-07-mac-rename-remove" data-w="440" data-h="690">
+  <div class="desk mac" style="width:440px;height:690px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">Geris-MacBook-Air</p><div class="meta"><span class="h-mono">192.168.1.34</span><span class="sep">·</span>macOS<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">3</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="h-field"><span class="sel">Geri’s iPhone</span><span class="caret"></span></div><p class="h-c" style="margin-top:6px;white-space:normal">Only this computer uses this name. Leave it empty to use “iPhone”.</p></div></div>
+<div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Pixel 8</div><div class="sub">Seen yesterday <span class="sep">·</span> Paired 12 Oct</div></div><span class="h-ib"><svg class="i"><use href="#i-more"/></svg></span></div>
+<div class="h-row danger-zone" style="align-items:flex-start;padding-top:10px;padding-bottom:10px"><span class="h-gl warn"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Remove SM-A405FN?</div><div class="sub" style="white-space:normal">It needs a new PIN to connect again.</div><div class="h-btns" style="margin-top:8px"><span class="h-btn sm focus">Cancel</span><span class="h-btn sm danger">Remove</span></div></div></div></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>07 · Rename inline, remove with inline confirmation</b> <code>#solo=host-07-mac-rename-remove</code> Two separate states drawn together. Rename: Return saves, Escape cancels, clicking away saves. Remove: Cancel has focus.</figcaption>
+</figure><figure class="frame" id="host-08-mac-remove-all" data-w="440" data-h="620">
+  <div class="desk mac" style="width:440px;height:620px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">Geris-MacBook-Air</p><div class="meta"><span class="h-mono">192.168.1.34</span><span class="sep">·</span>macOS<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">3</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub"><span class="dot"></span>Connected now <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Pixel 8</div><div class="sub">Seen yesterday <span class="sep">·</span> Paired 12 Oct</div></div><span class="h-ib" aria-label="More for Pixel 8"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">SM-A405FN</div><div class="sub">Seen 3 Oct <span class="sep">·</span> Paired 3 Oct</div></div><span class="h-ib" aria-label="More for SM-A405FN"><svg class="i"><use href="#i-more"/></svg></span></div></div><div class="h-foot-act"><span class="h-btn ghost sm" style="color:var(--text-2)">Remove all phones…</span></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+  <div class="h-scrim"></div>
+  <div class="h-dialog" role="alertdialog" aria-labelledby="ra-t"><p class="h-t" id="ra-t">Remove all 3 phones?</p><p class="h-p">They disconnect now, and each one needs a new PIN to connect again. Your dock and apps stay as they are.</p><div class="h-btns end"><span class="h-btn focus">Cancel</span><span class="h-btn danger">Remove all</span></div></div>
+</div></div>
+</div>
+  <figcaption><b>08 · Remove all phones</b> <code>#solo=host-08-mac-remove-all</code> The only modal in the page. Cancel is focused and is the Escape action.</figcaption>
+</figure><figure class="frame" id="host-09-mac-problems" data-w="440" data-h="660">
+  <div class="desk mac" style="width:440px;height:660px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on" style="margin-right:2px"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="pop" style="left:52px;top:34px"><span class="arrow" style="left:227px"></span><div class="hp mac">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip bad"><span class="dot warn"></span>Needs attention</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">Geris-MacBook-Air</p><div class="meta"><span class="h-mono">192.168.1.34</span><span class="sep">·</span>macOS<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <div class="h-ban bad" role="alert"><svg class="i"><use href="#i-shield"/></svg><div class="txt"><div class="ttl">macOS is blocking phones</div><p class="h-p">The firewall stops incoming connections to node, so phones can’t reach this Mac.</p><span class="h-btn sm">Open Firewall settings</span></div></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">1</span></div><div class="h-group"><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub">Seen today <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start at login</div><div class="sub" style="display:block;white-space:normal">Waiting for you to allow it in System Settings. <span class="h-link">Open Login Items</span></div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">iPhones can’t find this computer by themselves right now. They can still connect by address or QR code.</div></div></div>
+</div>
+  </div>
+</div></div>
+</div>
+  <figcaption><b>09 · Problems the host can detect</b> <code>#solo=host-09-mac-problems</code> Firewall blocking node (danger banner, chip says Needs attention), login item waiting for approval, and Bonjour not advertising (plain text, not alarming: pairing by address still works).</figcaption>
+</figure><h2 class="group-title">Host: Windows tray flyout</h2><figure class="frame" id="host-10-win-home" data-w="440" data-h="740">
+  <div class="desk win" style="width:440px;height:740px">
+  <div class="flyout" style="bottom:60px"><div class="hp win">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body">
+    <div class="h-ident"><div style="flex:1;min-width:0"><p class="h-t">DESKTOP-7H2KQ9L</p><div class="meta"><span class="h-mono">192.168.1.20</span><span class="sep">·</span>Windows<span class="sep">·</span>WinDock 0.3.0<span class="sep">·</span><span class="h-link">Details<svg class="i"><use href="#i-chev-d"/></svg></span></div></div></div>
+    <div class="h-ban" role="status"><span class="rec"></span><div class="txt"><div class="ttl">Recording your screen</div><p class="h-c">Main monitor, no audio. Saved to Videos\WinDock.</p></div><span class="h-btn sm side">Stop recording</span></div>
+    <span class="h-btn primary block"><svg class="i"><use href="#i-qr"/></svg>Pair a new phone</span>
+    <div class="h-sec">Paired phones <span class="n">2</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub"><span class="dot"></span>Connected now <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Galaxy A40</div><div class="sub">SM-A405FN <span class="sep">·</span> Seen today</div></div><span class="h-ib" aria-label="More for Galaxy A40"><svg class="i"><use href="#i-more"/></svg></span></div></div>
+    <div class="h-foot-act"><span class="h-btn ghost sm" style="color:var(--text-2)">Remove all phones…</span></div>
+    <div class="h-sec">This computer</div><div class="h-group">
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-power"/></svg></span><div class="txt"><div class="ttl">Start when I sign in</div></div><span class="h-sw on" role="switch" aria-checked="true"></span></div>
+  <div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div>
+</div>
+  </div>
+</div></div>
+  <div class="taskbar"><span class="ti"><svg class="i"><use href="#i-up"/></svg></span><span class="ti on"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span class="ti"><svg class="i"><use href="#i-wifi"/></svg></span><span class="ti"><svg class="i"><use href="#i-volume"/></svg></span><span class="clock">09:41<br>21/10/2026</span></div>
+</div>
+  <figcaption><b>10 · Windows flyout, recording in progress</b> <code>#solo=host-10-win-home</code> Same page in the tray flyout: Segoe UI Variable, 14 px body, 4 px control radius, 8 px corners. “Galaxy A40” was renamed on this computer; the phone’s own name stays visible.</figcaption>
+</figure><figure class="frame" id="host-11-win-pair" data-w="440" data-h="720">
+  <div class="desk win" style="width:440px;height:720px">
+  <div class="flyout" style="bottom:60px"><div class="hp win">
+  <div class="h-head" style="padding-left:8px"><span class="h-ib" aria-label="Back"><svg class="i"><use href="#i-chev-l"/></svg></span><span class="h-title-c">Pair a new phone</span></div>
+  <div class="h-body" style="padding-top:8px">
+    <div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-win" width="228" height="228"/></svg></div></div>
+    <p class="h-c h-scan-cap">Scan with the phone’s camera, or tap <b>Scan QR code</b> in WinDock on the phone.</p>
+    <div class="h-count"><svg class="i"><use href="#i-clock"/></svg><span class="grow">Closes in <b>less than a minute</b></span><span class="h-btn ghost sm">Keep open</span></div>
+    <div class="h-sec">Or enter these on the phone</div>
+    <div class="h-group">
+  <div class="h-kv"><span class="k">Address</span><span class="v">192.168.1.20:8620</span><span class="h-ib" aria-label="Copy address"><svg class="i"><use href="#i-copy"/></svg></span></div>
+  <div class="h-kv"><span class="k">Security code</span><span class="v">A3F0<span class="dash">-</span>5C1E<span class="dash">-</span>88D2</span></div>
+  <div class="h-kv"><span class="k">PIN</span><span class="v pin">315<span class="gap"></span>780</span></div>
+</div>
+    <p class="h-c" style="margin:8px 2px 0">Each PIN pairs one phone. A new one appears after each pairing.</p>
+  </div>
+</div></div>
+  <div class="taskbar"><span class="ti"><svg class="i"><use href="#i-up"/></svg></span><span class="ti on"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span class="ti"><svg class="i"><use href="#i-wifi"/></svg></span><span class="ti"><svg class="i"><use href="#i-volume"/></svg></span><span class="clock">09:41<br>21/10/2026</span></div>
+</div>
+  <figcaption><b>11 · Windows, pairing about to close</b> <code>#solo=host-11-win-pair</code> Under a minute left, the countdown’s action changes from Stop pairing to Keep open (a fresh 10 minutes).</figcaption>
+</figure><figure class="frame" id="host-12-win-offline" data-w="440" data-h="480">
+  <div class="desk win" style="width:440px;height:480px">
+  <div class="flyout" style="bottom:60px"><div class="hp win">
+  <div class="h-head"><div class="h-brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip bad"><span class="dot warn"></span>Stopped</span><span class="h-ib" aria-label="More"><svg class="i"><use href="#i-more"/></svg></span></div>
+  <div class="h-body" style="padding-top:12px">
+    <span class="h-gl lg warn"><svg class="i"><use href="#i-power"/></svg></span>
+    <p class="h-t" style="margin-top:14px">Port 8620 is in use</p>
+    <p class="h-p" style="margin-top:4px">Another app, or another copy of WinDock, is using it. Close that app, then try again.</p>
+    <div class="h-group" style="margin-top:14px;padding:10px 12px"><p class="h-c h-mono" style="color:var(--text-2)">listen EADDRINUSE: address already in use :::8620</p></div>
+    <div class="h-btns" style="margin-top:16px"><span class="h-btn primary">Try again</span><span class="h-btn"><svg class="i"><use href="#i-logs"/></svg>Open logs</span></div>
+    <p class="h-c" style="margin-top:16px">Phones can’t connect until WinDock is running.</p>
+  </div>
+</div></div>
+  <div class="taskbar"><span class="ti"><svg class="i"><use href="#i-up"/></svg></span><span class="ti on"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span class="ti"><svg class="i"><use href="#i-wifi"/></svg></span><span class="ti"><svg class="i"><use href="#i-volume"/></svg></span><span class="clock">09:41<br>21/10/2026</span></div>
+</div>
+  <figcaption><b>12 · Host not running (native offline page)</b> <code>#solo=host-12-win-offline</code> The page can’t come from a host that isn’t running, so each shell bundles this small page and shows it instead. Other variants: Starting…, WinDock stopped unexpectedly, Node.js not found (Mac).</figcaption>
+</figure><h2 class="group-title">Host: native menus</h2><figure class="frame" id="host-13-native-menus" data-w="870" data-h="360">
+  <div style="position:relative;width:870px;height:360px;background:#040607"><div class="desk mac" style="position:absolute;left:0;top:0;width:430px;height:360px">
+  <div class="menubar"><span class="mi"><svg class="i"><use href="#i-wifi"/></svg></span><span class="mi"><svg class="i"><use href="#i-battery"/></svg></span><span class="mi on"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span>Wed 21 Oct 09:41</span></div>
+  <div class="mac-menu" style="left:150px;top:30px"><div class="dis">Running on 192.168.1.34</div><hr><div class="hl">Open WinDock</div><div>Pair a new phone…</div><hr><div>Quit WinDock<span class="kb">⌘Q</span></div></div><span class="label-tag">macOS · right-click or Control-click the menu-bar icon</span></div><div class="desk win" style="position:absolute;left:440px;top:0;width:430px;height:360px">
+  <div class="win-menu" style="right:12px;bottom:58px"><div class="def hl">Open WinDock</div><div>Pair a new phone</div><hr><div><span class="rec" style="margin:0 0 0 2px;width:8px;height:8px"></span>Stop recording</div><div>Open saved files<span class="chev"><svg class="i"><use href="#i-chev"/></svg></span></div><hr><div><svg class="i"><use href="#i-dl"/></svg>Download WinDock 0.3.1…</div><div>Quit WinDock</div></div>
+  <div class="taskbar"><span class="ti"><svg class="i"><use href="#i-up"/></svg></span><span class="ti on"><span class="sbmark"><i></i><i></i><i></i><i></i></span></span><span class="ti"><svg class="i"><use href="#i-wifi"/></svg></span><span class="ti"><svg class="i"><use href="#i-volume"/></svg></span><span class="clock">09:41<br>21/10/2026</span></div>
+  <span class="label-tag" style="bottom:auto;top:10px">Windows · right-click the tray icon</span></div></div>
+  <figcaption><b>13 · Native menus</b> <code>#solo=host-13-native-menus</code> Left-click opens the page on both. The menus hold only quick paths and the Windows capture items. Stop recording shows only while recording; Download… replaces Check for updates… when an update exists.</figcaption>
+</figure><h2 class="group-title">Host: wide layout (window or browser)</h2><figure class="frame" id="host-14-browser-wide" data-w="900" data-h="720">
+  <div class="desk" style="width:900px;height:720px"><div class="browser"><div class="bar"><span class="lights"><i></i><i></i><i></i></span><span class="url"><svg class="i"><use href="#i-info"/></svg><span><b>127.0.0.1</b>:8620/host</span></span></div><div class="page"><div class="hp mac wide" style="height:100%">
+  <div class="h-head"><div class="h-brand" style="font-size:15px"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><span class="h-chip"><span class="dot"></span>Running</span></div>
+  <div class="h-wide">
+    <div class="h-card">
+      <p class="h-t">Pair a new phone</p>
+      <div style="height:12px"></div>
+      <div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-mac" width="228" height="228"/></svg></div></div>
+      <p class="h-c h-scan-cap">Scan with the phone’s camera, or tap <b>Scan QR code</b> in WinDock on the phone.</p>
+      <div class="h-count"><svg class="i"><use href="#i-clock"/></svg><span class="grow">Open for <b>8 more minutes</b></span><span class="h-btn ghost sm">Stop pairing</span></div>
+      <div class="h-sec">Or enter these on the phone</div>
+      <div class="h-group">
+  <div class="h-kv"><span class="k">Address</span><span class="v">192.168.1.34:8620</span><span class="h-ib" aria-label="Copy address"><svg class="i"><use href="#i-copy"/></svg></span></div>
+  <div class="h-kv"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div>
+  <div class="h-kv"><span class="k">PIN</span><span class="v pin">482<span class="gap"></span>913</span></div>
+</div>
+    </div>
+    <div>
+      <div class="h-card">
+        <p class="h-t">Geris-MacBook-Air</p>
+        <dl class="h-dl">
+          <dt>Address</dt><dd>http://192.168.1.34:8620</dd>
+          <dt>Secure address</dt><dd>https://192.168.1.34:8620</dd>
+          <dt>Also reachable at</dt><dd>10.0.0.12 (Ethernet)</dd>
+          <dt>Older phone apps</dt><dd class="plain">Allowed (plain HTTP is on)</dd>
+          <dt>Version</dt><dd class="plain">WinDock 0.3.0 on macOS</dd>
+        </dl>
+      </div>
+      <div class="h-sec">Paired phones <span class="n">3</span></div><div class="h-group"><div class="h-row"><span class="h-gl on"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Geri’s iPhone</div><div class="sub"><span class="dot"></span>Connected now <span class="sep">·</span> iPhone</div></div><span class="h-ib" aria-label="More for Geri’s iPhone"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">Pixel 8</div><div class="sub">Seen yesterday <span class="sep">·</span> Paired 12 Oct</div></div><span class="h-ib" aria-label="More for Pixel 8"><svg class="i"><use href="#i-more"/></svg></span></div><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-phone"/></svg></span><div class="txt"><div class="ttl">SM-A405FN</div><div class="sub">Seen 3 Oct <span class="sep">·</span> Paired 3 Oct</div></div><span class="h-ib" aria-label="More for SM-A405FN"><svg class="i"><use href="#i-more"/></svg></span></div></div><div class="h-foot-act"><span class="h-btn ghost sm" style="color:var(--text-2)">Remove all phones…</span></div>
+      <div class="h-sec">This computer</div>
+      <div class="h-group"><div class="h-row"><span class="h-gl"><svg class="i"><use href="#i-net"/></svg></span><div class="txt"><div class="ttl">Visible on this network</div><div class="sub" style="white-space:normal">Phones on the same Wi-Fi find it by themselves.</div></div></div></div>
+      <div class="h-note"><svg class="i"><use href="#i-terminal"/></svg><p class="h-c">WinDock was started from Terminal. Stop it there with Control-C. Start at login, logs and quit are in the WinDock menu-bar app.</p></div>
+    </div>
+  </div>
+</div></div></div></div>
+  <figcaption><b>14 · Wide layout in a browser on the computer</b> <code>#solo=host-14-browser-wide</code> 640 px and wider: two columns, pairing on the left. In a browser there is no shell, so native-only settings are replaced by a note. Same layout in the detached window.</figcaption>
+</figure><h2 class="group-title">Phone: QR pairing</h2><figure class="frame" id="qr-01-first-launch-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><div class="safe">
+  <div class="rail">
+    <div class="brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div>
+    <h1 class="t-display">Your computer.<br><em>Within reach.</em></h1>
+    <p class="t-body">Open WinDock on your computer, then pick it here.</p>
+  </div>
+  <div class="content">
+    <div class="sec-head"><p class="t-label">On this network</p><span class="t-cap"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-2)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg>Still looking</span></div>
+    <div class="empty" style="padding-bottom:40px">
+      <div class="glyph lg on"><svg class="i"><use href="#i-qr"/></svg></div>
+      <p class="t-title">Scan the code on your computer</p>
+      <p class="t-body">On the computer, open WinDock and choose Pair a new phone. Scanning pairs in one step, even if this phone can’t find the computer.</p>
+      <div class="btn-row"><span class="btn primary"><svg class="i"><use href="#i-camera"/></svg>Scan QR code</span><span class="btn ghost">Enter an address</span></div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q1 · First launch, nothing found: scan is the way in</b> <code>#solo=qr-01-first-launch-ios</code> iPhone 844. Replaces the old “No computers found yet” state (05). While discovery shows results, the rail gets a Scan QR code link instead (Q2).</figcaption>
+</figure><figure class="frame" id="qr-02-computers-android" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android"><div class="hw-hole"></div><div class="safe">
+  <div class="rail">
+    <div class="brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div>
+    <h1 class="t-display">Computers</h1>
+    <div class="rail-actions">
+      <div class="rail-link"><svg class="i"><use href="#i-qr"/></svg>Scan QR code</div>
+      <div class="rail-link"><svg class="i"><use href="#i-plus"/></svg>Add by address</div>
+      <div class="rail-link"><svg class="i"><use href="#i-usb"/></svg>Connect by USB<small>Windows</small></div>
+      <div class="rail-link"><svg class="i"><use href="#i-phone"/></svg>This phone</div>
+    </div>
+  </div>
+  <div class="content fade-bottom">
+    <div class="sec-head"><p class="t-label">Paired</p></div>
+    <div class="group">
+      <div class="row"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Studio PC</div><div class="row-sub"><span class="dot"></span>Online <span class="sep">·</span> Last used <span class="sep">·</span> <span class="addr">192.168.1.20</span></div></div><div class="trail"><span class="icon-btn"><svg class="i"><use href="#i-more-v"/></svg></span></div></div>
+    </div>
+    <div class="sec-head"><p class="t-label">On this network</p><span class="t-cap"><span class="spin-and"></span>Looking</span></div>
+    <div class="group">
+      <div class="row"><div class="glyph"><svg class="i"><use href="#i-monitor"/></svg></div><div class="row-text"><div class="row-title">Geris-MacBook-Air</div><div class="row-sub">macOS <span class="sep">·</span> <span class="addr">192.168.1.34</span></div></div><div class="trail"><span class="pill">Pair</span></div></div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q2 · Computers: Scan QR code is the first rail link</b> <code>#solo=qr-02-computers-android</code> Android 844. Same position on iOS (above Add by address). Android’s rail drops the body text to fit four links.</figcaption>
+</figure><figure class="frame" id="qr-03-android-camera-sheet" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android"><div class="hw-hole"></div><div class="safe">
+  <div class="rail"><div class="brand"><div class="mark "><i></i><i></i><i></i><i></i></div>WinDock</div><h1 class="t-display">Computers</h1></div>
+</div>
+<div class="scrim"></div>
+<div class="sheet" style="left:calc(50% - 280px);width:560px">
+  <div class="handle"><span></span></div>
+  <div class="sheet-head"><p class="t-head">Scan with your camera</p></div>
+  <div class="checks" style="gap:6px">
+    <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">1</span><p class="t-sub" style="margin:2px 0 0">On the computer, open WinDock and choose <span class="strong">Pair a new phone</span>.</p></div>
+    <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">2</span><p class="t-sub" style="margin:2px 0 0">Open the camera and point it at the code.</p></div>
+    <div class="chk" style="padding:10px 14px;background:rgba(255,255,255,.04)"><span class="n">3</span><p class="t-sub" style="margin:2px 0 0">Tap the link that appears. WinDock opens and asks before it pairs.</p></div>
+  </div>
+  <p class="t-cap" style="margin:10px 4px 12px">Nothing appears? Turn on QR scanning in the camera’s settings, or use Google Lens.</p>
+  <div class="btn-row" style="justify-content:flex-end"><span class="btn ghost">Enter the PIN instead</span><span class="btn primary"><svg class="i"><use href="#i-camera"/></svg>Open camera</span></div>
+</div></div></div>
+  <figcaption><b>Q3 · Android: scan with the system camera</b> <code>#solo=qr-03-android-camera-sheet</code> No scanner library. Open camera launches the default camera app (INTENT_ACTION_STILL_IMAGE_CAMERA); the camera or Lens hands the windock:// link back to WinDock.</figcaption>
+</figure><figure class="frame" id="qr-04-scanner-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><div class="cam"><div class="laptop"><div class="hp mac" style="width:380px"><div class="h-head" style="padding-left:8px"><span class="h-ib" aria-label="Back"><svg class="i"><use href="#i-chev-l"/></svg></span><span class="h-title-c">Pair a new phone</span></div><div class="h-body" style="padding-top:8px"><div class="h-qr-wrap"><div class="h-qr" role="img" aria-label="QR code for pairing. Scan it with your phone."><svg viewBox="0 0 228 228"><use href="#qr-mac" width="228" height="228"/></svg></div></div><p class="h-c h-scan-cap">Scan with the phone’s camera, or tap Scan QR code in WinDock on the phone.</p></div></div></div></div>
+<div class="vf" style="z-index:4;left:493px;top:88px"><i></i><i></i><i></i><i></i></div>
+<div class="scan-rail">
+  <span class="icon-btn filled" style="position:absolute;left:47px;top:14px" aria-label="Cancel scanning"><svg class="i"><use href="#i-close"/></svg></span>
+  <p class="t-title">Scan the code on your computer</p>
+  <p class="t-body" style="margin-top:8px">On the computer, open WinDock and choose Pair a new phone.</p>
+  <div style="margin-top:auto"><span class="btn ghost" style="margin-left:-12px">Enter the PIN instead</span></div>
+</div></div></div>
+  <figcaption><b>Q4 · iPhone in-app scanner</b> <code>#solo=qr-04-scanner-ios</code> VisionKit DataScannerViewController, QR only, our own overlay. The viewfinder is guidance, not a crop: any WinDock code in view is read. Haptic and freeze on a match, then Q5.</figcaption>
+</figure><figure class="frame" id="qr-05-confirm-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><span class="icon-btn filled" style="position:absolute;z-index:5;left:47px;top:14px"><svg class="i"><use href="#i-close"/></svg></span><div class="safe" style="align-items:center">
+  <div class="split">
+    <div class="l">
+      <div class="glyph lg on"><svg class="i"><use href="#i-monitor"/></svg></div>
+      <p class="t-title" style="margin-top:18px">Pair with Geris-MacBook-Air?</p>
+      <p class="t-body" style="margin-top:8px">This phone will open its dock and can launch apps on it.</p>
+    </div>
+    <div class="r">
+      <div class="kvcard"><div class="kvr"><span class="k">Address</span><span class="v">192.168.1.34:8620</span></div><div class="kvr"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div></div>
+      <div class="msg" style="margin-top:12px;color:var(--text-3)"><svg class="i"><use href="#i-shield"/></svg><span>Only pair if you just scanned this code on your own computer’s screen.</span></div>
+      <div class="btn-row" style="margin-top:20px"><span class="btn primary" style="min-width:150px">Pair</span><span class="btn">Cancel</span></div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q5 · Pair with …? (from the scanner or the Camera app)</b> <code>#solo=qr-05-confirm-ios</code> iPhone 844. Nothing touches the network before Pair. The security code is shown for the curious, not to compare: the QR already carries the fingerprint.</figcaption>
+</figure><figure class="frame" id="qr-06-confirm-android-pairing" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android"><div class="hw-hole"></div><span class="icon-btn" style="position:absolute;z-index:5;left:44px;top:10px"><svg class="i"><use href="#i-back"/></svg></span><div class="safe" style="align-items:center">
+  <div class="split">
+    <div class="l">
+      <div class="glyph lg on"><svg class="i"><use href="#i-monitor"/></svg></div>
+      <p class="t-title" style="margin-top:18px">Pair with Geris-MacBook-Air?</p>
+      <p class="t-body" style="margin-top:8px">This phone will open its dock and can launch apps on it.</p>
+    </div>
+    <div class="r">
+      <div class="kvcard"><div class="kvr"><span class="k">Address</span><span class="v">192.168.1.34:8620</span></div><div class="kvr"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div></div>
+      <div class="msg" style="margin-top:12px;color:var(--text-3)"><svg class="i"><use href="#i-shield"/></svg><span>Only pair if you just scanned this code on your own computer’s screen.</span></div>
+      <div class="btn-row" style="margin-top:20px"><span class="btn primary disabled" style="min-width:150px;opacity:.6"><span class="spin-and" style="border-color:rgba(10,28,26,.25);border-top-color:#0A1C1A;border-right-color:#0A1C1A"></span>Pairing…</span><span class="btn">Cancel</span></div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q6 · Android: pairing in progress</b> <code>#solo=qr-06-confirm-android-pairing</code> Android 844 (opened by the camera through the windock:// intent filter). Pairing… covers reaching the computer (direct, then by identity) and the PIN. Cancel stays available.</figcaption>
+</figure><figure class="frame" id="qr-07-paired-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><div class="safe" style="align-items:center">
+  <div class="split">
+    <div class="l">
+      <div class="glyph lg on"><svg class="i"><use href="#i-monitor"/></svg></div>
+      <p class="t-title" style="margin-top:18px">Pair with Geris-MacBook-Air?</p>
+      <p class="t-body" style="margin-top:8px">This phone will open its dock and can launch apps on it.</p>
+    </div>
+    <div class="r">
+      <div class="kvcard"><div class="kvr"><span class="k">Address</span><span class="v">192.168.1.34:8620</span></div><div class="kvr"><span class="k">Security code</span><span class="v">6E21<span class="dash">-</span>B4F0<span class="dash">-</span>93AD</span></div></div>
+      <div class="msg" style="margin-top:12px;color:var(--text-3)"><svg class="i"><use href="#i-shield"/></svg><span>Only pair if you just scanned this code on your own computer’s screen.</span></div>
+      <div class="status-line" style="margin-top:22px;font-size:15px;color:var(--text)"><svg class="i" style="width:18px;height:18px;color:var(--accent)"><use href="#i-check"/></svg>Paired. Opening the dock…</div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q7 · Paired</b> <code>#solo=qr-07-paired-ios</code> The button row becomes the status line (success haptic), held at least 400 ms, then the dock fades in exactly as after PIN pairing.</figcaption>
+</figure><figure class="frame" id="qr-08-code-used-android" data-w="844" data-h="390">
+  <div class="device android"><div class="screen android"><div class="hw-hole"></div><span class="icon-btn" style="position:absolute;z-index:5;left:44px;top:10px"><svg class="i"><use href="#i-back"/></svg></span>
+<div class="safe" style="align-items:center"><div class="split">
+  <div class="l">
+    <div class="glyph lg"><svg class="i"><use href="#i-qr"/></svg></div>
+    <p class="t-title" style="margin-top:18px">This code was already used</p>
+    <p class="t-body" style="margin-top:8px">Each code pairs one phone, and Geris-MacBook-Air shows a new one now.</p>
+  </div>
+  <div class="r" style="max-width:320px">
+    <div class="how"><div class="glyph on"><svg class="i"><use href="#i-monitor"/></svg></div><p class="t-sub">The new code and PIN are in WinDock on the computer, under <kbd class="k">Pair a new phone</kbd>.</p></div>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-top:16px"><span class="btn primary block"><svg class="i"><use href="#i-camera"/></svg>Open camera</span><span class="btn block">Enter the PIN instead</span></div>
+  </div>
+</div></div></div></div>
+  <figcaption><b>Q8 · Code already used or changed</b> <code>#solo=qr-08-code-used-android</code> Android 844. A wrong PIN from a QR means the code is stale (another phone paired, or 10 wrong PINs rotated it). Enter the PIN instead goes to PIN entry with the fingerprint already pinned from the QR.</figcaption>
+</figure><figure class="frame" id="qr-09-pairing-closed-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><span class="icon-btn filled" style="position:absolute;z-index:5;left:47px;top:14px"><svg class="i"><use href="#i-close"/></svg></span>
+<div class="safe" style="align-items:center;padding-top:44px"><div class="split">
+  <div class="l" style="width:330px">
+    <div class="glyph lg"><svg class="i"><use href="#i-clock"/></svg></div>
+    <p class="t-title" style="margin-top:18px">Pairing is closed on Geris-MacBook-Air</p>
+    <p class="t-body" style="margin-top:8px">Click the WinDock icon in the Mac’s menu bar and choose Pair a new phone. That opens pairing for 10 minutes, and this screen continues by itself.</p>
+    <div class="status-line" style="margin-top:14px"><svg class="spin-ios" viewBox="0 0 16 16"><g style="color:var(--text-2)"><line x1="8" y1="1.5" x2="8" y2="4.3"/><line x1="8" y1="11.7" x2="8" y2="14.5" opacity=".35"/><line x1="1.5" y1="8" x2="4.3" y2="8" opacity=".55"/><line x1="11.7" y1="8" x2="14.5" y2="8" opacity=".85"/><line x1="3.4" y1="3.4" x2="5.4" y2="5.4" opacity=".45"/><line x1="10.6" y1="10.6" x2="12.6" y2="12.6" opacity=".75"/><line x1="3.4" y1="12.6" x2="5.4" y2="10.6" opacity=".25"/><line x1="10.6" y1="5.4" x2="12.6" y2="3.4" opacity=".95"/></g></svg>Waiting for pairing to open</div>
+  </div>
+  <div class="r" style="max-width:300px">
+    <div class="how"><div class="glyph on"><svg class="i"><use href="#i-info"/></svg></div><p class="t-sub">The code you scanned still works once pairing opens again, so there’s nothing to type.</p></div>
+  </div>
+</div></div></div></div>
+  <figcaption><b>Q9 · Pairing closed</b> <code>#solo=qr-09-pairing-closed-ios</code> Reuses the closed state (14). The phone polls /health; when pairing opens it retries with the PIN from the QR once (reopening doesn’t change the PIN). If that fails: Q8.</figcaption>
+</figure><figure class="frame" id="qr-10-cant-reach-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen"><div class="hw-notch"></div><div class="hw-home"></div><div class="safe">
+  <div class="split" style="align-items:stretch;padding:28px 0 16px">
+    <div class="l" style="display:flex;flex-direction:column">
+      <div class="glyph lg"><svg class="i"><use href="#i-wifi"/></svg></div>
+      <p class="t-title" style="margin-top:16px">Can’t reach Geris-MacBook-Air</p>
+      <p class="t-body" style="margin-top:8px">The code says it’s at 192.168.1.34, but nothing answered there or on this network. WinDock keeps trying.</p>
+      <div style="margin-top:auto" class="btn-row"><span class="btn primary">Try again</span><span class="btn">Cancel</span></div>
+    </div>
+    <div class="r checks" style="align-self:center">
+      <div class="chk likely"><span class="n">1</span><div><p class="t-head">This phone is on a different network <span class="tag">Likely</span></p><p class="t-sub">This phone is at <span class="mono">10.0.4.17</span>. Join the same Wi-Fi as the computer.</p></div></div>
+      <div class="chk"><span class="n">2</span><div><p class="t-head">WinDock is running on Geris-MacBook-Air</p><p class="t-sub">Its icon should be in the Mac’s menu bar.</p></div></div>
+      <div class="chk"><span class="n">3</span><div><p class="t-head">The network lets devices see each other</p><p class="t-sub">Guest, hotel and office Wi-Fi often keep devices apart.</p></div></div>
+    </div>
+  </div>
+</div></div></div>
+  <figcaption><b>Q10 · Computer unreachable</b> <code>#solo=qr-10-cant-reach-ios</code> iPhone 844. Same check cards as Can’t reach (16). Direct address for 4 s, then discovery by host ID and fingerprint for up to 8 s. Retries continue while visible.</figcaption>
+</figure><figure class="frame" id="qr-11-security-changed-ios" data-w="844" data-h="390">
+  <div class="device"><div class="screen no-glow"><div class="hw-notch"></div><div class="hw-home"></div><div class="safe" style="align-items:center"><div class="split">
+  <div class="l" style="width:330px">
+    <div class="glyph lg warn"><svg class="i"><use href="#i-shield"/></svg></div>
+    <p class="t-title" style="margin-top:16px">Studio PC has a new security code</p>
+    <p class="t-sub" style="margin-top:8px;font-size:14px">The code you scanned doesn’t match the one saved when this phone paired. That’s expected if WinDock was reinstalled or reset. If you scanned it on Studio PC’s own screen, it’s safe to pair again.</p>
+    <div class="btn-row" style="margin-top:18px"><span class="btn danger">Pair again with the new code</span><span class="btn focus">Not now</span></div>
+  </div>
+  <div class="r">
+    <div class="code-card"><div class="k">When you paired</div><div class="code sm" style="color:var(--text-2)">4F1A<span class="dash">-</span>07EE<span class="dash">-</span>C2D3</div></div>
+    <div class="code-card now"><div class="k">In the scanned code</div><div class="code sm">A3F0<span class="dash">-</span>5C1E<span class="dash">-</span>88D2</div></div>
+  </div>
+</div></div></div></div>
+  <figcaption><b>Q11 · Scanned a known computer with a different fingerprint</b> <code>#solo=qr-11-security-changed-ios</code> The existing security-changed screen (18) with QR wording. Pair again uses the scanned fingerprint and PIN directly, because the QR itself is the out-of-band check.</figcaption>
+</figure>
+<script>
+  const m = location.hash.match(/solo=([\w-]+)/);
+  if (m) { const f = document.getElementById(m[1]); if (f) { document.body.classList.add("solo"); f.classList.add("is-solo"); } }
+</script>
+</body>
+</html>
